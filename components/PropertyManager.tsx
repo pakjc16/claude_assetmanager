@@ -462,48 +462,136 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
       {isBuildingModalOpen && (
           <Modal onClose={() => setIsBuildingModalOpen(false)} disableOverlayClick={true}>
-              <div className="p-8 space-y-8">
+              <div className="p-8 space-y-6">
                   <div className="flex justify-between items-center border-b border-gray-100 pb-6">
                       <h3 className="text-xl font-black text-gray-900 flex items-center gap-3"><BuildingIcon size={24} className="text-[#1a73e8]"/> 건물 추가</h3>
                       <button onClick={() => setIsBuildingModalOpen(false)} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
                   </div>
-                  <div className="space-y-6">
-                      <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-6">
+
+                  {/* 기본 정보 */}
+                  <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
+                      <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><BuildingIcon size={14}/> 기본 정보</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                              <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">건물명</label>
-                              <input className="w-full border border-[#dadce0] p-4 rounded-xl focus:ring-4 focus:ring-[#e8f0fe] outline-none font-black text-lg bg-white" value={newBuilding.name} onChange={e => setNewBuilding({...newBuilding, name: e.target.value})} placeholder="예: A동"/>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">건물명 <span className="text-red-500">*</span></label>
+                              <input
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg focus:ring-2 focus:ring-[#e8f0fe] outline-none font-black bg-white"
+                                  value={newBuilding.name}
+                                  onChange={e => setNewBuilding({...newBuilding, name: e.target.value})}
+                                  placeholder="예: A동, 본관"
+                              />
                           </div>
-                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
-                              <div>
-                                  <label className="text-[10px] font-black text-gray-400 mb-1 block">지상 층수</label>
-                                  <input type="number" className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold" value={newBuilding.spec?.floorCount.ground} onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, floorCount: {...newBuilding.spec!.floorCount, ground: Number(e.target.value)}}})}/>
-                              </div>
-                              <div>
-                                  <label className="text-[10px] font-black text-gray-400 mb-1 block">지하 층수</label>
-                                  <input type="number" className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold" value={newBuilding.spec?.floorCount.underground} onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, floorCount: {...newBuilding.spec!.floorCount, underground: Number(e.target.value)}}})}/>
-                              </div>
-                              <div>
-                                  <label className="text-[10px] font-black text-gray-400 mb-1 block">주차 대수</label>
-                                  <input type="number" className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold" value={newBuilding.spec?.parkingCapacity} onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, parkingCapacity: Number(e.target.value)}})}/>
-                              </div>
-                              <div>
-                                  <label className="text-[10px] font-black text-gray-400 mb-1 block">엘리베이터</label>
-                                  <input type="number" className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold" value={newBuilding.spec?.elevatorCount} onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, elevatorCount: Number(e.target.value)}})}/>
-                              </div>
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">주용도</label>
+                              <select
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                  value={newBuilding.spec?.mainUsage || ''}
+                                  onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, mainUsage: e.target.value}})}
+                              >
+                                  <option value="업무시설">업무시설 (사무실)</option>
+                                  <option value="근린생활시설">근린생활시설 (상가)</option>
+                                  <option value="판매시설">판매시설</option>
+                                  <option value="공장">공장</option>
+                                  <option value="창고시설">창고시설</option>
+                                  <option value="숙박시설">숙박시설</option>
+                                  <option value="의료시설">의료시설</option>
+                                  <option value="교육연구시설">교육연구시설</option>
+                                  <option value="운동시설">운동시설</option>
+                                  <option value="주거시설">주거시설 (아파트/오피스텔)</option>
+                                  <option value="복합용도">복합용도</option>
+                              </select>
                           </div>
-                          <div className="grid grid-cols-2 gap-6">
-                             <div>
-                                  <label className="text-[10px] font-black text-gray-400 mb-1 block">건축 면적 (㎡)</label>
-                                  <input className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-black" value={formatNumberInput(newBuilding.spec?.buildingArea)} onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, buildingArea: parseNumberInput(e.target.value)}})}/>
-                             </div>
-                             <div>
-                                  <label className="text-[10px] font-black text-gray-400 mb-1 block">연면적 합계 (㎡)</label>
-                                  <input className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-black text-[#1a73e8]" value={formatNumberInput(newBuilding.spec?.grossFloorArea)} onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, grossFloorArea: parseNumberInput(e.target.value)}})}/>
-                             </div>
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">준공일</label>
+                              <input
+                                  type="date"
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                  value={newBuilding.spec?.completionDate || ''}
+                                  onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, completionDate: e.target.value}})}
+                              />
                           </div>
                       </div>
                   </div>
-                  <div className="flex gap-3 border-t border-gray-100 pt-8">
+
+                  {/* 규모 정보 */}
+                  <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
+                      <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><Ruler size={14}/> 규모</p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">지상 층수</label>
+                              <input
+                                  type="number"
+                                  min="0"
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                  value={newBuilding.spec?.floorCount.ground || 0}
+                                  onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, floorCount: {...newBuilding.spec!.floorCount, ground: Number(e.target.value)}}})}
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">지하 층수</label>
+                              <input
+                                  type="number"
+                                  min="0"
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                  value={newBuilding.spec?.floorCount.underground || 0}
+                                  onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, floorCount: {...newBuilding.spec!.floorCount, underground: Number(e.target.value)}}})}
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">건축면적 (㎡)</label>
+                              <input
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-black focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                  value={formatNumberInput(newBuilding.spec?.buildingArea)}
+                                  onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, buildingArea: parseNumberInput(e.target.value)}})}
+                                  placeholder="0"
+                              />
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">연면적 (㎡)</label>
+                              <input
+                                  className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-black text-[#1a73e8] focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                  value={formatNumberInput(newBuilding.spec?.grossFloorArea)}
+                                  onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, grossFloorArea: parseNumberInput(e.target.value)}})}
+                                  placeholder="0"
+                              />
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* 부대시설 */}
+                  <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
+                      <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><Info size={14}/> 부대시설</p>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">주차 대수</label>
+                              <div className="flex items-center gap-2">
+                                  <input
+                                      type="number"
+                                      min="0"
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newBuilding.spec?.parkingCapacity || 0}
+                                      onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, parkingCapacity: Number(e.target.value)}})}
+                                  />
+                                  <span className="text-sm text-gray-500 font-bold">대</span>
+                              </div>
+                          </div>
+                          <div>
+                              <label className="text-[10px] font-black text-gray-400 mb-1 block">승강기 대수</label>
+                              <div className="flex items-center gap-2">
+                                  <input
+                                      type="number"
+                                      min="0"
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newBuilding.spec?.elevatorCount || 0}
+                                      onChange={e => setNewBuilding({...newBuilding, spec: {...newBuilding.spec!, elevatorCount: Number(e.target.value)}})}
+                                  />
+                                  <span className="text-sm text-gray-500 font-bold">대</span>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="flex gap-3 border-t border-gray-100 pt-6">
                       <button onClick={() => setIsBuildingModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소</button>
                       <button onClick={handleSaveBuilding} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">저장</button>
                   </div>
