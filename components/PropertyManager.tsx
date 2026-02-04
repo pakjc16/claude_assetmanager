@@ -2,7 +2,9 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot } from '../types';
-import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler } from 'lucide-react';
+import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search } from 'lucide-react';
+import { AddressSearch } from './AddressSearch';
+import { AppSettings } from '../App';
 
 const Modal = ({ children, onClose, disableOverlayClick = false }: { children?: React.ReactNode, onClose: () => void, disableOverlayClick?: boolean }) => {
   if (typeof document === 'undefined') return null;
@@ -36,10 +38,11 @@ interface PropertyManagerProps {
   formatMoneyInput: (amount: number | undefined | null) => string;
   parseMoneyInput: (str: string) => number;
   moneyLabel: string;
+  appSettings: AppSettings;
 }
 
-export const PropertyManager: React.FC<PropertyManagerProps> = ({ 
-  properties, units, onAddProperty, onUpdateProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput
+export const PropertyManager: React.FC<PropertyManagerProps> = ({
+  properties, units, onAddProperty, onUpdateProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, moneyLabel, appSettings
 }) => {
   const [selectedPropId, setSelectedPropId] = useState<string>(properties[0]?.id || '');
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LAND' | 'BUILDING' | 'UNIT'>('OVERVIEW');
@@ -48,8 +51,9 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   const [isBuildingModalOpen, setIsBuildingModalOpen] = useState(false);
 
   const [newProp, setNewProp] = useState<Partial<Property>>({
-    type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }
+    type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: ''
   });
+  const [displayAddress, setDisplayAddress] = useState('');
 
   const [newUnit, setNewUnit] = useState<Partial<Unit>>({ unitNumber: '', floor: 1, area: 0, usage: '업무시설', status: 'VACANT', buildingId: '' });
 
@@ -57,15 +61,38 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
       name: '', spec: { buildingArea: 0, grossFloorArea: 0, floorCount: { underground: 0, ground: 1 }, floors: [], completionDate: '', mainUsage: '업무시설', parkingCapacity: 0, elevatorCount: 0 }
   });
 
+  // 토지(필지) 추가 관련 상태
+  const [isLotModalOpen, setIsLotModalOpen] = useState(false);
+  const [newLot, setNewLot] = useState<Partial<Lot>>({
+    address: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' },
+    jimok: '대',
+    area: 0
+  });
+
   const selectedProperty = properties.find(p => p.id === selectedPropId);
   const propertyUnits = units.filter(u => u.propertyId === selectedPropId);
 
   const handleSaveProperty = () => {
     if (!newProp.name || !newProp.masterAddress?.sido || !newProp.masterAddress?.bonbun) return;
+
     if (selectedProperty && selectedPropId === newProp.id) {
+        // 기존 물건 수정
         onUpdateProperty({ ...selectedProperty, ...newProp as Property });
     } else {
-        onAddProperty({ id: `p${Date.now()}`, lots: [], buildings: [], totalLandArea: 0, ...newProp as Property });
+        // 신규 물건 생성 시 대표지번을 첫 번째 토지로 자동 추가
+        const firstLot: Lot = {
+          id: `lot${Date.now()}`,
+          address: { ...newProp.masterAddress! },
+          jimok: '대', // 기본값: 대지
+          area: 0 // 면적은 나중에 입력
+        };
+        onAddProperty({
+          id: `p${Date.now()}`,
+          lots: [firstLot],
+          buildings: [],
+          totalLandArea: 0,
+          ...newProp as Property
+        });
     }
     setIsPropertyModalOpen(false);
   };
@@ -88,12 +115,51 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     setIsBuildingModalOpen(false);
   };
 
+  // 토지(필지) 저장
+  const handleSaveLot = () => {
+    if (!selectedProperty) return;
+    // 필수 필드 검증: 시/도, 시/군/구, 읍/면/동, 본번
+    if (!newLot.address?.sido || !newLot.address?.sigungu || !newLot.address?.eupMyeonDong || !newLot.address?.bonbun) {
+      alert('시/도, 시/군/구, 읍/면/동, 본번은 필수 입력 항목입니다.');
+      return;
+    }
+    const lot: Lot = {
+      id: `lot${Date.now()}`,
+      address: newLot.address as JibunAddress,
+      jimok: newLot.jimok || '대',
+      area: newLot.area || 0
+    };
+    const updatedLots = [...selectedProperty.lots, lot];
+    const totalArea = updatedLots.reduce((sum, l) => sum + (l.area || 0), 0);
+    onUpdateProperty({ ...selectedProperty, lots: updatedLots, totalLandArea: totalArea });
+    setIsLotModalOpen(false);
+  };
+
+  // 토지 추가 모달 열기 (대표지번 주소체계에 맞춤)
+  const openLotModal = () => {
+    if (!selectedProperty) return;
+    const masterAddr = selectedProperty.masterAddress;
+    setNewLot({
+      address: {
+        sido: masterAddr.sido,
+        sigungu: masterAddr.sigungu,
+        eupMyeonDong: masterAddr.eupMyeonDong,
+        li: masterAddr.li || '',
+        bonbun: '',
+        bubun: ''
+      },
+      jimok: '대',
+      area: 0
+    });
+    setIsLotModalOpen(true);
+  };
+
   return (
     <div className="h-full flex flex-col md:flex-row gap-6">
       <div className="w-full md:w-80 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 flex flex-col h-[calc(100vh-140px)] shadow-sm overflow-hidden">
         <div className="p-4 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa]">
-          <h2 className="font-bold text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 자산 인벤토리</h2>
-          <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' } }); setIsPropertyModalOpen(true); }} className="p-2 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-full transition-colors"><Plus size={20}/></button>
+          <h2 className="font-bold text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 물건 목록</h2>
+          <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: '' }); setDisplayAddress(''); setIsPropertyModalOpen(true); }} className="p-2 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-full transition-colors"><Plus size={20}/></button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#f8f9fa]">
           {properties.map(prop => (
@@ -113,15 +179,15 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                     <h1 className="text-2xl font-bold text-[#202124] mb-2">{selectedProperty.name}</h1>
                     <p className="text-[#5f6368] flex items-center text-sm font-medium"><MapPin size={16} className="mr-1 text-[#1a73e8]" />{getFullAddress(selectedProperty.masterAddress)}</p>
                  </div>
-                 <button onClick={() => { setNewProp({...selectedProperty}); setIsPropertyModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 border border-[#dadce0] rounded-lg text-xs font-bold text-[#5f6368] hover:bg-[#f8f9fa] transition-colors"><Edit2 size={14}/> 마스터 정보 수정</button>
+                 <button onClick={() => { setNewProp({...selectedProperty}); setDisplayAddress(getFullAddress(selectedProperty.masterAddress)); setIsPropertyModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 border border-[#dadce0] rounded-lg text-xs font-bold text-[#5f6368] hover:bg-[#f8f9fa] transition-colors"><Edit2 size={14}/> 기본정보 수정</button>
              </div>
 
              <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-4">
                {[
-                 { id: 'OVERVIEW', label: '종합 개요', icon: <Home size={14}/> },
-                 { id: 'LAND', label: '필지 정보', icon: <MapPin size={14}/> },
-                 { id: 'BUILDING', label: '건물 관리', icon: <BuildingIcon size={14}/> },
-                 { id: 'UNIT', label: '호실 현황', icon: <Layers size={14}/> }
+                 { id: 'OVERVIEW', label: '개요', icon: <Home size={14}/> },
+                 { id: 'LAND', label: '토지', icon: <MapPin size={14}/> },
+                 { id: 'BUILDING', label: '건물', icon: <BuildingIcon size={14}/> },
+                 { id: 'UNIT', label: '호실', icon: <Layers size={14}/> }
                ].map((tab) => (
                  <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-6 py-4 text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-3 ${activeTab === tab.id ? 'border-b-2 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
                    {tab.icon} {tab.label}
@@ -133,10 +199,10 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                 {activeTab === 'OVERVIEW' && (
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
-                         <h3 className="font-bold text-[#3c4043] flex items-center gap-2 border-b border-[#dadce0] pb-4 mb-4"><Info size={18} className="text-[#1a73e8]"/> 자산 기본 사양</h3>
+                         <h3 className="font-bold text-[#3c4043] flex items-center gap-2 border-b border-[#dadce0] pb-4 mb-4"><Info size={18} className="text-[#1a73e8]"/> 물건 개요</h3>
                          <div className="grid grid-cols-2 gap-6">
                             <div>
-                               <p className="text-[10px] font-bold text-[#5f6368] uppercase tracking-wider mb-1">전체 대지면적</p>
+                               <p className="text-[10px] font-bold text-[#5f6368] uppercase tracking-wider mb-1">대지면적</p>
                                <p className="font-bold text-[#202124] text-lg">{formatArea(selectedProperty.totalLandArea)}</p>
                             </div>
                             <div>
@@ -154,7 +220,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                          </div>
                       </div>
                       <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
-                         <h3 className="font-bold text-[#3c4043] flex items-center gap-2 border-b border-[#dadce0] pb-4 mb-4"><BuildingIcon size={18} className="text-[#1a73e8]"/> 주요 건축물 현황</h3>
+                         <h3 className="font-bold text-[#3c4043] flex items-center gap-2 border-b border-[#dadce0] pb-4 mb-4"><BuildingIcon size={18} className="text-[#1a73e8]"/> 건물 현황</h3>
                          <div className="space-y-3">
                             {selectedProperty.buildings.map(b => (
                                <div key={b.id} className="flex justify-between items-center text-sm p-3 bg-white border border-[#dadce0] rounded-xl hover:shadow-sm transition-shadow">
@@ -173,7 +239,8 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                 {activeTab === 'LAND' && (
                     <div className="space-y-6">
                         <div className="flex justify-between items-center">
-                            <h3 className="font-black text-[#3c4043] flex items-center gap-2"><MapPin size={18} className="text-[#1a73e8]"/> 소유 필지 상세 내역</h3>
+                            <h3 className="font-black text-[#3c4043] flex items-center gap-2"><MapPin size={18} className="text-[#1a73e8]"/> 토지 목록</h3>
+                            <button onClick={openLotModal} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 토지 추가</button>
                         </div>
                         <div className="border border-[#dadce0] rounded-2xl overflow-hidden shadow-sm">
                             <table className="w-full text-sm text-left">
@@ -181,7 +248,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                     <tr>
                                         <th className="p-5">지번 주소 (지번/본번/부번)</th>
                                         <th className="p-5">지목(Jimok)</th>
-                                        <th className="p-5 text-right">필지 면적(㎡)</th>
+                                        <th className="p-5 text-right">필지 면적</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#f1f3f4]">
@@ -189,7 +256,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                         <tr key={lot.id} className="hover:bg-gray-50 transition-colors">
                                             <td className="p-5 font-bold text-gray-800">{getFullAddress(lot.address)}</td>
                                             <td className="p-5"><span className="px-3 py-1 bg-gray-100 rounded-full text-xs font-black text-gray-600">{lot.jimok}</span></td>
-                                            <td className="p-5 text-right font-black text-[#1a73e8]">{formatNumberInput(lot.area)}</td>
+                                            <td className="p-5 text-right font-black text-[#1a73e8]">{formatArea(lot.area)}</td>
                                         </tr>
                                     ))}
                                     {selectedProperty.lots.length === 0 && <tr><td colSpan={3} className="p-20 text-center text-gray-400 italic">등록된 필지 데이터가 존재하지 않습니다.</td></tr>}
@@ -201,8 +268,8 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                 {activeTab === 'BUILDING' && (
                     <div className="space-y-6">
                         <div className="flex justify-between items-center">
-                            <h3 className="font-black text-[#3c4043] flex items-center gap-2"><BuildingIcon size={18} className="text-[#1a73e8]"/> 건물 정보 및 정밀 스펙</h3>
-                            <button onClick={() => setIsBuildingModalOpen(true)} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 신규 건물 등록</button>
+                            <h3 className="font-black text-[#3c4043] flex items-center gap-2"><BuildingIcon size={18} className="text-[#1a73e8]"/> 건물 목록</h3>
+                            <button onClick={() => setIsBuildingModalOpen(true)} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 건물 추가</button>
                         </div>
                         <div className="grid grid-cols-1 gap-6">
                             {selectedProperty.buildings.map(b => (
@@ -237,7 +304,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                 {activeTab === 'UNIT' && (
                   <div className="space-y-6">
                     <div className="flex justify-between items-center">
-                      <h3 className="font-black text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 개별 호실 및 임대 구역</h3>
+                      <h3 className="font-black text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 호실 목록</h3>
                       <button onClick={() => { setNewUnit({buildingId: selectedProperty.buildings[0]?.id || '', unitNumber: '', area: 0, status: 'VACANT'}); setIsUnitModalOpen(true); }} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 호실 추가</button>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
@@ -274,47 +341,87 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         <Modal onClose={() => setIsPropertyModalOpen(false)} disableOverlayClick={true}>
            <div className="p-8 space-y-8">
               <div className="flex justify-between items-center border-b border-gray-100 pb-6">
-                 <h3 className="text-2xl font-black text-[#202124] flex items-center gap-3"><Edit2 size={24} className="text-[#1a73e8]"/> 자산 마스터 정보 설정</h3>
+                 <h3 className="text-2xl font-black text-[#202124] flex items-center gap-3"><Edit2 size={24} className="text-[#1a73e8]"/> 물건 정보</h3>
                  <button onClick={() => setIsPropertyModalOpen(false)} className="text-[#5f6368] hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                  <div className="md:col-span-2">
-                    <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">자산 공식 명칭 <span className="text-[#ea4335]">*</span></label>
-                    <input className="w-full border border-[#dadce0] p-4 rounded-xl focus:ring-4 focus:ring-[#e8f0fe] focus:border-[#1a73e8] outline-none font-black text-lg transition-all" value={newProp.name} onChange={e => setNewProp({...newProp, name: e.target.value})} placeholder="예: 삼성동 시그니처 오피스 타워"/>
+                    <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">물건명 <span className="text-[#ea4335]">*</span></label>
+                    <input className="w-full border border-[#dadce0] p-4 rounded-xl focus:ring-4 focus:ring-[#e8f0fe] focus:border-[#1a73e8] outline-none font-black text-lg transition-all" value={newProp.name} onChange={e => setNewProp({...newProp, name: e.target.value})} placeholder="예: 강남 시그니처 타워"/>
                  </div>
-                 <div className="bg-gray-50 p-6 rounded-2xl md:col-span-2 space-y-6 border border-[#dadce0]">
-                    <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><MapPin size={16}/> 대표 지번 주소 체계 (Jibun System)</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                       <div>
-                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/도</label>
-                          <input className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold outline-none" value={newProp.masterAddress?.sido} onChange={e => setNewProp({...newProp, masterAddress: {...newProp.masterAddress!, sido: e.target.value}})} placeholder="서울특별시"/>
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/군/구</label>
-                          <input className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold outline-none" value={newProp.masterAddress?.sigungu} onChange={e => setNewProp({...newProp, masterAddress: {...newProp.masterAddress!, sigungu: e.target.value}})} placeholder="강남구"/>
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">읍/면/동</label>
-                          <input className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold outline-none" value={newProp.masterAddress?.eupMyeonDong} onChange={e => setNewProp({...newProp, masterAddress: {...newProp.masterAddress!, eupMyeonDong: e.target.value}})} placeholder="역삼동"/>
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">리 (선택)</label>
-                          <input className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold outline-none" value={newProp.masterAddress?.li} onChange={e => setNewProp({...newProp, masterAddress: {...newProp.masterAddress!, li: e.target.value}})} />
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">본번 <span className="text-red-500">*</span></label>
-                          <input className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold outline-none" value={newProp.masterAddress?.bonbun} onChange={e => setNewProp({...newProp, masterAddress: {...newProp.masterAddress!, bonbun: e.target.value}})} placeholder="100"/>
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">부번 (선택)</label>
-                          <input className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold outline-none" value={newProp.masterAddress?.bubun} onChange={e => setNewProp({...newProp, masterAddress: {...newProp.masterAddress!, bubun: e.target.value}})} placeholder="1"/>
-                       </div>
+                 <div className="bg-gray-50 p-6 rounded-2xl md:col-span-2 space-y-4 border border-[#dadce0]">
+                    <div className="flex items-center justify-between">
+                       <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><MapPin size={16}/> 소재지</p>
+                       <AddressSearch
+                         placeholder="주소 검색"
+                         appSettings={appSettings}
+                         onAddressSelect={(result) => {
+                           setNewProp({
+                             ...newProp,
+                             masterAddress: result.jibunAddress,
+                             roadAddress: result.roadAddress
+                           });
+                           setDisplayAddress(result.fullJibunAddress);
+                         }}
+                       />
                     </div>
+
+                    {(displayAddress || newProp.masterAddress?.sido) && (
+                      <div className="bg-white p-4 rounded-xl border border-[#dadce0] space-y-3">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 mb-1 block">지번주소</label>
+                          <p className="font-bold text-[#202124]">
+                            {displayAddress || getFullAddress(newProp.masterAddress!)}
+                          </p>
+                        </div>
+                        {newProp.roadAddress && (
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 mb-1 block">도로명주소</label>
+                            <p className="font-bold text-[#202124]">{newProp.roadAddress}</p>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-3 gap-3 pt-2 border-t border-gray-100">
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/도</label>
+                            <p className="text-sm font-medium">{newProp.masterAddress?.sido}</p>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/군/구</label>
+                            <p className="text-sm font-medium">{newProp.masterAddress?.sigungu}</p>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 mb-1 block">읍/면/동</label>
+                            <p className="text-sm font-medium">{newProp.masterAddress?.eupMyeonDong}</p>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 mb-1 block">본번</label>
+                            <p className="text-sm font-medium">{newProp.masterAddress?.bonbun}</p>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 mb-1 block">부번</label>
+                            <p className="text-sm font-medium">{newProp.masterAddress?.bubun || '-'}</p>
+                          </div>
+                          {newProp.masterAddress?.li && (
+                            <div>
+                              <label className="text-[10px] font-bold text-gray-400 mb-1 block">리</label>
+                              <p className="text-sm font-medium">{newProp.masterAddress?.li}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {!displayAddress && !newProp.masterAddress?.sido && (
+                      <div className="bg-white p-8 rounded-xl border-2 border-dashed border-gray-200 text-center">
+                        <Search size={32} className="mx-auto text-gray-300 mb-2" />
+                        <p className="text-sm text-gray-400">주소 검색 버튼을 클릭하여 소재지를 입력하세요</p>
+                      </div>
+                    )}
                  </div>
               </div>
               <div className="flex gap-3 border-t border-gray-100 pt-8">
-                 <button onClick={() => setIsPropertyModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소 및 닫기</button>
-                 <button onClick={handleSaveProperty} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">자산 정보 업데이트</button>
+                 <button onClick={() => setIsPropertyModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소</button>
+                 <button onClick={handleSaveProperty} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">저장</button>
               </div>
            </div>
         </Modal>
@@ -324,7 +431,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         <Modal onClose={() => setIsUnitModalOpen(false)} disableOverlayClick={true}>
             <div className="p-8 space-y-8">
                 <div className="flex justify-between items-center border-b border-gray-100 pb-6">
-                   <h3 className="text-xl font-black text-[#202124] flex items-center gap-3"><Plus size={24} className="text-[#1a73e8]"/> 신규 호실 및 임대 구역 등록</h3>
+                   <h3 className="text-xl font-black text-[#202124] flex items-center gap-3"><Plus size={24} className="text-[#1a73e8]"/> 호실 추가</h3>
                    <button onClick={() => setIsUnitModalOpen(false)} className="text-[#5f6368] hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -347,7 +454,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                 </div>
                 <div className="flex gap-3 border-t border-gray-100 pt-8">
                    <button onClick={() => setIsUnitModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소</button>
-                   <button onClick={handleSaveUnit} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">호실 데이터 추가</button>
+                   <button onClick={handleSaveUnit} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">저장</button>
                 </div>
             </div>
         </Modal>
@@ -357,14 +464,14 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           <Modal onClose={() => setIsBuildingModalOpen(false)} disableOverlayClick={true}>
               <div className="p-8 space-y-8">
                   <div className="flex justify-between items-center border-b border-gray-100 pb-6">
-                      <h3 className="text-xl font-black text-gray-900 flex items-center gap-3"><BuildingIcon size={24} className="text-[#1a73e8]"/> 건축물 상세 제원 등록</h3>
+                      <h3 className="text-xl font-black text-gray-900 flex items-center gap-3"><BuildingIcon size={24} className="text-[#1a73e8]"/> 건물 추가</h3>
                       <button onClick={() => setIsBuildingModalOpen(false)} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
                   </div>
                   <div className="space-y-6">
                       <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-6">
                           <div>
-                              <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">건물 명칭 (동)</label>
-                              <input className="w-full border border-[#dadce0] p-4 rounded-xl focus:ring-4 focus:ring-[#e8f0fe] outline-none font-black text-lg bg-white" value={newBuilding.name} onChange={e => setNewBuilding({...newBuilding, name: e.target.value})} placeholder="예: 시그니처 A동"/>
+                              <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">건물명</label>
+                              <input className="w-full border border-[#dadce0] p-4 rounded-xl focus:ring-4 focus:ring-[#e8f0fe] outline-none font-black text-lg bg-white" value={newBuilding.name} onChange={e => setNewBuilding({...newBuilding, name: e.target.value})} placeholder="예: A동"/>
                           </div>
                           <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
                               <div>
@@ -398,7 +505,129 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                   </div>
                   <div className="flex gap-3 border-t border-gray-100 pt-8">
                       <button onClick={() => setIsBuildingModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소</button>
-                      <button onClick={handleSaveBuilding} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">건물 제원 저장</button>
+                      <button onClick={handleSaveBuilding} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">저장</button>
+                  </div>
+              </div>
+          </Modal>
+      )}
+
+      {/* 토지(필지) 추가 모달 */}
+      {isLotModalOpen && selectedProperty && (
+          <Modal onClose={() => setIsLotModalOpen(false)} disableOverlayClick={true}>
+              <div className="p-8 space-y-8">
+                  <div className="flex justify-between items-center border-b border-gray-100 pb-6">
+                      <h3 className="text-xl font-black text-gray-900 flex items-center gap-3"><MapPin size={24} className="text-[#1a73e8]"/> 토지 추가</h3>
+                      <button onClick={() => setIsLotModalOpen(false)} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
+                  </div>
+
+                  {/* 대표지번 주소체계 안내 */}
+                  <div className="bg-[#e8f0fe] p-4 rounded-xl border border-[#c2d7f8]">
+                      <p className="text-sm text-[#1a73e8] font-medium">
+                        <span className="font-black">대표지번:</span> {selectedProperty.masterAddress.sido} {selectedProperty.masterAddress.sigungu} {selectedProperty.masterAddress.eupMyeonDong}{selectedProperty.masterAddress.li ? ` ${selectedProperty.masterAddress.li}` : ''} {selectedProperty.masterAddress.bonbun}{selectedProperty.masterAddress.bubun ? `-${selectedProperty.masterAddress.bubun}` : ''}
+                      </p>
+                      <p className="text-xs text-[#5f6368] mt-1">기본값으로 대표지번 주소가 입력되어 있습니다. 다른 행정구역의 토지도 추가 가능합니다.</p>
+                  </div>
+
+                  <div className="space-y-6">
+                      <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
+                          <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><MapPin size={16}/> 지번 주소</p>
+
+                          {/* 주소 입력 (기본값: 대표지번, 수정 가능) */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                              <div>
+                                  <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/도 <span className="text-red-500">*</span></label>
+                                  <input
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newLot.address?.sido}
+                                      onChange={e => setNewLot({...newLot, address: {...newLot.address!, sido: e.target.value}})}
+                                      placeholder="서울특별시"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/군/구 <span className="text-red-500">*</span></label>
+                                  <input
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newLot.address?.sigungu}
+                                      onChange={e => setNewLot({...newLot, address: {...newLot.address!, sigungu: e.target.value}})}
+                                      placeholder="강남구"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] font-bold text-gray-400 mb-1 block">읍/면/동 <span className="text-red-500">*</span></label>
+                                  <input
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newLot.address?.eupMyeonDong}
+                                      onChange={e => setNewLot({...newLot, address: {...newLot.address!, eupMyeonDong: e.target.value}})}
+                                      placeholder="역삼동"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] font-bold text-gray-400 mb-1 block">리 (선택)</label>
+                                  <input
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newLot.address?.li || ''}
+                                      onChange={e => setNewLot({...newLot, address: {...newLot.address!, li: e.target.value}})}
+                                      placeholder=""
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] font-bold text-gray-400 mb-1 block">본번 <span className="text-red-500">*</span></label>
+                                  <input
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-black focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newLot.address?.bonbun}
+                                      onChange={e => setNewLot({...newLot, address: {...newLot.address!, bonbun: e.target.value}})}
+                                      placeholder="100"
+                                  />
+                              </div>
+                              <div>
+                                  <label className="text-[10px] font-bold text-gray-400 mb-1 block">부번</label>
+                                  <input
+                                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm bg-white font-black focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                      value={newLot.address?.bubun || ''}
+                                      onChange={e => setNewLot({...newLot, address: {...newLot.address!, bubun: e.target.value}})}
+                                      placeholder="1"
+                                  />
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* 지목 및 면적 */}
+                      <div className="grid grid-cols-2 gap-6">
+                          <div>
+                              <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">지목</label>
+                              <select
+                                  className="w-full border border-[#dadce0] p-4 rounded-xl text-lg font-black focus:ring-4 focus:ring-[#e8f0fe] outline-none bg-white"
+                                  value={newLot.jimok}
+                                  onChange={e => setNewLot({...newLot, jimok: e.target.value})}
+                              >
+                                  <option value="대">대 (대지)</option>
+                                  <option value="전">전 (밭)</option>
+                                  <option value="답">답 (논)</option>
+                                  <option value="임">임 (임야)</option>
+                                  <option value="잡">잡 (잡종지)</option>
+                                  <option value="도">도 (도로)</option>
+                                  <option value="공">공 (공장용지)</option>
+                                  <option value="주">주 (주차장)</option>
+                                  <option value="창">창 (창고용지)</option>
+                                  <option value="학">학 (학교용지)</option>
+                              </select>
+                          </div>
+                          <div>
+                              <label className="text-xs font-black text-[#5f6368] mb-2 block uppercase tracking-widest">면적 (㎡)</label>
+                              <input
+                                  type="text"
+                                  className="w-full border border-[#dadce0] p-4 rounded-xl text-lg font-black text-[#1a73e8] focus:ring-4 focus:ring-[#e8f0fe] outline-none"
+                                  value={formatNumberInput(newLot.area)}
+                                  onChange={e => setNewLot({...newLot, area: parseNumberInput(e.target.value)})}
+                                  placeholder="0"
+                              />
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="flex gap-3 border-t border-gray-100 pt-8">
+                      <button onClick={() => setIsLotModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소</button>
+                      <button onClick={handleSaveLot} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">저장</button>
                   </div>
               </div>
           </Modal>

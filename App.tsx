@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
-import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, Search } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, Search, MapPin, Key } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { PropertyManager } from './components/PropertyManager';
 import { StakeholderManager } from './components/StakeholderManager';
@@ -13,13 +14,42 @@ import { Property, Unit, Stakeholder, LeaseContract, MaintenanceContract, Utilit
 // ==========================================
 // STRICT FORMATTING UTILS
 // ==========================================
+// 일반 숫자 포맷: 세자리 콤마, 소수점 0이면 생략, 아니면 1자리까지
 export const formatNumberInput = (num: number | undefined | null): string => {
   if (num === undefined || num === null || isNaN(num)) return '';
-  return Math.floor(num).toLocaleString('ko-KR'); // 세자리 콤마 + 소수점 버림
+  const decimal = num % 1;
+  if (decimal === 0) {
+    return Math.floor(num).toLocaleString('ko-KR');
+  }
+  return num.toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 };
 
 export const parseNumberInput = (str: string): number => {
   return Number(str.replace(/,/g, '')) || 0;
+};
+
+// 숫자 포맷 헬퍼: 세자리 콤마 + 소수점 처리
+const formatWithComma = (num: number, maxDecimals: number = 1): string => {
+  const decimal = num % 1;
+  if (decimal === 0 || maxDecimals === 0) {
+    return Math.floor(num).toLocaleString('ko-KR');
+  }
+  return num.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: maxDecimals });
+};
+
+// ==========================================
+// APP SETTINGS TYPE
+// ==========================================
+export type AddressApiType = 'DAUM' | 'VWORLD';
+
+export interface AppSettings {
+  addressApi: AddressApiType;
+  vworldApiKey: string;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  addressApi: 'DAUM',
+  vworldApiKey: ''
 };
 
 // ==========================================
@@ -89,6 +119,8 @@ function App() {
   const [activeTab, setActiveTab] = useState('DASHBOARD');
   const [currencyUnit, setCurrencyUnit] = useState<MoneyUnit>('WON');
   const [areaUnit, setAreaUnit] = useState<AreaUnit>('M2');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(INIT_STAKEHOLDERS);
   const [properties, setProperties] = useState<Property[]>(INIT_PROPERTIES);
@@ -103,19 +135,34 @@ function App() {
   const [comparables, setComparables] = useState<MarketComparable[]>(INIT_COMPARABLES);
 
   // Formatting Logic
+  // 금액 포맷: 원/만원은 소수점 없음, 억원은 소수점 2자리까지
   const formatMoney = (amount: number) => {
     let value = amount;
     let suffix = '원';
-    if (currencyUnit === 'MAN') { value = amount / 10000; suffix = '만원'; }
-    else if (currencyUnit === 'EOK') { value = amount / 100000000; suffix = '억원'; }
-    return Math.floor(value).toLocaleString('ko-KR') + suffix;
+    let decimals = 0;
+
+    if (currencyUnit === 'MAN') {
+      value = amount / 10000;
+      suffix = '만원';
+      decimals = 0;
+    } else if (currencyUnit === 'EOK') {
+      value = amount / 100000000;
+      suffix = '억원';
+      decimals = 2; // 억원 단위에서만 소수점 2자리
+    }
+
+    return formatWithComma(value, decimals) + suffix;
   };
 
+  // 면적 포맷: 세자리 콤마, 소수점 0이면 생략, 아니면 1자리까지
   const formatArea = (area: number) => {
     let value = area;
     let suffix = '㎡';
-    if (areaUnit === 'PYEONG') { value = area * 0.3025; suffix = '평'; }
-    return value.toFixed(1) + suffix;
+    if (areaUnit === 'PYEONG') {
+      value = area * 0.3025;
+      suffix = '평';
+    }
+    return formatWithComma(value, 1) + suffix;
   };
 
   const financials: DashboardFinancials = useMemo(() => {
@@ -182,7 +229,7 @@ function App() {
                      <input type="text" placeholder="통합 검색" className="w-full bg-[#f1f3f4] border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-[#1a73e8] outline-none transition-all"/>
                   </div>
                   <button className="p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-full transition-all relative"><Bell size={20}/><span className="absolute top-2 right-2 w-2 h-2 bg-[#ea4335] rounded-full border-2 border-white"></span></button>
-                  <button className="p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-full transition-all"><Settings size={20}/></button>
+                  <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-full transition-all"><Settings size={20}/></button>
                </div>
             </div>
             
@@ -209,11 +256,12 @@ function App() {
             <div className="max-w-[1500px] mx-auto">
                {activeTab === 'DASHBOARD' && <Dashboard financials={financials} properties={properties} contracts={leaseContracts} units={units} valuations={valuations} facilities={facilities} transactions={transactions} stakeholders={stakeholders} formatMoney={formatMoney} />}
                {activeTab === 'PROPERTY' && (
-                  <PropertyManager 
+                  <PropertyManager
                     properties={properties} units={units} facilities={facilities}
                     onAddProperty={p => setProperties(prev => [...prev, p])} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onUpdateBuilding={() => {}}
                     onAddUnit={u => setUnits(prev => [...prev, u])} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))}
                     formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatMoney} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'MAN' ? '만원' : '억원'}
+                    appSettings={appSettings}
                   />
                )}
                {activeTab === 'FACILITY' && (
@@ -253,6 +301,93 @@ function App() {
             </div>
          </div>
       </main>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-white rounded-2xl shadow-2xl">
+            <div className="p-6 border-b border-[#dadce0] flex justify-between items-center">
+              <h3 className="text-xl font-bold text-[#202124] flex items-center gap-3">
+                <Settings size={24} className="text-[#1a73e8]" />
+                환경설정
+              </h3>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-[#f1f3f4] rounded-full transition-colors">
+                <X size={20} className="text-[#5f6368]" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* 주소 검색 API 설정 */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <MapPin size={18} className="text-[#1a73e8]" />
+                  <h4 className="font-bold text-[#3c4043]">주소 검색 API</h4>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setAppSettings(prev => ({ ...prev, addressApi: 'DAUM' }))}
+                    className={`p-4 rounded-xl border-2 transition-all text-left ${
+                      appSettings.addressApi === 'DAUM'
+                        ? 'border-[#1a73e8] bg-[#e8f0fe]'
+                        : 'border-[#dadce0] hover:border-[#1a73e8]'
+                    }`}
+                  >
+                    <p className="font-bold text-[#202124]">다음 우편번호</p>
+                    <p className="text-xs text-[#5f6368] mt-1">Kakao 제공, API 키 불필요</p>
+                  </button>
+                  <button
+                    onClick={() => setAppSettings(prev => ({ ...prev, addressApi: 'VWORLD' }))}
+                    className={`p-4 rounded-xl border-2 transition-all text-left ${
+                      appSettings.addressApi === 'VWORLD'
+                        ? 'border-[#1a73e8] bg-[#e8f0fe]'
+                        : 'border-[#dadce0] hover:border-[#1a73e8]'
+                    }`}
+                  >
+                    <p className="font-bold text-[#202124]">VWorld API</p>
+                    <p className="text-xs text-[#5f6368] mt-1">국토교통부, API 키 필요</p>
+                  </button>
+                </div>
+
+                {/* VWorld API Key 입력 */}
+                {appSettings.addressApi === 'VWORLD' && (
+                  <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                    <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]">
+                      <Key size={14} />
+                      VWorld API Key
+                    </label>
+                    <input
+                      type="text"
+                      value={appSettings.vworldApiKey}
+                      onChange={(e) => setAppSettings(prev => ({ ...prev, vworldApiKey: e.target.value }))}
+                      placeholder="API 키를 입력하세요"
+                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none"
+                    />
+                    <p className="text-xs text-[#5f6368]">
+                      <a href="https://www.vworld.kr/dev/v4dv_search2_s001.do" target="_blank" rel="noopener noreferrer" className="text-[#1a73e8] hover:underline">
+                        VWorld 개발자센터
+                      </a>에서 API 키를 발급받으세요.
+                    </p>
+                    {appSettings.addressApi === 'VWORLD' && !appSettings.vworldApiKey && (
+                      <p className="text-xs text-[#ea4335] font-medium">⚠️ API 키가 없으면 주소 검색이 작동하지 않습니다.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-[#dadce0] flex justify-end">
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="px-6 py-2.5 bg-[#1a73e8] text-white font-bold rounded-lg hover:bg-[#1557b0] transition-colors"
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
