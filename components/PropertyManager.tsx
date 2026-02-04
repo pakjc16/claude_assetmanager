@@ -42,7 +42,7 @@ interface PropertyManagerProps {
 }
 
 export const PropertyManager: React.FC<PropertyManagerProps> = ({
-  properties, units, onAddProperty, onUpdateProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, moneyLabel, appSettings
+  properties, units, onAddProperty, onUpdateProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, parseMoneyInput, moneyLabel, appSettings
 }) => {
   const [selectedPropId, setSelectedPropId] = useState<string>(properties[0]?.id || '');
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LAND' | 'BUILDING' | 'UNIT'>('OVERVIEW');
@@ -55,7 +55,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   });
   const [displayAddress, setDisplayAddress] = useState('');
 
-  const [newUnit, setNewUnit] = useState<Partial<Unit>>({ unitNumber: '', floor: 1, area: 0, usage: '업무시설', status: 'VACANT', buildingId: '' });
+  const [newUnit, setNewUnit] = useState<Partial<Unit>>({ unitNumber: '', floor: 1, area: 0, usage: '업무시설', status: 'VACANT', buildingId: '', rentType: '월세', deposit: 0, monthlyRent: 0 });
 
   const [newBuilding, setNewBuilding] = useState<Partial<Building>>({
       name: '', spec: { buildingArea: 0, grossFloorArea: 0, floorCount: { underground: 0, ground: 1 }, floors: [], completionDate: '', mainUsage: '업무시설', parkingCapacity: 0, elevatorCount: 0 }
@@ -305,26 +305,111 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                   <div className="space-y-6">
                     <div className="flex justify-between items-center">
                       <h3 className="font-black text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 호실 목록</h3>
-                      <button onClick={() => { setNewUnit({buildingId: selectedProperty.buildings[0]?.id || '', unitNumber: '', area: 0, status: 'VACANT'}); setIsUnitModalOpen(true); }} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 호실 추가</button>
+                      <button
+                        onClick={() => {
+                          if (selectedProperty.buildings.length === 0) {
+                            alert('호실을 추가하려면 먼저 건물을 등록해야 합니다.');
+                            return;
+                          }
+                          setNewUnit({buildingId: selectedProperty.buildings[0]?.id || '', unitNumber: '', floor: 1, area: 0, usage: '업무시설', status: 'VACANT', rentType: '월세', deposit: 0, monthlyRent: 0});
+                          setIsUnitModalOpen(true);
+                        }}
+                        className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"
+                      >
+                        <Plus size={16}/> 호실 추가
+                      </button>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
-                      {propertyUnits.map(unit => (
-                        <div key={unit.id} className="p-5 bg-white border border-[#dadce0] rounded-2xl hover:border-[#1a73e8] hover:shadow-xl transition-all group">
-                          <div className="flex justify-between items-start mb-4">
-                            <span className="font-black text-lg text-[#202124] group-hover:text-[#1a73e8] transition-colors">{unit.unitNumber}호</span>
-                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter ${unit.status === 'OCCUPIED' ? 'bg-[#e6f4ea] text-[#137333] border border-[#ceead6]' : unit.status === 'UNDER_REPAIR' ? 'bg-orange-50 text-orange-600 border border-orange-100' : 'bg-[#fef7e0] text-[#b06000] border border-[#feefc3]'}`}>
-                              {unit.status === 'OCCUPIED' ? '임대중' : unit.status === 'UNDER_REPAIR' ? '보수중' : '공실'}
-                            </span>
+
+                    {/* 건물이 없는 경우 안내 */}
+                    {selectedProperty.buildings.length === 0 && (
+                      <div className="bg-[#fef7e0] border border-[#feefc3] p-4 rounded-xl text-sm text-[#b06000] font-medium">
+                        호실을 추가하려면 먼저 <strong>건물 탭</strong>에서 건물을 등록해야 합니다.
+                      </div>
+                    )}
+
+                    {/* 건물별 호실 그룹화 */}
+                    {selectedProperty.buildings.map(building => {
+                      const buildingUnits = propertyUnits.filter(u => u.buildingId === building.id);
+                      return (
+                        <div key={building.id} className="space-y-4">
+                          <div className="flex items-center gap-3 border-b border-[#dadce0] pb-3">
+                            <div className="p-2 bg-indigo-50 text-[#1a73e8] rounded-lg"><BuildingIcon size={18}/></div>
+                            <div>
+                              <h4 className="font-black text-[#202124]">{building.name}</h4>
+                              <p className="text-[10px] text-[#5f6368]">{building.spec.mainUsage} · 등록 호실 {buildingUnits.length}개</p>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setNewUnit({buildingId: building.id, unitNumber: '', floor: 1, area: 0, usage: building.spec.mainUsage || '업무시설', status: 'VACANT', rentType: '월세', deposit: 0, monthlyRent: 0});
+                                setIsUnitModalOpen(true);
+                              }}
+                              className="ml-auto text-xs font-bold text-[#1a73e8] hover:bg-[#e8f0fe] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                            >
+                              <Plus size={14}/> 이 건물에 호실 추가
+                            </button>
                           </div>
-                          <div className="space-y-2 mt-4 text-[11px] text-[#5f6368] font-bold">
-                            <p className="flex justify-between border-b border-gray-50 pb-1">전용 면적 <span className="text-gray-900">{formatArea(unit.area)}</span></p>
-                            <p className="flex justify-between border-b border-gray-50 pb-1">주용도 <span className="text-gray-900">{unit.usage}</span></p>
-                            <p className="flex justify-between">해당 층수 <span className="text-gray-900 font-mono">{unit.floor}F</span></p>
+
+                          {buildingUnits.length > 0 ? (
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                              {buildingUnits.map(unit => (
+                                <div key={unit.id} className="p-4 bg-white border border-[#dadce0] rounded-xl hover:border-[#1a73e8] hover:shadow-lg transition-all group">
+                                  <div className="flex justify-between items-start mb-3">
+                                    <span className="font-black text-lg text-[#202124] group-hover:text-[#1a73e8] transition-colors">{unit.unitNumber}호</span>
+                                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${unit.status === 'OCCUPIED' ? 'bg-[#e6f4ea] text-[#137333]' : unit.status === 'UNDER_REPAIR' ? 'bg-orange-50 text-orange-600' : 'bg-[#fef7e0] text-[#b06000]'}`}>
+                                      {unit.status === 'OCCUPIED' ? '임대중' : unit.status === 'UNDER_REPAIR' ? '보수중' : '공실'}
+                                    </span>
+                                  </div>
+                                  <div className="space-y-1.5 text-[10px] text-[#5f6368] font-medium">
+                                    <p className="flex justify-between"><span>층수</span><span className="text-gray-800 font-bold">{unit.floor > 0 ? `${unit.floor}F` : `B${Math.abs(unit.floor)}F`}</span></p>
+                                    <p className="flex justify-between"><span>면적</span><span className="text-gray-800 font-bold">{formatArea(unit.area)}</span></p>
+                                    <p className="flex justify-between"><span>용도</span><span className="text-gray-800">{unit.usage}</span></p>
+                                    {unit.status === 'OCCUPIED' && unit.monthlyRent !== undefined && unit.monthlyRent > 0 && (
+                                      <>
+                                        <div className="border-t border-gray-100 pt-1.5 mt-1.5">
+                                          <p className="flex justify-between"><span>보증금</span><span className="text-[#1a73e8] font-bold">{formatMoneyInput(unit.deposit)}</span></p>
+                                          <p className="flex justify-between"><span>월세</span><span className="text-[#1a73e8] font-bold">{formatMoneyInput(unit.monthlyRent)}</span></p>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="py-8 text-center text-gray-400 border border-dashed border-gray-200 rounded-xl text-sm">
+                              이 건물에 등록된 호실이 없습니다.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* 건물 미지정 호실 (orphaned) */}
+                    {propertyUnits.filter(u => !selectedProperty.buildings.find(b => b.id === u.buildingId)).length > 0 && (
+                      <div className="space-y-4 mt-8">
+                        <div className="flex items-center gap-3 border-b border-red-200 pb-3">
+                          <div className="p-2 bg-red-50 text-red-500 rounded-lg"><Layers size={18}/></div>
+                          <div>
+                            <h4 className="font-black text-red-600">건물 미지정 호실</h4>
+                            <p className="text-[10px] text-red-400">건물이 삭제되었거나 연결이 끊어진 호실입니다.</p>
                           </div>
                         </div>
-                      ))}
-                      {propertyUnits.length === 0 && <div className="col-span-full py-24 text-center text-gray-400 border-2 border-dashed rounded-2xl font-bold bg-gray-50">등록된 호실 데이터가 없습니다.</div>}
-                    </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                          {propertyUnits.filter(u => !selectedProperty.buildings.find(b => b.id === u.buildingId)).map(unit => (
+                            <div key={unit.id} className="p-4 bg-red-50 border border-red-200 rounded-xl">
+                              <span className="font-black text-lg text-red-600">{unit.unitNumber}호</span>
+                              <p className="text-[10px] text-red-400 mt-1">건물 연결 필요</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {propertyUnits.length === 0 && selectedProperty.buildings.length > 0 && (
+                      <div className="py-16 text-center text-gray-400 border-2 border-dashed rounded-2xl font-bold bg-gray-50">
+                        등록된 호실이 없습니다. 위 건물에서 "호실 추가" 버튼을 클릭하세요.
+                      </div>
+                    )}
                   </div>
                 )}
              </div>
@@ -427,32 +512,140 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         </Modal>
       )}
 
-      {isUnitModalOpen && (
+      {isUnitModalOpen && selectedProperty && (
         <Modal onClose={() => setIsUnitModalOpen(false)} disableOverlayClick={true}>
-            <div className="p-8 space-y-8">
+            <div className="p-8 space-y-6">
                 <div className="flex justify-between items-center border-b border-gray-100 pb-6">
-                   <h3 className="text-xl font-black text-[#202124] flex items-center gap-3"><Plus size={24} className="text-[#1a73e8]"/> 호실 추가</h3>
+                   <h3 className="text-xl font-black text-[#202124] flex items-center gap-3"><Layers size={24} className="text-[#1a73e8]"/> 호실 추가</h3>
                    <button onClick={() => setIsUnitModalOpen(false)} className="text-[#5f6368] hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label className="text-xs font-black text-[#5f6368] block mb-2 uppercase tracking-widest">호실 번호 <span className="text-red-500">*</span></label>
-                        <input className="w-full border border-[#dadce0] p-4 rounded-xl text-lg font-black focus:ring-4 focus:ring-[#e8f0fe] outline-none" value={newUnit.unitNumber} onChange={e => setNewUnit({...newUnit, unitNumber: e.target.value})} placeholder="예: 101"/>
-                    </div>
-                    <div>
-                        <label className="text-xs font-black text-[#5f6368] block mb-2 uppercase tracking-widest">해당 층수</label>
-                        <input type="number" className="w-full border border-[#dadce0] p-4 rounded-xl text-lg font-black" value={newUnit.floor} onChange={e => setNewUnit({...newUnit, floor: Number(e.target.value)})}/>
-                    </div>
-                    <div>
-                        <label className="text-xs font-black text-[#5f6368] block mb-2 uppercase tracking-widest">전용 면적 (㎡) <span className="text-red-500">*</span></label>
-                        <input type="text" className="w-full border border-[#dadce0] p-4 rounded-xl text-lg font-black text-[#1a73e8]" value={formatNumberInput(newUnit.area)} onChange={e => setNewUnit({...newUnit, area: parseNumberInput(e.target.value)})}/>
-                    </div>
-                    <div>
-                        <label className="text-xs font-black text-[#5f6368] block mb-2 uppercase tracking-widest">공식 용도</label>
-                        <input className="w-full border border-[#dadce0] p-4 rounded-xl text-lg font-black" value={newUnit.usage} onChange={e => setNewUnit({...newUnit, usage: e.target.value})} placeholder="예: 업무시설(사무실)"/>
+
+                {/* 건물 선택 */}
+                <div className="bg-[#e8f0fe] p-4 rounded-xl border border-[#c2d7f8]">
+                    <label className="text-xs font-black text-[#1a73e8] block mb-2 uppercase tracking-widest flex items-center gap-2"><BuildingIcon size={14}/> 소속 건물 <span className="text-red-500">*</span></label>
+                    <select
+                        className="w-full border border-[#1a73e8] bg-white p-3 rounded-lg font-bold focus:ring-2 focus:ring-[#1a73e8] outline-none"
+                        value={newUnit.buildingId}
+                        onChange={e => {
+                            const bldg = selectedProperty.buildings.find(b => b.id === e.target.value);
+                            setNewUnit({...newUnit, buildingId: e.target.value, usage: bldg?.spec.mainUsage || newUnit.usage});
+                        }}
+                    >
+                        {selectedProperty.buildings.length === 0 ? (
+                            <option value="">-- 등록된 건물이 없습니다 --</option>
+                        ) : (
+                            selectedProperty.buildings.map(b => (
+                                <option key={b.id} value={b.id}>{b.name} ({b.spec.mainUsage})</option>
+                            ))
+                        )}
+                    </select>
+                </div>
+
+                {/* 기본 정보 */}
+                <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
+                    <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><Home size={14}/> 기본 정보</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">호실 번호 <span className="text-red-500">*</span></label>
+                            <input
+                                className="w-full border border-[#dadce0] p-3 rounded-lg font-black bg-white focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={newUnit.unitNumber}
+                                onChange={e => setNewUnit({...newUnit, unitNumber: e.target.value})}
+                                placeholder="예: 101"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">해당 층수</label>
+                            <input
+                                type="number"
+                                className="w-full border border-[#dadce0] p-3 rounded-lg font-bold bg-white focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={newUnit.floor}
+                                onChange={e => setNewUnit({...newUnit, floor: Number(e.target.value)})}
+                                placeholder="음수는 지하층"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">전용 면적 (㎡)</label>
+                            <input
+                                type="text"
+                                className="w-full border border-[#dadce0] p-3 rounded-lg font-black text-[#1a73e8] bg-white focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={formatNumberInput(newUnit.area)}
+                                onChange={e => setNewUnit({...newUnit, area: parseNumberInput(e.target.value)})}
+                                placeholder="0"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">용도</label>
+                            <select
+                                className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={newUnit.usage}
+                                onChange={e => setNewUnit({...newUnit, usage: e.target.value})}
+                            >
+                                <option value="업무시설">업무시설 (사무실)</option>
+                                <option value="근린생활시설">근린생활시설 (상가)</option>
+                                <option value="판매시설">판매시설</option>
+                                <option value="창고시설">창고시설</option>
+                                <option value="주거시설">주거시설</option>
+                                <option value="숙박시설">숙박시설</option>
+                                <option value="기타">기타</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
-                <div className="flex gap-3 border-t border-gray-100 pt-8">
+
+                {/* 임대 현황 */}
+                <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
+                    <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><Info size={14}/> 임대 현황</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">임대 상태</label>
+                            <select
+                                className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={newUnit.status}
+                                onChange={e => setNewUnit({...newUnit, status: e.target.value as Unit['status']})}
+                            >
+                                <option value="VACANT">공실</option>
+                                <option value="OCCUPIED">임대중</option>
+                                <option value="UNDER_REPAIR">보수중</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">임대 유형</label>
+                            <select
+                                className="w-full border border-[#dadce0] p-3 rounded-lg bg-white font-bold focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={newUnit.rentType || '월세'}
+                                onChange={e => setNewUnit({...newUnit, rentType: e.target.value})}
+                            >
+                                <option value="월세">월세</option>
+                                <option value="전세">전세</option>
+                                <option value="반전세">반전세</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">보증금 ({moneyLabel})</label>
+                            <input
+                                type="text"
+                                className="w-full border border-[#dadce0] p-3 rounded-lg font-black bg-white focus:ring-2 focus:ring-[#e8f0fe] outline-none"
+                                value={formatMoneyInput(newUnit.deposit)}
+                                onChange={e => setNewUnit({...newUnit, deposit: parseMoneyInput(e.target.value)})}
+                                placeholder="0"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[10px] font-black text-gray-400 mb-1 block">월세 ({moneyLabel})</label>
+                            <input
+                                type="text"
+                                className={`w-full border border-[#dadce0] p-3 rounded-lg font-black bg-white focus:ring-2 focus:ring-[#e8f0fe] outline-none ${newUnit.rentType === '전세' ? 'bg-gray-100 text-gray-400' : ''}`}
+                                value={newUnit.rentType === '전세' ? '0' : formatMoneyInput(newUnit.monthlyRent)}
+                                onChange={e => setNewUnit({...newUnit, monthlyRent: parseMoneyInput(e.target.value)})}
+                                placeholder="0"
+                                disabled={newUnit.rentType === '전세'}
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex gap-3 border-t border-gray-100 pt-6">
                    <button onClick={() => setIsUnitModalOpen(false)} className="flex-1 py-4 bg-white border border-[#dadce0] text-[#5f6368] font-black rounded-xl hover:bg-[#f8f9fa] transition-colors">취소</button>
                    <button onClick={handleSaveUnit} className="flex-1 bg-[#1a73e8] text-white py-4 rounded-xl font-black shadow-xl hover:bg-[#1557b0] transition-all active:scale-95">저장</button>
                 </div>
