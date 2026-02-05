@@ -29,29 +29,53 @@ export interface JibunAddress {
 }
 
 export interface FloorDetail {
-  floorNumber: number; 
-  area: number;        
-  usage: string;       
+  floorNumber: number;
+  area: number;           // 층별 면적 (㎡)
+  exclusiveArea?: number; // 전용면적 (㎡) - 수동입력 또는 계산
+  exclusiveRatio?: number; // 전용률 (%) - 수동입력
+  usage: string;          // 용도
+  structure?: string;     // 구조
 }
 
 export interface BuildingSpec {
-  buildingArea: number; 
-  grossFloorArea: number; 
+  buildingArea: number;      // 건축면적
+  grossFloorArea: number;    // 연면적
+  totalDongArea?: number;    // 총동연면적
   floorCount: {
     underground: number;
     ground: number;
   };
-  floors: FloorDetail[]; 
-  completionDate: string;
-  mainUsage: string;
-  parkingCapacity: number;
-  elevatorCount: number;
+  floors: FloorDetail[];
+  completionDate: string;    // 사용승인일
+  permitDate?: string;       // 허가일
+  startDate?: string;        // 착공일
+  mainUsage: string;         // 주용도
+  detailUsage?: string;      // 기타용도 (상세)
+  structure?: string;        // 구조
+  roofType?: string;         // 지붕
+  height?: number;           // 높이(m)
+  parkingCapacity: number;   // 총 주차대수
+  parkingDetail?: {          // 주차 상세
+    indoorMech: number;      // 옥내기계식
+    indoorSelf: number;      // 옥내자주식
+    outdoorMech: number;     // 옥외기계식
+    outdoorSelf: number;     // 옥외자주식
+  };
+  elevatorCount: number;     // 총 승강기
+  elevatorDetail?: {         // 승강기 상세
+    passenger: number;       // 승용
+    emergency: number;       // 비상용
+  };
+  householdCount?: number;   // 세대수
+  unitCount?: number;        // 호수
+  earthquakeDesign?: boolean; // 내진설계 적용여부
 }
 
 export interface Building {
   id: string;
   propertyId: string;
-  name: string; 
+  name: string;              // 동명칭 또는 건물명
+  mgmBldrgstPk?: string;     // 관리건축물대장PK (API 연동용)
   spec: BuildingSpec;
 }
 
@@ -59,21 +83,30 @@ export type PropertyType = 'AGGREGATE' | 'LAND_AND_BUILDING' | 'LAND';
 
 export interface Lot {
   id: string;
-  address: JibunAddress; 
-  jimok: string;   
-  area: number;    
+  address: JibunAddress;
+  jimok: string;
+  area: number;
+  pnu?: string;  // VWorld PNU 코드 (토지정보 조회용)
+}
+
+export interface PropertyPhoto {
+  id: string;
+  url: string;
+  caption?: string;
+  uploadedAt: string;
 }
 
 export interface Property {
   id: string;
-  type: PropertyType; 
-  name: string; 
+  type: PropertyType;
+  name: string;
   masterAddress: JibunAddress;
-  roadAddress?: string; 
-  lots: Lot[]; 
-  buildings: Building[]; 
-  totalLandArea: number; 
+  roadAddress?: string;
+  lots: Lot[];
+  buildings: Building[];
+  totalLandArea: number;
   managerId?: string;
+  photos?: PropertyPhoto[];
 }
 
 export interface Unit {

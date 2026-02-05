@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, Search, MapPin, Key } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
@@ -45,11 +45,35 @@ export type AddressApiType = 'DAUM' | 'VWORLD';
 export interface AppSettings {
   addressApi: AddressApiType;
   vworldApiKey: string;
+  dataGoKrApiKey: string;  // 공공데이터포털 API 키 (건축물대장 등)
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  addressApi: 'DAUM',
-  vworldApiKey: ''
+  addressApi: 'VWORLD',
+  vworldApiKey: '',
+  dataGoKrApiKey: ''  // 공공데이터포털 API 키
+};
+
+// localStorage에서 설정 불러오기
+const loadSettings = (): AppSettings => {
+  try {
+    const saved = localStorage.getItem('realtyflow_settings');
+    if (saved) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    }
+  } catch (e) {
+    console.error('설정 불러오기 실패:', e);
+  }
+  return DEFAULT_SETTINGS;
+};
+
+// localStorage에 설정 저장
+const saveSettings = (settings: AppSettings) => {
+  try {
+    localStorage.setItem('realtyflow_settings', JSON.stringify(settings));
+  } catch (e) {
+    console.error('설정 저장 실패:', e);
+  }
 };
 
 // ==========================================
@@ -120,7 +144,12 @@ function App() {
   const [currencyUnit, setCurrencyUnit] = useState<MoneyUnit>('WON');
   const [areaUnit, setAreaUnit] = useState<AreaUnit>('M2');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [appSettings, setAppSettings] = useState<AppSettings>(loadSettings);
+
+  // 설정 변경 시 localStorage에 저장
+  useEffect(() => {
+    saveSettings(appSettings);
+  }, [appSettings]);
 
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(INIT_STAKEHOLDERS);
   const [properties, setProperties] = useState<Property[]>(INIT_PROPERTIES);
@@ -373,6 +402,42 @@ function App() {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* 공공데이터포털 API 설정 (건축물대장) */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Building2 size={18} className="text-[#34a853]" />
+                  <h4 className="font-bold text-[#3c4043]">건축물대장 API</h4>
+                </div>
+                <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                  <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]">
+                    <Key size={14} />
+                    공공데이터포털 API Key
+                  </label>
+                  <input
+                    type="text"
+                    value={appSettings.dataGoKrApiKey}
+                    onChange={(e) => setAppSettings(prev => ({ ...prev, dataGoKrApiKey: e.target.value }))}
+                    placeholder="공공데이터포털 API 키를 입력하세요"
+                    className="w-full border border-[#dadce0] p-3 rounded-lg text-sm focus:ring-2 focus:ring-[#34a853] focus:border-[#34a853] outline-none"
+                  />
+                  <p className="text-xs text-[#5f6368]">
+                    <a href="https://www.data.go.kr/data/15044713/openapi.do" target="_blank" rel="noopener noreferrer" className="text-[#34a853] hover:underline">
+                      공공데이터포털
+                    </a>에서 "건축물대장정보 서비스" API 키를 발급받으세요.
+                  </p>
+                  <div className="mt-2 p-3 bg-white rounded-lg border border-[#dadce0]">
+                    <p className="text-xs font-bold text-[#3c4043] mb-1">연동 예정 기능:</p>
+                    <ul className="text-xs text-[#5f6368] space-y-1">
+                      <li>• 건물 표제부 자동 입력 (동별 건물정보)</li>
+                      <li>• 층별 정보 자동 입력</li>
+                    </ul>
+                  </div>
+                  {!appSettings.dataGoKrApiKey && (
+                    <p className="text-xs text-[#fbbc05] font-medium">⚠️ API 키가 없으면 건물정보 자동 조회가 작동하지 않습니다.</p>
+                  )}
+                </div>
               </div>
             </div>
 
