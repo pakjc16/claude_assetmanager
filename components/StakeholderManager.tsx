@@ -111,22 +111,22 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-        <h2 className="text-xl font-bold text-gray-800">인물 및 업체 관리</h2>
+    <div className="space-y-3 md:space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 md:gap-4">
+        <h2 className="text-base md:text-xl font-bold text-gray-800">인물/업체 관리</h2>
         <div className="flex gap-2 w-full md:w-auto">
           <div className="relative flex-1 md:w-64">
-            <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="이름, 연락처 검색" 
+            <Search className="absolute left-2.5 md:left-3 top-2 md:top-2.5 text-gray-400" size={16} />
+            <input
+              type="text"
+              placeholder="이름, 연락처 검색"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 bg-white text-gray-900 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium"
+              className="w-full pl-8 md:pl-10 pr-3 md:pr-4 py-1.5 md:py-2 border border-gray-300 bg-white text-gray-900 rounded-lg text-[11px] md:text-sm focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium"
             />
           </div>
-          <button onClick={handleOpenAdd} className="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-md transition-all active:scale-95">
-            <Plus size={16} /> 신규 등록
+          <button onClick={handleOpenAdd} className="bg-indigo-600 text-white px-3 md:px-5 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 md:gap-2 hover:bg-indigo-700 shadow-md transition-all active:scale-95 whitespace-nowrap">
+            <Plus size={14} className="md:w-4 md:h-4"/> 등록
           </button>
         </div>
       </div>
@@ -292,73 +292,72 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       )}
 
       {/* Filter Tabs */}
-      <div className="flex bg-white rounded-xl border border-gray-200 p-1 w-fit shadow-sm overflow-x-auto">
+      <div className="flex bg-white rounded-lg md:rounded-xl border border-gray-200 p-0.5 md:p-1 w-fit shadow-sm overflow-x-auto">
         {[
           { id: 'ALL', label: '전체' }, { id: 'TENANT', label: '임차인' }, { id: 'LANDLORD', label: '임대인' }, { id: 'MANAGER', label: '관리자' }, { id: 'VENDOR', label: '업체' },
         ].map(tab => (
-           <button key={tab.id} onClick={() => setFilterRole(tab.id as any)} className={`px-6 py-2 text-xs font-black rounded-lg transition-all whitespace-nowrap ${filterRole === tab.id ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>{tab.label}</button>
+           <button key={tab.id} onClick={() => setFilterRole(tab.id as any)} className={`px-3 md:px-6 py-1.5 md:py-2 text-[10px] md:text-xs font-black rounded-md md:rounded-lg transition-all whitespace-nowrap ${filterRole === tab.id ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>{tab.label}</button>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-6">
         {filtered.map(person => (
-          <div key={person.id} className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:shadow-xl transition-all group flex flex-col h-full">
-            <div className="flex justify-between items-start mb-5">
-              <div className="flex items-center gap-4">
-                 <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-black border-2 ${
+          <div key={person.id} className="bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-gray-200 shadow-sm hover:shadow-xl transition-all group flex flex-col h-full">
+            <div className="flex justify-between items-start mb-3 md:mb-5">
+              <div className="flex items-center gap-2 md:gap-4">
+                 <div className={`w-10 md:w-12 h-10 md:h-12 rounded-lg md:rounded-xl flex items-center justify-center text-base md:text-lg font-black border-2 ${
                    person.type === 'CORPORATE' ? 'bg-gray-50 text-gray-400 border-gray-100' : 'bg-indigo-50 text-indigo-600 border-indigo-100 shadow-inner'
                  }`}>
-                   {person.type === 'CORPORATE' ? <Building size={22} /> : <User size={22} />}
+                   {person.type === 'CORPORATE' ? <Building size={18} className="md:w-[22px] md:h-[22px]"/> : <User size={18} className="md:w-[22px] md:h-[22px]"/>}
                  </div>
                  <div>
-                   <h3 className="font-black text-gray-900 text-lg leading-tight">{person.name}</h3>
-                   <div className="flex flex-wrap gap-1.5 mt-1.5">{person.roles.map(r => <span key={r}>{getRoleBadge(r)}</span>)}</div>
+                   <h3 className="font-black text-gray-900 text-sm md:text-lg leading-tight truncate max-w-[120px] md:max-w-none">{person.name}</h3>
+                   <div className="flex flex-wrap gap-1 md:gap-1.5 mt-1 md:mt-1.5">{person.roles.map(r => <span key={r}>{getRoleBadge(r)}</span>)}</div>
                  </div>
               </div>
               {person.businessLicenseFile && (
-                <div className="p-2 bg-gray-50 rounded-lg text-gray-400" title="사업자등록증 보유">
-                   <Paperclip size={16}/>
+                <div className="p-1.5 md:p-2 bg-gray-50 rounded-lg text-gray-400" title="사업자등록증 보유">
+                   <Paperclip size={14} className="md:w-4 md:h-4"/>
                 </div>
               )}
             </div>
-            
-            <div className="space-y-3 mt-auto text-xs text-gray-600 bg-gray-50/70 p-4 rounded-xl border border-gray-100">
+
+            <div className="space-y-2 md:space-y-3 mt-auto text-[10px] md:text-xs text-gray-600 bg-gray-50/70 p-2.5 md:p-4 rounded-lg md:rounded-xl border border-gray-100">
               {person.type === 'CORPORATE' ? (
                 <>
-                  <div className="flex items-center gap-2.5">
-                    <Briefcase size={14} className="text-gray-400" />
+                  <div className="flex items-center gap-2">
+                    <Briefcase size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
                     <span className="font-bold text-gray-700" title="사업자등록번호">{person.businessRegistrationNumber || '-'}</span>
                   </div>
-                  <div className="flex items-center gap-2.5">
-                    <Building size={14} className="text-gray-400" />
-                    <span className="font-medium text-gray-500 text-[10px] font-mono" title="법인등록번호">{person.registrationNumber}</span>
+                  <div className="flex items-center gap-2">
+                    <Building size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
+                    <span className="font-medium text-gray-500 text-[9px] md:text-[10px] font-mono" title="법인등록번호">{person.registrationNumber}</span>
                   </div>
                 </>
               ) : (
-                <div className="flex items-center gap-2.5 bg-white py-1.5 px-2.5 rounded-lg border border-indigo-100/50 shadow-sm">
-                   <Lock size={12} className="text-indigo-400" />
-                   <span className="font-black text-indigo-400 uppercase tracking-tighter text-[10px]">개인정보 보호됨</span>
-                   <span className="ml-auto text-[9px] text-gray-300 font-mono italic">Protected</span>
+                <div className="flex items-center gap-2 bg-white py-1 md:py-1.5 px-2 md:px-2.5 rounded-lg border border-indigo-100/50 shadow-sm">
+                   <Lock size={10} className="md:w-3 md:h-3 text-indigo-400"/>
+                   <span className="font-black text-indigo-400 uppercase tracking-tighter text-[8px] md:text-[10px]">개인정보 보호됨</span>
                 </div>
               )}
 
-              <div className="flex items-center gap-2.5 pt-1">
-                <Phone size={14} className="text-gray-400" />
+              <div className="flex items-center gap-2 pt-0.5 md:pt-1">
+                <Phone size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
                 <a href={`tel:${person.contact.phone}`} className="font-bold text-indigo-600 hover:underline">{person.contact.phone}</a>
               </div>
-              <div className="flex items-center gap-2.5">
-                <Mail size={14} className="text-gray-400" />
-                <a href={`mailto:${person.contact.email}`} className="truncate hover:text-indigo-600 hover:underline font-medium">{person.contact.email}</a>
+              <div className="flex items-center gap-2">
+                <Mail size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
+                <a href={`mailto:${person.contact.email}`} className="truncate hover:text-indigo-600 hover:underline font-medium text-[9px] md:text-xs">{person.contact.email}</a>
               </div>
             </div>
-            
-            <div className="mt-6 pt-0 flex gap-2">
-              <button onClick={() => handleOpenEdit(person)} className="flex-1 py-2.5 text-[11px] font-black border border-gray-200 rounded-xl text-gray-600 bg-white hover:bg-gray-50 shadow-sm transition-all active:scale-95">정보 수정</button>
-              <button onClick={() => handleOpenHistory(person.id)} className="flex-1 py-2.5 text-[11px] font-black bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl hover:bg-indigo-100 shadow-sm transition-all active:scale-95">거래 이력</button>
+
+            <div className="mt-3 md:mt-6 pt-0 flex gap-1.5 md:gap-2">
+              <button onClick={() => handleOpenEdit(person)} className="flex-1 py-2 md:py-2.5 text-[9px] md:text-[11px] font-black border border-gray-200 rounded-lg md:rounded-xl text-gray-600 bg-white hover:bg-gray-50 shadow-sm transition-all active:scale-95">수정</button>
+              <button onClick={() => handleOpenHistory(person.id)} className="flex-1 py-2 md:py-2.5 text-[9px] md:text-[11px] font-black bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg md:rounded-xl hover:bg-indigo-100 shadow-sm transition-all active:scale-95">이력</button>
             </div>
           </div>
         ))}
-        {filtered.length === 0 && <div className="col-span-full py-20 text-center text-gray-400 italic">검색 결과가 없습니다.</div>}
+        {filtered.length === 0 && <div className="col-span-full py-12 md:py-20 text-center text-gray-400 italic text-xs md:text-sm">검색 결과가 없습니다.</div>}
       </div>
     </div>
   );

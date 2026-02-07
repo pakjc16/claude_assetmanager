@@ -97,6 +97,70 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 - 면적 단위: ㎡(소수점 1자리), 평(소수점 1자리, ㎡ × 0.3025)
 - 모든 스타일링은 Tailwind 클래스 사용
 
+## 모바일 반응형 코딩 표준
+
+모든 UI 컴포넌트는 모바일 퍼스트로 작성하고, `md:` 접두사로 데스크탑 스타일 추가.
+
+### 테이블 반응형 패턴
+
+```tsx
+// 테이블 컨테이너: 가로 스크롤 허용
+<div className="overflow-x-auto">
+  <table className="w-full text-xs md:text-sm min-w-[400px]">
+
+// 테이블 헤더
+<thead className="bg-[#f8f9fa]">
+  <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">컬럼명</th>
+    <th className="p-1.5 md:p-3 text-center hidden md:table-cell">모바일숨김</th>
+
+// 테이블 셀
+<td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#202124] whitespace-nowrap tracking-tight">
+
+// 합계 행 (tfoot)
+<tfoot className="bg-[#e8f0fe] border-t-2 border-[#1a73e8]">
+  <tr className="font-bold text-[#1a73e8] text-[10px] md:text-sm">
+```
+
+### 카드/버튼 반응형 패턴
+
+```tsx
+// 카드 패딩
+<div className="p-2 md:p-4 rounded-lg md:rounded-xl">
+
+// 버튼
+<button className="px-2 md:px-4 py-1.5 md:py-2 text-[10px] md:text-xs font-bold">
+  <Plus size={12} className="md:w-4 md:h-4"/> 추가
+</button>
+
+// 섹션 헤더
+<h3 className="font-black text-sm md:text-base flex items-center gap-1 md:gap-2">
+  <Icon size={16} className="md:w-[18px] md:h-[18px]"/> 제목
+</h3>
+```
+
+### 핵심 클래스 규칙
+
+| 용도 | 모바일 | 데스크탑 |
+|------|--------|----------|
+| 본문 텍스트 | `text-xs` | `md:text-sm` |
+| 작은 텍스트 | `text-[10px]` | `md:text-xs` |
+| 아주 작은 텍스트 | `text-[8px]` | `md:text-[10px]` |
+| 테이블 셀 패딩 | `p-1.5` | `md:p-3` |
+| 카드 패딩 | `p-2` | `md:p-4` |
+| 아이콘 | `size={12}` | `md:w-3.5 md:h-3.5` |
+| 갭 | `gap-1` | `md:gap-2` |
+
+### 모바일 최적화 기법
+
+- `whitespace-nowrap`: 숫자/금액/면적 줄바꿈 방지
+- `tracking-tight`: 자간 축소 (숫자 데이터)
+- `truncate`: 긴 텍스트 말줄임
+- `hidden md:table-cell`: 모바일에서 불필요한 열 숨김
+- `hidden md:inline`: 모바일에서 보조 텍스트 숨김
+- `min-w-[400px]`: 테이블 최소 너비 (가로 스크롤 보장)
+- `md:opacity-0 md:group-hover:opacity-100`: 데스크탑만 호버 효과
+
 ## 부동산 용어 (한국어)
 
 - 물건 = Property (부동산 자산)
@@ -138,6 +202,26 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 - **API 키 관리** - `.env` 파일 또는 설정 페이지에서 관리 (VWorld, data.go.kr)
 
 ## 개발 이력
+
+### 2025-02-07: 모바일 반응형 UI 전면 개선 (앱 전체 적용)
+
+**적용된 컴포넌트**:
+- `PropertyManager.tsx` - 자산 관리 (토지/건물/층별/호실 테이블, 개요 카드)
+- `ContractManager.tsx` - 계약 관리 (임대차/유틸리티/유지보수 탭, 계약 테이블)
+- `FacilityManager.tsx` - 시설 관리 (시설 카드 그리드, 상태 표시)
+- `FinanceManager.tsx` - 납입/청구 (청구 테이블, 수납 버튼)
+- `StakeholderManager.tsx` - 인물/업체 (검색, 필터 탭, 인물 카드)
+- `Dashboard.tsx` - 대시보드 (위젯 설정, 차트, 계약 만료 테이블)
+- `StatsCard.tsx` - 통계 카드 (재무 현황 지표)
+
+**주요 변경사항**:
+- 모든 테이블에 `overflow-x-auto`, `min-w-[400px]` 적용
+- 폰트 크기 반응형: `text-[10px] md:text-sm`, `text-[8px] md:text-[10px]`
+- 패딩 반응형: `p-2 md:p-5`, `p-1.5 md:p-3`
+- 아이콘 크기 반응형: `size={12} className="md:w-4 md:h-4"`
+- 줄바꿈 방지: `whitespace-nowrap`, `tracking-tight`
+- 모바일에서 불필요한 열/텍스트 숨김: `hidden md:table-cell`
+- 모바일 반응형 코딩 표준 문서화 (향후 개발 기준)
 
 ### 2025-02-05: 건축물대장 API 연동 및 UI 개선
 - data.go.kr 건축물대장 API 연동 (표제부/층별개요)

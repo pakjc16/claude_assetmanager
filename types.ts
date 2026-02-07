@@ -92,8 +92,15 @@ export interface Lot {
 export interface PropertyPhoto {
   id: string;
   url: string;
+  name?: string;           // 사진 이름
   caption?: string;
   uploadedAt: string;
+  // 연계 정보
+  linkedType?: 'PROPERTY' | 'LOT' | 'BUILDING' | 'FLOOR' | 'UNIT';
+  linkedLotId?: string;    // 토지 연계
+  linkedBuildingId?: string; // 건물 연계
+  linkedFloor?: number;    // 층 연계
+  linkedUnitId?: string;   // 호실 연계
 }
 
 export interface Property {

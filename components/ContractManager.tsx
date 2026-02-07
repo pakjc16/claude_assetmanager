@@ -84,36 +84,36 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-[#dadce0] shadow-sm">
+    <div className="space-y-3 md:space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-[#dadce0] shadow-sm">
         <div>
-          <h2 className="text-xl font-black text-[#3c4043] flex items-center gap-2"><FileText size={24} className="text-[#1a73e8]"/> 통합 계약 및 운영 자산 관리</h2>
-          <p className="text-sm text-[#5f6368] mt-1 font-medium">임대차 현황, 시설 유지보수 용역, 유틸리티 계약의 유기적 연동 및 이력 관리</p>
+          <h2 className="text-base md:text-xl font-black text-[#3c4043] flex items-center gap-2"><FileText size={20} className="md:w-6 md:h-6 text-[#1a73e8]"/> 계약 관리</h2>
+          <p className="text-[10px] md:text-sm text-[#5f6368] mt-1 font-medium hidden md:block">임대차 현황, 시설 유지보수 용역, 유틸리티 계약의 유기적 연동 및 이력 관리</p>
         </div>
-        <button onClick={() => setIsModalOpen(true)} className="bg-[#1a73e8] text-white px-6 py-3 rounded-xl text-sm font-black flex items-center gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95"><Plus size={18} /> 신규 {activeTab === 'LEASE' ? '임대차' : activeTab === 'MAINTENANCE' ? '유지보수' : '공과금'} 계약 등록</button>
+        <button onClick={() => setIsModalOpen(true)} className="bg-[#1a73e8] text-white px-3 md:px-6 py-2 md:py-3 rounded-lg md:rounded-xl text-[10px] md:text-sm font-black flex items-center gap-1 md:gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95 whitespace-nowrap"><Plus size={14} className="md:w-[18px] md:h-[18px]"/> <span className="hidden md:inline">신규 </span>{activeTab === 'LEASE' ? '임대차' : activeTab === 'MAINTENANCE' ? '유지보수' : '공과금'}<span className="hidden md:inline"> 계약 등록</span></button>
       </div>
 
-      <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-4 rounded-t-2xl">
+      <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-2 md:px-4 rounded-t-xl md:rounded-t-2xl overflow-x-auto">
         {[
-          { id: 'LEASE', label: '임대차 계약', icon: <Shuffle size={16}/> },
-          { id: 'MAINTENANCE', label: '유지보수/용역', icon: <Wrench size={16}/> },
-          { id: 'UTILITY', label: '공과금/유틸리티', icon: <Zap size={16}/> }
+          { id: 'LEASE', label: '임대차', labelFull: '임대차 계약', icon: <Shuffle size={14} className="md:w-4 md:h-4"/> },
+          { id: 'MAINTENANCE', label: '유지보수', labelFull: '유지보수/용역', icon: <Wrench size={14} className="md:w-4 md:h-4"/> },
+          { id: 'UTILITY', label: '공과금', labelFull: '공과금/유틸리티', icon: <Zap size={14} className="md:w-4 md:h-4"/> }
         ].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-8 py-5 text-xs font-black uppercase tracking-widest transition-all flex items-center gap-3 ${activeTab === tab.id ? 'border-b-4 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
-            {tab.icon} {tab.label}
+          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-3 md:px-8 py-3 md:py-5 text-[10px] md:text-xs font-black uppercase tracking-wide md:tracking-widest transition-all flex items-center gap-1.5 md:gap-3 whitespace-nowrap ${activeTab === tab.id ? 'border-b-2 md:border-b-4 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
+            {tab.icon} <span className="md:hidden">{tab.label}</span><span className="hidden md:inline">{tab.labelFull}</span>
           </button>
         ))}
       </div>
 
-      <div className="bg-white rounded-b-2xl border border-[#dadce0] border-t-0 overflow-hidden shadow-sm">
-        <table className="w-full text-sm text-left">
-           <thead className="bg-[#f8f9fa] border-b border-[#dadce0] text-[11px] font-black text-[#5f6368] uppercase tracking-widest">
+      <div className="bg-white rounded-b-xl md:rounded-b-2xl border border-[#dadce0] border-t-0 overflow-hidden shadow-sm overflow-x-auto">
+        <table className="w-full text-xs md:text-sm text-left min-w-[600px]">
+           <thead className="bg-[#f8f9fa] border-b border-[#dadce0] text-[8px] md:text-[11px] font-black text-[#5f6368] uppercase tracking-wide md:tracking-widest">
               <tr>
-                <th className="p-5">계약 대상 (자산/호실)</th>
-                <th className="p-5">계약 당사자</th>
-                <th className="p-5">계약 기간 (시작~종료)</th>
-                <th className="p-5 text-right">주요 조건 (보증금/비용)</th>
-                <th className="p-5 text-center">현재 상태</th>
+                <th className="p-2 md:p-5 whitespace-nowrap">대상</th>
+                <th className="p-2 md:p-5 whitespace-nowrap">당사자</th>
+                <th className="p-2 md:p-5 whitespace-nowrap">계약 기간</th>
+                <th className="p-2 md:p-5 text-right whitespace-nowrap">보증금/비용</th>
+                <th className="p-2 md:p-5 text-center whitespace-nowrap">상태</th>
               </tr>
            </thead>
            <tbody className="divide-y divide-[#f1f3f4]">
@@ -124,31 +124,31 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
                  const terms = c.financialTerms[0];
                  return (
                   <tr key={c.id} className="hover:bg-gray-50 transition-colors group">
-                    <td className="p-5">
+                    <td className="p-2 md:p-5">
                        <div className="flex flex-col">
-                          <span className="font-black text-[#202124] flex items-center gap-2">
-                             <Home size={14} className="text-[#1a73e8]"/> 
-                             {unit ? `${unit.unitNumber}호` : '건물 전체'}
+                          <span className="font-black text-[10px] md:text-sm text-[#202124] flex items-center gap-1 md:gap-2">
+                             <Home size={12} className="md:w-3.5 md:h-3.5 text-[#1a73e8]"/>
+                             {unit ? `${unit.unitNumber}호` : '건물'}
                           </span>
-                          <span className="text-[10px] text-gray-400 mt-1 font-bold uppercase">{property?.name}</span>
+                          <span className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 font-bold uppercase truncate max-w-[80px] md:max-w-none">{property?.name}</span>
                        </div>
                     </td>
-                    <td className="p-5">
-                       <div className="flex items-center gap-2">
-                          <User size={14} className="text-gray-400"/>
-                          <span className="font-bold text-[#5f6368] group-hover:text-[#1a73e8]">{tenant?.name || '미지정'}</span>
+                    <td className="p-2 md:p-5">
+                       <div className="flex items-center gap-1 md:gap-2">
+                          <User size={12} className="md:w-3.5 md:h-3.5 text-gray-400 hidden md:block"/>
+                          <span className="font-bold text-[10px] md:text-sm text-[#5f6368] group-hover:text-[#1a73e8] truncate max-w-[60px] md:max-w-none">{tenant?.name || '미지정'}</span>
                        </div>
                     </td>
-                    <td className="p-5 font-bold text-gray-500 text-xs">
-                       <div className="flex items-center gap-1.5"><Calendar size={12}/> {c.term.startDate} ~ {c.term.endDate}</div>
+                    <td className="p-2 md:p-5 font-bold text-gray-500 text-[9px] md:text-xs whitespace-nowrap">
+                       <div className="flex items-center gap-1"><Calendar size={10} className="md:w-3 md:h-3 hidden md:block"/> {c.term.startDate.substring(2)}~{c.term.endDate.substring(2)}</div>
                     </td>
-                    <td className="p-5 text-right">
+                    <td className="p-2 md:p-5 text-right">
                        <div className="flex flex-col">
-                          <span className="font-black text-[#1a73e8]">보: {formatMoney(terms?.deposit || 0)}</span>
-                          <span className="text-[11px] text-[#34a853] font-bold">월: {formatMoney(terms?.monthlyRent || 0)}</span>
+                          <span className="font-black text-[10px] md:text-sm text-[#1a73e8] whitespace-nowrap tracking-tight">{formatMoney(terms?.deposit || 0)}</span>
+                          <span className="text-[9px] md:text-[11px] text-[#34a853] font-bold whitespace-nowrap tracking-tight">{formatMoney(terms?.monthlyRent || 0)}/월</span>
                        </div>
                     </td>
-                    <td className="p-5 text-center"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${c.status === 'ACTIVE' ? 'bg-[#e8f0fe] text-[#1a73e8] border border-[#d2e3fc]' : 'bg-gray-100 text-gray-400'}`}>{c.status === 'ACTIVE' ? '정상 임대' : '계약 종료'}</span></td>
+                    <td className="p-2 md:p-5 text-center"><span className={`px-1.5 md:px-3 py-0.5 md:py-1 rounded-full text-[8px] md:text-[10px] font-black uppercase whitespace-nowrap ${c.status === 'ACTIVE' ? 'bg-[#e8f0fe] text-[#1a73e8] border border-[#d2e3fc]' : 'bg-gray-100 text-gray-400'}`}>{c.status === 'ACTIVE' ? '정상' : '종료'}</span></td>
                   </tr>
                  );
               })}
@@ -157,48 +157,48 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
                  const facility = facilities.find(f => f.id === c.facilityId);
                  return (
                   <tr key={c.id} className="hover:bg-gray-50 transition-colors group">
-                    <td className="p-5">
+                    <td className="p-2 md:p-5">
                        <div className="flex flex-col">
-                          <span className="font-black text-[#202124] flex items-center gap-2">
-                             <Wrench size={14} className="text-[#fbbc05]"/> 
-                             {facility?.name || '단지 전체 용역'}
+                          <span className="font-black text-[10px] md:text-sm text-[#202124] flex items-center gap-1 md:gap-2">
+                             <Wrench size={12} className="md:w-3.5 md:h-3.5 text-[#fbbc05]"/>
+                             <span className="truncate max-w-[80px] md:max-w-none">{facility?.name || '단지 용역'}</span>
                           </span>
-                          <span className="text-[10px] text-gray-400 mt-1 font-bold uppercase">{c.serviceType}</span>
+                          <span className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 font-bold uppercase">{c.serviceType}</span>
                        </div>
                     </td>
-                    <td className="p-5">
-                       <div className="flex items-center gap-2">
-                          <Building size={14} className="text-gray-400"/>
-                          <span className="font-bold text-[#5f6368]">{vendor?.name || '미지정 업체'}</span>
+                    <td className="p-2 md:p-5">
+                       <div className="flex items-center gap-1 md:gap-2">
+                          <Building size={12} className="md:w-3.5 md:h-3.5 text-gray-400 hidden md:block"/>
+                          <span className="font-bold text-[10px] md:text-sm text-[#5f6368] truncate max-w-[60px] md:max-w-none">{vendor?.name || '미지정'}</span>
                        </div>
                     </td>
-                    <td className="p-5 font-bold text-gray-500 text-xs">
-                       <div className="flex items-center gap-1.5"><Calendar size={12}/> {c.term.startDate} ~ {c.term.endDate}</div>
+                    <td className="p-2 md:p-5 font-bold text-gray-500 text-[9px] md:text-xs whitespace-nowrap">
+                       <div className="flex items-center gap-1"><Calendar size={10} className="md:w-3 md:h-3 hidden md:block"/> {c.term.startDate.substring(2)}~{c.term.endDate.substring(2)}</div>
                     </td>
-                    <td className="p-5 text-right font-black text-[#ea4335]">{formatMoney(c.monthlyCost)} / 월</td>
-                    <td className="p-5 text-center"><span className="px-3 py-1 rounded-full bg-[#fef7e0] text-[#b06000] text-[10px] font-black uppercase border border-[#feefc3]">계약중</span></td>
+                    <td className="p-2 md:p-5 text-right font-black text-[10px] md:text-sm text-[#ea4335] whitespace-nowrap tracking-tight">{formatMoney(c.monthlyCost)}/월</td>
+                    <td className="p-2 md:p-5 text-center"><span className="px-1.5 md:px-3 py-0.5 md:py-1 rounded-full bg-[#fef7e0] text-[#b06000] text-[8px] md:text-[10px] font-black uppercase border border-[#feefc3] whitespace-nowrap">계약중</span></td>
                   </tr>
                  );
               })}
               {activeTab === 'UTILITY' && utilityContracts.map(c => (
                  <tr key={c.id} className="hover:bg-gray-50 transition-colors group">
-                    <td className="p-5">
+                    <td className="p-2 md:p-5">
                        <div className="flex flex-col">
-                          <span className="font-black text-[#202124] flex items-center gap-2">
-                             <Zap size={14} className="text-[#34a853]"/> 
+                          <span className="font-black text-[10px] md:text-sm text-[#202124] flex items-center gap-1 md:gap-2">
+                             <Zap size={12} className="md:w-3.5 md:h-3.5 text-[#34a853]"/>
                              {c.category}
                           </span>
-                          <span className="text-[10px] text-gray-400 mt-1 font-bold">고객번호: {c.customerNumber}</span>
+                          <span className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 font-bold truncate max-w-[80px] md:max-w-none">고객:{c.customerNumber}</span>
                        </div>
                     </td>
-                    <td className="p-5 font-bold text-[#5f6368]">{c.provider}</td>
-                    <td className="p-5 text-xs text-gray-500 font-medium">검침주기: {c.billingCycle}</td>
-                    <td className="p-5 text-right font-bold text-gray-700">납부일: 매월 {c.paymentDay}일</td>
-                    <td className="p-5 text-center"><span className="px-3 py-1 rounded-full bg-green-50 text-green-700 text-[10px] font-black border border-green-100">활성</span></td>
+                    <td className="p-2 md:p-5 font-bold text-[10px] md:text-sm text-[#5f6368] truncate max-w-[60px] md:max-w-none">{c.provider}</td>
+                    <td className="p-2 md:p-5 text-[9px] md:text-xs text-gray-500 font-medium whitespace-nowrap">{c.billingCycle}</td>
+                    <td className="p-2 md:p-5 text-right font-bold text-[10px] md:text-sm text-gray-700 whitespace-nowrap">매월 {c.paymentDay}일</td>
+                    <td className="p-2 md:p-5 text-center"><span className="px-1.5 md:px-3 py-0.5 md:py-1 rounded-full bg-green-50 text-green-700 text-[8px] md:text-[10px] font-black border border-green-100">활성</span></td>
                  </tr>
               ))}
               {((activeTab === 'LEASE' && leaseContracts.length === 0) || (activeTab === 'MAINTENANCE' && maintenanceContracts.length === 0) || (activeTab === 'UTILITY' && utilityContracts.length === 0)) && (
-                 <tr><td colSpan={5} className="p-40 text-center text-gray-300 font-bold italic">조회된 계약 데이터가 없습니다.</td></tr>
+                 <tr><td colSpan={5} className="p-16 md:p-40 text-center text-gray-300 font-bold italic text-xs md:text-sm">조회된 계약 데이터가 없습니다.</td></tr>
               )}
            </tbody>
         </table>

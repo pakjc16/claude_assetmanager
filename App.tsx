@@ -213,76 +213,141 @@ function App() {
     };
   }, [transactions]);
 
+  // 단위 설정 드롭다운 상태
+  const [isUnitMenuOpen, setIsUnitMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
   const menuItems = [
-    { id: 'DASHBOARD', label: '대시보드', icon: <LayoutDashboard size={20}/> },
-    { id: 'PROPERTY', label: '자산 관리', icon: <Building2 size={20}/> },
-    { id: 'FACILITY', label: '시설 관리', icon: <Wrench size={20}/> },
-    { id: 'CONTRACT', label: '계약 관리', icon: <FileText size={20}/> },
-    { id: 'STAKEHOLDER', label: '인물/업체', icon: <Users size={20}/> },
-    { id: 'FINANCE', label: '납입/청구', icon: <Wallet size={20}/> },
-    { id: 'VALUATION', label: '가치 평가', icon: <TrendingUp size={20}/> },
+    { id: 'DASHBOARD', label: '대시보드', shortLabel: '홈', icon: <LayoutDashboard size={18}/> },
+    { id: 'PROPERTY', label: '자산 관리', shortLabel: '자산', icon: <Building2 size={18}/> },
+    { id: 'FACILITY', label: '시설 관리', shortLabel: '시설', icon: <Wrench size={18}/> },
+    { id: 'CONTRACT', label: '계약 관리', shortLabel: '계약', icon: <FileText size={18}/> },
+    { id: 'STAKEHOLDER', label: '인물/업체', shortLabel: '인물', icon: <Users size={18}/> },
+    { id: 'FINANCE', label: '납입/청구', shortLabel: '청구', icon: <Wallet size={18}/> },
+    { id: 'VALUATION', label: '가치 평가', shortLabel: '평가', icon: <TrendingUp size={18}/> },
   ];
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden border-t-4 border-[#1a73e8]">
-      <aside className="w-64 border-r border-[#dadce0] flex-shrink-0 hidden md:flex flex-col bg-white">
-        <div className="p-6 flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#1a73e8] rounded-full flex items-center justify-center text-white shadow-md">
-             <Building2 size={24} />
+    <div className="flex h-screen bg-white overflow-hidden">
+      {/* PC 사이드바 */}
+      <aside className="w-56 border-r border-[#dadce0] flex-shrink-0 hidden lg:flex flex-col bg-white">
+        <div className="p-4 flex items-center gap-2 border-b border-[#dadce0]">
+          <div className="w-8 h-8 bg-[#1a73e8] rounded-lg flex items-center justify-center text-white">
+             <Building2 size={18} />
           </div>
-          <h1 className="text-xl font-bold tracking-tight text-[#3c4043]">RealtyFlow</h1>
+          <h1 className="text-lg font-bold text-[#3c4043]">RealtyFlow</h1>
         </div>
-        <nav className="flex-1 px-3 space-y-1 py-4">
+        <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
            {menuItems.map(item => (
-             <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-4 px-5 py-3 rounded-full text-sm font-medium transition-all ${activeTab === item.id ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'text-[#5f6368] hover:bg-[#f1f3f4]'}`}>
+             <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === item.id ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'text-[#5f6368] hover:bg-[#f1f3f4]'}`}>
                 {item.icon}
-                {item.label}
+                <span className="truncate">{item.label}</span>
              </button>
            ))}
         </nav>
-        <div className="p-6 border-t border-[#dadce0]">
-           <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-[#fbbc05] rounded-full flex items-center justify-center text-white font-bold text-xs">AD</div>
-              <div><p className="text-sm font-bold text-[#3c4043]">김관리 매니저</p><p className="text-[10px] text-[#5f6368] font-medium uppercase tracking-wider">Enterprise Plan</p></div>
+        <div className="p-3 border-t border-[#dadce0]">
+           <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[#f1f3f4] cursor-pointer" onClick={() => setIsSettingsOpen(true)}>
+              <div className="w-8 h-8 bg-[#fbbc05] rounded-full flex items-center justify-center text-white font-bold text-xs">AD</div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-[#3c4043] truncate">김관리</p>
+                <p className="text-[10px] text-[#5f6368]">설정</p>
+              </div>
+              <Settings size={14} className="text-[#5f6368]"/>
            </div>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col h-full overflow-hidden bg-white">
-         <header className="bg-white border-b border-[#dadce0] flex flex-col flex-shrink-0 z-10">
-            <div className="h-16 flex items-center justify-between px-10">
-               <h2 className="text-xl font-medium text-[#3c4043]">{menuItems.find(m => m.id === activeTab)?.label}</h2>
-               <div className="flex items-center gap-6">
-                  <div className="relative group w-96 hidden lg:block">
-                     <Search size={18} className="absolute left-3 top-2.5 text-[#5f6368]"/>
-                     <input type="text" placeholder="통합 검색" className="w-full bg-[#f1f3f4] border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-[#1a73e8] outline-none transition-all"/>
+         {/* 컴팩트 헤더 */}
+         <header className="bg-white border-b border-[#dadce0] flex-shrink-0 z-10">
+            <div className="h-12 flex items-center justify-between px-3 md:px-6">
+               {/* 모바일: 햄버거 + 로고 */}
+               <div className="flex items-center gap-2">
+                  <button onClick={() => setIsMobileMenuOpen(true)} className="lg:hidden p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg">
+                     <Menu size={20}/>
+                  </button>
+                  <div className="lg:hidden flex items-center gap-2">
+                     <div className="w-6 h-6 bg-[#1a73e8] rounded flex items-center justify-center text-white">
+                        <Building2 size={14}/>
+                     </div>
+                     <span className="text-sm font-bold text-[#3c4043]">RealtyFlow</span>
                   </div>
-                  <button className="p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-full transition-all relative"><Bell size={20}/><span className="absolute top-2 right-2 w-2 h-2 bg-[#ea4335] rounded-full border-2 border-white"></span></button>
-                  <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-full transition-all"><Settings size={20}/></button>
+                  <h2 className="hidden lg:block text-base font-medium text-[#3c4043]">{menuItems.find(m => m.id === activeTab)?.label}</h2>
                </div>
-            </div>
-            
-            <div className="h-14 bg-white flex items-center px-10 justify-end gap-10 border-t border-[#dadce0]">
-               <div className="flex items-center gap-4">
-                  <span className="text-[11px] font-bold text-[#5f6368] uppercase tracking-widest flex items-center gap-2"><Ruler size={14} className="text-[#1a73e8]"/> 면적</span>
-                  <div className="flex bg-[#f1f3f4] rounded-lg p-0.5 border border-[#dadce0]">
-                     <button onClick={() => setAreaUnit('M2')} className={`px-5 py-1 text-xs font-bold rounded-md transition-all ${areaUnit === 'M2' ? 'bg-white shadow-sm text-[#1a73e8]' : 'text-[#5f6368]'}`}>㎡</button>
-                     <button onClick={() => setAreaUnit('PYEONG')} className={`px-5 py-1 text-xs font-bold rounded-md transition-all ${areaUnit === 'PYEONG' ? 'bg-white shadow-sm text-[#1a73e8]' : 'text-[#5f6368]'}`}>평</button>
+
+               {/* 우측 액션 */}
+               <div className="flex items-center gap-1 md:gap-2">
+                  {/* 검색 (PC) */}
+                  <div className="relative hidden xl:block w-64">
+                     <Search size={16} className="absolute left-3 top-2 text-[#5f6368]"/>
+                     <input type="text" placeholder="검색..." className="w-full bg-[#f1f3f4] border-none rounded-lg pl-9 pr-3 py-1.5 text-sm focus:bg-white focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
                   </div>
-               </div>
-               <div className="flex items-center gap-4">
-                  <span className="text-[11px] font-bold text-[#5f6368] uppercase tracking-widest flex items-center gap-2"><Coins size={14} className="text-[#34a853]"/> 금액</span>
-                  <div className="flex bg-[#f1f3f4] rounded-lg p-0.5 border border-[#dadce0]">
-                     <button onClick={() => setCurrencyUnit('WON')} className={`px-5 py-1 text-xs font-bold rounded-md transition-all ${currencyUnit === 'WON' ? 'bg-white shadow-sm text-[#1a73e8]' : 'text-[#5f6368]'}`}>원</button>
-                     <button onClick={() => setCurrencyUnit('MAN')} className={`px-5 py-1 text-xs font-bold rounded-md transition-all ${currencyUnit === 'MAN' ? 'bg-white shadow-sm text-[#1a73e8]' : 'text-[#5f6368]'}`}>만원</button>
-                     <button onClick={() => setCurrencyUnit('EOK')} className={`px-5 py-1 text-xs font-bold rounded-md transition-all ${currencyUnit === 'EOK' ? 'bg-white shadow-sm text-[#1a73e8]' : 'text-[#5f6368]'}`}>억원</button>
+
+                  {/* 단위 설정 드롭다운 */}
+                  <div className="relative">
+                     <button
+                        onClick={() => setIsUnitMenuOpen(!isUnitMenuOpen)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all border ${
+                           isUnitMenuOpen
+                              ? 'bg-[#e8f0fe] text-[#1a73e8] border-[#1a73e8]'
+                              : 'bg-[#f1f3f4] text-[#3c4043] border-transparent hover:border-[#dadce0]'
+                        }`}
+                     >
+                        <Ruler size={14} className="text-[#1a73e8]"/>
+                        <span>{areaUnit === 'M2' ? '㎡' : '평'}</span>
+                        <span className="text-[#dadce0]">|</span>
+                        <Coins size={14} className="text-[#34a853]"/>
+                        <span>{currencyUnit === 'WON' ? '원' : currencyUnit === 'MAN' ? '만원' : '억'}</span>
+                        <ChevronDown size={12} className={`transition-transform ${isUnitMenuOpen ? 'rotate-180' : ''}`}/>
+                     </button>
+                     {isUnitMenuOpen && (
+                        <>
+                           <div className="fixed inset-0 z-40" onClick={() => setIsUnitMenuOpen(false)}/>
+                           <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-xl shadow-2xl border border-[#dadce0] py-2 z-50">
+                              <div className="px-3 py-1.5 text-[10px] font-bold text-[#5f6368] uppercase flex items-center gap-2">
+                                 <Ruler size={12} className="text-[#1a73e8]"/> 면적 단위
+                              </div>
+                              <button onClick={() => { setAreaUnit('M2'); setIsUnitMenuOpen(false); }} className={`w-full px-3 py-2.5 text-left text-sm hover:bg-[#f1f3f4] flex items-center justify-between ${areaUnit === 'M2' ? 'text-[#1a73e8] font-bold bg-[#e8f0fe]' : 'text-[#3c4043]'}`}>
+                                 ㎡ (제곱미터) {areaUnit === 'M2' && <span className="text-[#1a73e8]">✓</span>}
+                              </button>
+                              <button onClick={() => { setAreaUnit('PYEONG'); setIsUnitMenuOpen(false); }} className={`w-full px-3 py-2.5 text-left text-sm hover:bg-[#f1f3f4] flex items-center justify-between ${areaUnit === 'PYEONG' ? 'text-[#1a73e8] font-bold bg-[#e8f0fe]' : 'text-[#3c4043]'}`}>
+                                 평 {areaUnit === 'PYEONG' && <span className="text-[#1a73e8]">✓</span>}
+                              </button>
+                              <div className="border-t border-[#dadce0] my-2"></div>
+                              <div className="px-3 py-1.5 text-[10px] font-bold text-[#5f6368] uppercase flex items-center gap-2">
+                                 <Coins size={12} className="text-[#34a853]"/> 금액 단위
+                              </div>
+                              <button onClick={() => { setCurrencyUnit('WON'); setIsUnitMenuOpen(false); }} className={`w-full px-3 py-2.5 text-left text-sm hover:bg-[#f1f3f4] flex items-center justify-between ${currencyUnit === 'WON' ? 'text-[#1a73e8] font-bold bg-[#e8f0fe]' : 'text-[#3c4043]'}`}>
+                                 원 {currencyUnit === 'WON' && <span className="text-[#1a73e8]">✓</span>}
+                              </button>
+                              <button onClick={() => { setCurrencyUnit('MAN'); setIsUnitMenuOpen(false); }} className={`w-full px-3 py-2.5 text-left text-sm hover:bg-[#f1f3f4] flex items-center justify-between ${currencyUnit === 'MAN' ? 'text-[#1a73e8] font-bold bg-[#e8f0fe]' : 'text-[#3c4043]'}`}>
+                                 만원 {currencyUnit === 'MAN' && <span className="text-[#1a73e8]">✓</span>}
+                              </button>
+                              <button onClick={() => { setCurrencyUnit('EOK'); setIsUnitMenuOpen(false); }} className={`w-full px-3 py-2.5 text-left text-sm hover:bg-[#f1f3f4] flex items-center justify-between ${currencyUnit === 'EOK' ? 'text-[#1a73e8] font-bold bg-[#e8f0fe]' : 'text-[#3c4043]'}`}>
+                                 억원 {currencyUnit === 'EOK' && <span className="text-[#1a73e8]">✓</span>}
+                              </button>
+                           </div>
+                        </>
+                     )}
                   </div>
+
+                  {/* 알림 */}
+                  <button className="p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg relative">
+                     <Bell size={18}/>
+                     <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#ea4335] rounded-full"></span>
+                  </button>
+
+                  {/* 설정 (PC) */}
+                  <button onClick={() => setIsSettingsOpen(true)} className="hidden lg:flex p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg">
+                     <Settings size={18}/>
+                  </button>
                </div>
             </div>
          </header>
-         
-         <div className="flex-1 overflow-y-auto p-10 bg-white custom-scrollbar">
-            <div className="max-w-[1500px] mx-auto">
+
+         {/* 메인 콘텐츠 */}
+         <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20 lg:pb-6 bg-[#f8f9fa] custom-scrollbar">
+            <div className="max-w-[1400px] mx-auto">
                {activeTab === 'DASHBOARD' && <Dashboard financials={financials} properties={properties} contracts={leaseContracts} units={units} valuations={valuations} facilities={facilities} transactions={transactions} stakeholders={stakeholders} formatMoney={formatMoney} />}
                {activeTab === 'PROPERTY' && (
                   <PropertyManager
@@ -329,7 +394,76 @@ function App() {
                )}
             </div>
          </div>
+
+         {/* 모바일 하단 탭바 */}
+         <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-[#dadce0] safe-area-bottom z-40">
+            <div className="flex justify-around items-center h-14">
+               {menuItems.slice(0, 5).map(item => (
+                  <button
+                     key={item.id}
+                     onClick={() => setActiveTab(item.id)}
+                     className={`flex flex-col items-center justify-center py-1 px-3 min-w-[56px] ${
+                        activeTab === item.id ? 'text-[#1a73e8]' : 'text-[#5f6368]'
+                     }`}
+                  >
+                     {item.icon}
+                     <span className="text-[10px] mt-0.5 font-medium">{item.shortLabel}</span>
+                  </button>
+               ))}
+               <button
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="flex flex-col items-center justify-center py-1 px-3 min-w-[56px] text-[#5f6368]"
+               >
+                  <Menu size={18}/>
+                  <span className="text-[10px] mt-0.5 font-medium">더보기</span>
+               </button>
+            </div>
+         </nav>
       </main>
+
+      {/* 모바일 사이드 메뉴 */}
+      {isMobileMenuOpen && createPortal(
+         <div className="fixed inset-0 z-[150] lg:hidden" onClick={() => setIsMobileMenuOpen(false)}>
+            <div className="absolute inset-0 bg-black/50"/>
+            <div className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+               <div className="p-4 border-b border-[#dadce0] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                     <div className="w-8 h-8 bg-[#1a73e8] rounded-lg flex items-center justify-center text-white">
+                        <Building2 size={18}/>
+                     </div>
+                     <span className="font-bold text-[#3c4043]">RealtyFlow</span>
+                  </div>
+                  <button onClick={() => setIsMobileMenuOpen(false)} className="p-2 hover:bg-[#f1f3f4] rounded-lg">
+                     <X size={20} className="text-[#5f6368]"/>
+                  </button>
+               </div>
+               <nav className="p-2 space-y-0.5">
+                  {menuItems.map(item => (
+                     <button
+                        key={item.id}
+                        onClick={() => { setActiveTab(item.id); setIsMobileMenuOpen(false); }}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                           activeTab === item.id ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'text-[#5f6368] hover:bg-[#f1f3f4]'
+                        }`}
+                     >
+                        {item.icon}
+                        {item.label}
+                     </button>
+                  ))}
+               </nav>
+               <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-[#dadce0] bg-white">
+                  <button
+                     onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }}
+                     className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
+                  >
+                     <Settings size={18}/>
+                     환경설정
+                  </button>
+               </div>
+            </div>
+         </div>,
+         document.body
+      )}
 
       {/* Settings Modal */}
       {isSettingsOpen && createPortal(

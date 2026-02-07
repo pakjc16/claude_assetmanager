@@ -90,62 +90,62 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-[#dadce0] shadow-sm">
+    <div className="space-y-3 md:space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-[#dadce0] shadow-sm">
          <div>
-            <h2 className="text-xl font-black text-[#3c4043] flex items-center gap-2"><Wrench size={24} className="text-[#1a73e8]"/> 시설 및 설비 통합 라이프사이클 관리</h2>
-            <p className="text-sm text-[#5f6368] mt-1 font-medium">자산별 설비 위치, 노후도, 정기 점검 이력 및 유지보수 계약 실시간 모니터링</p>
+            <h2 className="text-base md:text-xl font-black text-[#3c4043] flex items-center gap-2"><Wrench size={20} className="md:w-6 md:h-6 text-[#1a73e8]"/> 시설 관리</h2>
+            <p className="text-[10px] md:text-sm text-[#5f6368] mt-1 font-medium hidden md:block">자산별 설비 위치, 노후도, 정기 점검 이력 및 유지보수 계약 실시간 모니터링</p>
          </div>
-         <button onClick={handleOpenAdd} className="bg-[#1a73e8] text-white px-6 py-3 rounded-xl text-sm font-black flex items-center gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95"><Plus size={18}/> 신규 설비 등록</button>
+         <button onClick={handleOpenAdd} className="bg-[#1a73e8] text-white px-3 md:px-6 py-2 md:py-3 rounded-lg md:rounded-xl text-[10px] md:text-sm font-black flex items-center gap-1 md:gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95 whitespace-nowrap"><Plus size={14} className="md:w-[18px] md:h-[18px]"/> 설비 등록</button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-6">
          {facilities.map(fac => {
             const status = STATUS_LABELS[fac.status];
             const unit = units.find(u => u.id === fac.unitId);
             const property = properties.find(p => p.id === fac.propertyId);
             const vendor = stakeholders.find(s => s.id === fac.vendorId);
-            
+
             return (
-               <div key={fac.id} className="bg-white rounded-2xl border border-[#dadce0] p-6 hover:shadow-2xl transition-all relative group flex flex-col border-b-4 border-b-gray-100 hover:border-b-[#1a73e8]">
-                  <div className="flex justify-between items-start mb-5">
+               <div key={fac.id} className="bg-white rounded-xl md:rounded-2xl border border-[#dadce0] p-3 md:p-6 hover:shadow-2xl transition-all relative group flex flex-col border-b-4 border-b-gray-100 hover:border-b-[#1a73e8]">
+                  <div className="flex justify-between items-start mb-3 md:mb-5">
                      <div>
-                        <span className="text-[10px] font-black text-[#5f6368] uppercase tracking-widest bg-gray-50 px-2 py-0.5 rounded-md border border-gray-100">{CATEGORY_LABELS[fac.category]}</span>
-                        <h3 className="text-lg font-black text-[#202124] mt-2 group-hover:text-[#1a73e8] transition-colors">{fac.name}</h3>
+                        <span className="text-[8px] md:text-[10px] font-black text-[#5f6368] uppercase tracking-wide md:tracking-widest bg-gray-50 px-1.5 md:px-2 py-0.5 rounded-md border border-gray-100">{CATEGORY_LABELS[fac.category]}</span>
+                        <h3 className="text-sm md:text-lg font-black text-[#202124] mt-1.5 md:mt-2 group-hover:text-[#1a73e8] transition-colors truncate">{fac.name}</h3>
                      </div>
-                     <span className={`px-2.5 py-1 rounded-full text-[10px] font-black border flex items-center gap-1.5 shadow-sm ${status.color}`}>
-                        <status.icon size={12}/>
-                        {status.label}
+                     <span className={`px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-full text-[8px] md:text-[10px] font-black border flex items-center gap-1 md:gap-1.5 shadow-sm whitespace-nowrap ${status.color}`}>
+                        <status.icon size={10} className="md:w-3 md:h-3"/>
+                        <span className="hidden md:inline">{status.label}</span>
                      </span>
                   </div>
-                  
-                  <div className="space-y-3 mt-4 text-xs font-bold flex-1">
-                     <div className="flex justify-between items-center bg-[#f8f9fa] p-3 rounded-xl border border-gray-100">
-                        <span className="text-[#5f6368] flex items-center gap-2"><MapPin size={14} className="text-[#1a73e8]"/> 설치 위치</span>
-                        <span className="text-[#202124]">
-                           {unit ? `${unit.unitNumber}호` : fac.floorNumber ? `${fac.floorNumber}층` : property?.name || '단지 공용부'}
+
+                  <div className="space-y-2 md:space-y-3 mt-2 md:mt-4 text-[10px] md:text-xs font-bold flex-1">
+                     <div className="flex justify-between items-center bg-[#f8f9fa] p-2 md:p-3 rounded-lg md:rounded-xl border border-gray-100">
+                        <span className="text-[#5f6368] flex items-center gap-1 md:gap-2"><MapPin size={12} className="md:w-3.5 md:h-3.5 text-[#1a73e8]"/> 위치</span>
+                        <span className="text-[#202124] truncate max-w-[80px] md:max-w-none">
+                           {unit ? `${unit.unitNumber}호` : fac.floorNumber ? `${fac.floorNumber}층` : property?.name || '공용부'}
                         </span>
                      </div>
-                     <div className="flex justify-between items-center px-2">
-                        <span className="text-[#5f6368] flex items-center gap-2"><Calendar size={14} className="text-gray-400"/> 점검 예정일</span>
-                        <span className={`font-black ${fac.status === 'INSPECTION_DUE' ? 'text-red-600 bg-red-50 px-2 rounded underline decoration-2' : 'text-gray-700'}`}>{fac.nextInspectionDate}</span>
+                     <div className="flex justify-between items-center px-1 md:px-2">
+                        <span className="text-[#5f6368] flex items-center gap-1 md:gap-2"><Calendar size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/> 점검일</span>
+                        <span className={`font-black ${fac.status === 'INSPECTION_DUE' ? 'text-red-600 bg-red-50 px-1.5 md:px-2 rounded' : 'text-gray-700'}`}>{fac.nextInspectionDate}</span>
                      </div>
-                     <div className="flex justify-between items-center px-2">
-                        <span className="text-[#5f6368] flex items-center gap-2"><ClipboardCheck size={14} className="text-gray-400"/> 유지보수 업체</span>
-                        <span className="text-gray-900">{vendor?.name || '내부 관리'}</span>
+                     <div className="flex justify-between items-center px-1 md:px-2">
+                        <span className="text-[#5f6368] flex items-center gap-1 md:gap-2"><ClipboardCheck size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/> 업체</span>
+                        <span className="text-gray-900 truncate max-w-[80px] md:max-w-none">{vendor?.name || '내부 관리'}</span>
                      </div>
                   </div>
 
-                  <div className="mt-6 flex gap-3 pt-5 border-t border-[#f1f3f4]">
-                     <button onClick={() => { setSelectedFacilityId(fac.id); setIsLogHistoryOpen(true); }} className="flex-1 py-3 bg-[#e8f0fe] hover:bg-[#d2e3fc] text-[#1a73e8] rounded-xl text-[11px] font-black transition-all flex items-center justify-center gap-2 active:scale-95 shadow-sm">
-                        <History size={16}/> 점검 히스토리
+                  <div className="mt-4 md:mt-6 flex gap-2 md:gap-3 pt-3 md:pt-5 border-t border-[#f1f3f4]">
+                     <button onClick={() => { setSelectedFacilityId(fac.id); setIsLogHistoryOpen(true); }} className="flex-1 py-2 md:py-3 bg-[#e8f0fe] hover:bg-[#d2e3fc] text-[#1a73e8] rounded-lg md:rounded-xl text-[9px] md:text-[11px] font-black transition-all flex items-center justify-center gap-1 md:gap-2 active:scale-95 shadow-sm">
+                        <History size={14} className="md:w-4 md:h-4"/> 이력
                      </button>
-                     <button onClick={() => { setSelectedFacilityId(fac.id); setFacilityForm({...fac}); setIsModalOpen(true); }} className="p-3 border border-[#dadce0] rounded-xl text-[#5f6368] hover:bg-[#f1f3f4] transition-all active:scale-95"><Edit2 size={16}/></button>
+                     <button onClick={() => { setSelectedFacilityId(fac.id); setFacilityForm({...fac}); setIsModalOpen(true); }} className="p-2 md:p-3 border border-[#dadce0] rounded-lg md:rounded-xl text-[#5f6368] hover:bg-[#f1f3f4] transition-all active:scale-95"><Edit2 size={14} className="md:w-4 md:h-4"/></button>
                   </div>
                </div>
             )
          })}
-         {facilities.length === 0 && <div className="col-span-full py-32 text-center text-gray-400 font-bold bg-[#f8f9fa] rounded-2xl border-2 border-dashed border-gray-200">등록된 설비가 존재하지 않습니다.</div>}
+         {facilities.length === 0 && <div className="col-span-full py-16 md:py-32 text-center text-gray-400 font-bold text-xs md:text-sm bg-[#f8f9fa] rounded-xl md:rounded-2xl border-2 border-dashed border-gray-200">등록된 설비가 존재하지 않습니다.</div>}
       </div>
 
       {isModalOpen && (

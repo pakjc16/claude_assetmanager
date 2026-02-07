@@ -302,23 +302,79 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   const [unitSortKey, setUnitSortKey] = useState<'floor' | 'area' | 'status'>('floor');
   const [unitSortDesc, setUnitSortDesc] = useState(true);
 
+  // 건물 목록 정렬/필터 상태
+  const [buildingSortKey, setBuildingSortKey] = useState<'name' | 'area' | 'floorCount'>('name');
+  const [buildingSortDesc, setBuildingSortDesc] = useState(false); // 기본 오름차순
+  const [buildingFilter, setBuildingFilter] = useState<string>('');
+
+  // 층별정보 세부 펼침 상태 (건물ID_층번호 형태로 저장)
+  const [expandedFloors, setExpandedFloors] = useState<Set<string>>(new Set());
+
+  // 사진 업로드 모달 상태
+  const [isPhotoUploadModalOpen, setIsPhotoUploadModalOpen] = useState(false);
+  const [pendingPhotoFiles, setPendingPhotoFiles] = useState<File[]>([]);
+  const [photoUploadForm, setPhotoUploadForm] = useState<{
+    name: string;
+    linkedType: 'PROPERTY' | 'LOT' | 'BUILDING' | 'FLOOR' | 'UNIT';
+    linkedLotId: string;
+    linkedBuildingId: string;
+    linkedFloor: number | null;
+    linkedUnitId: string;
+  }>({
+    name: '',
+    linkedType: 'PROPERTY',
+    linkedLotId: '',
+    linkedBuildingId: '',
+    linkedFloor: null,
+    linkedUnitId: ''
+  });
+
   // 사진 캐러셀 상태
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  // 사진 추가 핸들러
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 사진 파일 선택 핸들러 (모달 열기)
+  const handlePhotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedProperty || !e.target.files) return;
     const files = Array.from(e.target.files);
-    const newPhotos: PropertyPhoto[] = files.map(file => ({
-      id: `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    setPendingPhotoFiles(files);
+    setPhotoUploadForm({
+      name: files.length === 1 ? files[0].name.replace(/\.[^/.]+$/, '') : '',
+      linkedType: 'PROPERTY',
+      linkedLotId: '',
+      linkedBuildingId: '',
+      linkedFloor: null,
+      linkedUnitId: ''
+    });
+    setIsPhotoUploadModalOpen(true);
+    e.target.value = ''; // 파일 선택 초기화
+  };
+
+  // 사진 업로드 확정 핸들러
+  const handlePhotoUploadConfirm = () => {
+    if (!selectedProperty || pendingPhotoFiles.length === 0) return;
+    const newPhotos: PropertyPhoto[] = pendingPhotoFiles.map((file, idx) => ({
+      id: `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${idx}`,
       url: URL.createObjectURL(file),
+      name: pendingPhotoFiles.length === 1 ? photoUploadForm.name : `${photoUploadForm.name || '사진'}_${idx + 1}`,
       caption: file.name,
-      uploadedAt: new Date().toISOString()
+      uploadedAt: new Date().toISOString(),
+      linkedType: photoUploadForm.linkedType,
+      linkedLotId: photoUploadForm.linkedLotId || undefined,
+      linkedBuildingId: photoUploadForm.linkedBuildingId || undefined,
+      linkedFloor: photoUploadForm.linkedFloor ?? undefined,
+      linkedUnitId: photoUploadForm.linkedUnitId || undefined
     }));
     const updatedPhotos = [...(selectedProperty.photos || []), ...newPhotos];
     onUpdateProperty({ ...selectedProperty, photos: updatedPhotos });
+    setIsPhotoUploadModalOpen(false);
+    setPendingPhotoFiles([]);
+  };
+
+  // 기존 사진 추가 핸들러 (호환성 유지)
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handlePhotoFileSelect(e);
   };
 
   // 사진 삭제 핸들러
@@ -707,47 +763,55 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   };
 
   return (
-    <div className="h-full flex flex-col md:flex-row gap-6">
-      <div className="w-full md:w-80 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 flex flex-col h-[calc(100vh-140px)] shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa]">
-          <h2 className="font-bold text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 물건 목록</h2>
-          <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: '' }); setDisplayAddress(''); setPropPnu(''); setPropLandInfo(null); setIsPropertyModalOpen(true); }} className="p-2 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-full transition-colors"><Plus size={20}/></button>
+    <div className="flex flex-col lg:flex-row gap-4">
+      {/* 물건 목록 사이드바 */}
+      <div className="w-full lg:w-72 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 shadow-sm overflow-hidden">
+        <div className="p-3 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa]">
+          <h2 className="font-bold text-sm text-[#3c4043] flex items-center gap-2"><Layers size={16} className="text-[#1a73e8]"/> 물건 목록</h2>
+          <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: '' }); setDisplayAddress(''); setPropPnu(''); setPropLandInfo(null); setIsPropertyModalOpen(true); }} className="p-1.5 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-lg transition-colors"><Plus size={18}/></button>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[#f8f9fa]">
+        <div className="p-2 space-y-1.5 bg-[#f8f9fa] max-h-[300px] lg:max-h-[calc(100vh-200px)] overflow-y-auto">
           {properties.map(prop => (
-            <button key={prop.id} onClick={() => { setSelectedPropId(prop.id); setActiveTab('OVERVIEW'); }} className={`w-full text-left p-4 rounded-xl transition-all border ${selectedPropId === prop.id ? 'bg-white border-[#1a73e8] shadow-md ring-2 ring-[#e8f0fe]' : 'bg-white hover:bg-[#f1f3f4] border-[#dadce0]'}`}>
+            <button key={prop.id} onClick={() => { setSelectedPropId(prop.id); setActiveTab('OVERVIEW'); }} className={`w-full text-left p-3 rounded-lg transition-all border ${selectedPropId === prop.id ? 'bg-white border-[#1a73e8] shadow-sm' : 'bg-white hover:bg-[#f1f3f4] border-transparent'}`}>
               <h3 className={`font-bold text-sm truncate ${selectedPropId === prop.id ? 'text-[#1a73e8]' : 'text-[#202124]'}`}>{prop.name}</h3>
-              <div className="flex items-center text-[10px] text-[#5f6368] mt-1.5"><MapPin size={10} className="mr-1" />{getFullAddress(prop.masterAddress)}</div>
+              <div className="flex items-center text-[10px] text-[#5f6368] mt-1"><MapPin size={10} className="mr-1 flex-shrink-0" /><span className="truncate">{getFullAddress(prop.masterAddress)}</span></div>
             </button>
           ))}
+          {properties.length === 0 && (
+            <div className="py-8 text-center text-gray-400 text-xs">
+              <p>등록된 물건이 없습니다</p>
+              <p className="mt-1">+ 버튼을 눌러 추가하세요</p>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+      {/* 상세 정보 패널 */}
+      <div className="flex-1 min-w-0">
         {selectedProperty ? (
-          <div className="flex flex-col h-full bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden">
-             <div className="p-8 border-b border-[#f1f3f4] bg-white flex justify-between items-start">
-                 <div>
-                    <h1 className="text-2xl font-bold text-[#202124] mb-2">{selectedProperty.name}</h1>
-                    <p className="text-[#5f6368] flex items-center text-sm font-medium"><MapPin size={16} className="mr-1 text-[#1a73e8]" />{getFullAddress(selectedProperty.masterAddress)}</p>
+          <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden">
+             <div className="p-3 md:p-6 border-b border-[#f1f3f4] bg-white flex flex-col sm:flex-row justify-between items-start gap-2 md:gap-3">
+                 <div className="min-w-0 flex-1">
+                    <h1 className="text-lg md:text-2xl font-bold text-[#202124] mb-1 md:mb-2 truncate">{selectedProperty.name}</h1>
+                    <p className="text-[#5f6368] flex items-center text-[11px] md:text-sm font-medium"><MapPin size={14} className="mr-1 text-[#1a73e8] flex-shrink-0 md:w-4 md:h-4" /><span className="truncate">{getFullAddress(selectedProperty.masterAddress)}</span></p>
                  </div>
-                 <button onClick={() => { setNewProp({...selectedProperty}); setDisplayAddress(getFullAddress(selectedProperty.masterAddress)); setIsPropertyModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 border border-[#dadce0] rounded-lg text-xs font-bold text-[#5f6368] hover:bg-[#f8f9fa] transition-colors"><Edit2 size={14}/> 기본정보 수정</button>
+                 <button onClick={() => { setNewProp({...selectedProperty}); setDisplayAddress(getFullAddress(selectedProperty.masterAddress)); setIsPropertyModalOpen(true); }} className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-1.5 md:py-2 border border-[#dadce0] rounded-lg text-[10px] md:text-xs font-bold text-[#5f6368] hover:bg-[#f8f9fa] transition-colors flex-shrink-0"><Edit2 size={12} className="md:w-3.5 md:h-3.5"/> 수정</button>
              </div>
 
-             <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-4">
+             <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-2 md:px-4 overflow-x-auto">
                {[
-                 { id: 'OVERVIEW', label: '개요', icon: <Home size={14}/> },
-                 { id: 'LAND', label: '토지', icon: <MapPin size={14}/> },
-                 { id: 'BUILDING', label: '건물', icon: <BuildingIcon size={14}/> },
-                 { id: 'UNIT', label: '호실', icon: <Layers size={14}/> }
+                 { id: 'OVERVIEW', label: '개요', icon: <Home size={12} className="md:w-3.5 md:h-3.5"/> },
+                 { id: 'LAND', label: '토지', icon: <MapPin size={12} className="md:w-3.5 md:h-3.5"/> },
+                 { id: 'BUILDING', label: '건물', icon: <BuildingIcon size={12} className="md:w-3.5 md:h-3.5"/> },
+                 { id: 'UNIT', label: '호실', icon: <Layers size={12} className="md:w-3.5 md:h-3.5"/> }
                ].map((tab) => (
-                 <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-6 py-4 text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-3 ${activeTab === tab.id ? 'border-b-2 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
+                 <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-3 md:px-6 py-2.5 md:py-4 text-[10px] md:text-xs font-bold uppercase tracking-wide md:tracking-widest transition-all flex items-center gap-1.5 md:gap-3 whitespace-nowrap ${activeTab === tab.id ? 'border-b-2 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
                    {tab.icon} {tab.label}
                  </button>
                ))}
              </div>
 
-             <div className="flex-1 overflow-y-auto p-8 bg-white custom-scrollbar">
+             <div className="flex-1 overflow-y-auto p-3 md:p-6 bg-white custom-scrollbar">
                 {activeTab === 'OVERVIEW' && (() => {
                    // 건폐율/용적률 계산
                    const totalBuildingArea = selectedProperty.buildings.reduce((sum, b) => sum + b.spec.buildingArea, 0);
@@ -757,140 +821,161 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                    const photos = selectedProperty.photos || [];
 
                    return (
-                   <div className="space-y-6">
+                   <div className="space-y-3">
                       {/* 주요 지표 + 대표 사진 */}
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                         {/* 대표 사진 (클릭시 갤러리) */}
-                         <div
-                            onClick={() => setIsPhotoModalOpen(true)}
-                            className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
-                         >
-                            {photos.length > 0 ? (
-                               <div className="relative aspect-[16/9]">
-                                  <img
-                                     src={photos[0]?.url}
-                                     alt="대표 사진"
-                                     className="w-full h-full object-cover"
-                                  />
-                                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent"/>
-                                  <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-                                     <span className="text-white text-xs font-medium">대표 사진</span>
-                                     {photos.length > 1 && (
-                                        <span className="bg-black/60 text-white text-[10px] px-2 py-0.5 rounded-full">
-                                           +{photos.length - 1}장
-                                        </span>
-                                     )}
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:items-stretch">
+                         {/* 대표 사진 + 썸네일 (클릭시 갤러리) */}
+                         <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col">
+                            <div
+                               onClick={() => setIsPhotoModalOpen(true)}
+                               className="cursor-pointer hover:opacity-90 transition-opacity flex-1 min-h-0"
+                            >
+                               {photos.length > 0 ? (
+                                  <div className="relative h-full min-h-[120px]">
+                                     <img
+                                        src={photos[0]?.url}
+                                        alt="대표 사진"
+                                        className="absolute inset-0 w-full h-full object-cover"
+                                     />
+                                     <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"/>
+                                     <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-between">
+                                        <span className="text-white text-[10px] font-medium drop-shadow">{photos[0]?.name || '대표 사진'}</span>
+                                        {photos.length > 1 && (
+                                           <span className="bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                                              +{photos.length - 1}
+                                           </span>
+                                        )}
+                                     </div>
                                   </div>
-                               </div>
-                            ) : (
-                               <div className="aspect-[16/9] flex flex-col items-center justify-center bg-[#f8f9fa] hover:bg-[#e8f0fe] transition-colors">
-                                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-300 mb-2">
-                                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                                  </svg>
-                                  <p className="text-xs text-gray-400">클릭하여 사진 추가</p>
+                               ) : (
+                                  <div className="h-full min-h-[120px] flex flex-col items-center justify-center bg-[#f8f9fa] hover:bg-[#e8f0fe] transition-colors">
+                                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-300 mb-1">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                                     </svg>
+                                     <p className="text-[10px] text-gray-400">클릭하여 사진 추가</p>
+                                  </div>
+                               )}
+                            </div>
+                            {/* 썸네일 그리드 */}
+                            {photos.length > 1 && (
+                               <div className="grid grid-cols-4 gap-0.5 p-1 bg-[#f8f9fa] flex-shrink-0">
+                                  {photos.slice(1, 5).map((photo, idx) => (
+                                     <div
+                                        key={photo.id}
+                                        onClick={() => { setCurrentPhotoIndex(idx + 1); setIsPhotoModalOpen(true); }}
+                                        className="aspect-square rounded overflow-hidden cursor-pointer hover:opacity-80 transition-opacity relative"
+                                     >
+                                        <img src={photo.url} alt="" className="w-full h-full object-cover"/>
+                                        {idx === 3 && photos.length > 5 && (
+                                           <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                                              <span className="text-white text-xs font-bold">+{photos.length - 5}</span>
+                                           </div>
+                                        )}
+                                     </div>
+                                  ))}
                                </div>
                             )}
                          </div>
 
                          {/* 주요 지표 카드 2x2 */}
-                         <div className="lg:col-span-2 grid grid-cols-2 gap-3">
-                            <div className="bg-white p-5 rounded-xl border border-[#dadce0] shadow-sm">
-                               <p className="text-xs text-[#5f6368] font-medium mb-2">총 대지면적</p>
-                               <p className="text-2xl font-black text-[#202124]">{formatArea(selectedProperty.totalLandArea)}</p>
-                               <p className="text-xs text-[#5f6368] mt-1">{selectedProperty.lots.length}개 필지</p>
+                         <div className="lg:col-span-2 grid grid-cols-2 gap-1.5 md:gap-2 h-full">
+                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 대지면적</p>
+                               <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(selectedProperty.totalLandArea)}</p>
+                               <p className="text-[8px] md:text-[10px] text-[#5f6368]">{selectedProperty.lots.length}개 필지</p>
                             </div>
-                            <div className="bg-white p-5 rounded-xl border border-[#dadce0] shadow-sm">
-                               <p className="text-xs text-[#5f6368] font-medium mb-2">총 건축면적</p>
-                               <p className="text-2xl font-black text-[#202124]">{formatArea(totalBuildingArea)}</p>
-                               <p className="text-xs text-[#1a73e8] font-bold mt-1">건폐율 {bcRat.toFixed(1)}%</p>
+                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 건축면적</p>
+                               <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(totalBuildingArea)}</p>
+                               <p className="text-[8px] md:text-[10px] text-[#1a73e8] font-bold whitespace-nowrap">건폐율 {bcRat.toFixed(1)}%</p>
                             </div>
-                            <div className="bg-white p-5 rounded-xl border border-[#dadce0] shadow-sm">
-                               <p className="text-xs text-[#5f6368] font-medium mb-2">총 연면적</p>
-                               <p className="text-2xl font-black text-[#202124]">{formatArea(totalGrossFloorArea)}</p>
-                               <p className="text-xs text-[#1a73e8] font-bold mt-1">용적률 {vlRat.toFixed(1)}%</p>
+                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 연면적</p>
+                               <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(totalGrossFloorArea)}</p>
+                               <p className="text-[8px] md:text-[10px] text-[#1a73e8] font-bold whitespace-nowrap">용적률 {vlRat.toFixed(1)}%</p>
                             </div>
-                            <div className="bg-white p-5 rounded-xl border border-[#dadce0] shadow-sm">
-                               <p className="text-xs text-[#5f6368] font-medium mb-2">월 임대수입</p>
-                               <p className="text-2xl font-black text-[#1a73e8]">{formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.monthlyRent || 0), 0))}</p>
-                               <p className="text-xs text-[#5f6368] mt-1">보증금 {formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.deposit || 0), 0))}</p>
+                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">월 임대수입</p>
+                               <p className="text-sm md:text-xl font-black text-[#1a73e8] whitespace-nowrap tracking-tight">{formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.monthlyRent || 0), 0))}</p>
+                               <p className="text-[8px] md:text-[10px] text-[#5f6368] whitespace-nowrap">보증금 {formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.deposit || 0), 0))}</p>
                             </div>
                          </div>
                       </div>
 
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 md:gap-3">
                          {/* 토지 현황 */}
-                         <div className="bg-white p-5 rounded-2xl border border-[#dadce0] shadow-sm">
-                            <div className="flex items-center justify-between mb-4">
-                               <h3 className="font-bold text-[#3c4043] flex items-center gap-2"><MapPin size={16} className="text-[#1a73e8]"/> 토지 현황</h3>
-                               <button onClick={() => setActiveTab('LAND')} className="text-xs text-[#1a73e8] font-bold hover:underline">상세보기 →</button>
+                         <div className="bg-white p-3 md:p-4 rounded-xl border border-[#dadce0] shadow-sm">
+                            <div className="flex items-center justify-between mb-2 md:mb-4">
+                               <h3 className="font-bold text-xs md:text-sm text-[#3c4043] flex items-center gap-1 md:gap-2"><MapPin size={14} className="md:w-4 md:h-4 text-[#1a73e8]"/> 토지 현황</h3>
+                               <button onClick={() => setActiveTab('LAND')} className="text-[10px] md:text-xs text-[#1a73e8] font-bold hover:underline">상세 →</button>
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-1.5 md:space-y-2">
                                {selectedProperty.lots.slice(0, 3).map((lot, idx) => (
-                                  <div key={lot.id} className="flex items-center justify-between p-3 bg-[#f8f9fa] rounded-xl">
-                                     <div className="flex items-center gap-2">
-                                        {idx === 0 && <span className="px-1.5 py-0.5 bg-[#1a73e8] text-white text-[8px] font-bold rounded">대표</span>}
-                                        <span className="text-xs font-medium text-gray-600 truncate max-w-[120px]">{lot.address.eupMyeonDong} {lot.address.bonbun}</span>
+                                  <div key={lot.id} className="flex items-center justify-between p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                     <div className="flex items-center gap-1 md:gap-2 min-w-0">
+                                        {idx === 0 && <span className="px-1 md:px-1.5 py-0.5 bg-[#1a73e8] text-white text-[7px] md:text-[8px] font-bold rounded flex-shrink-0">대표</span>}
+                                        <span className="text-[10px] md:text-xs font-medium text-gray-600 truncate">{lot.address.eupMyeonDong} {lot.address.bonbun}</span>
                                      </div>
-                                     <span className="text-xs font-bold text-[#1a73e8]">{formatArea(lot.area)}</span>
+                                     <span className="text-[10px] md:text-xs font-bold text-[#1a73e8] whitespace-nowrap ml-1">{formatArea(lot.area)}</span>
                                   </div>
                                ))}
                                {selectedProperty.lots.length > 3 && (
-                                  <p className="text-xs text-gray-400 text-center py-2">외 {selectedProperty.lots.length - 3}개 필지</p>
+                                  <p className="text-[10px] md:text-xs text-gray-400 text-center py-1 md:py-2">외 {selectedProperty.lots.length - 3}개 필지</p>
                                )}
                                {selectedProperty.lots.length === 0 && (
-                                  <p className="text-xs text-gray-400 text-center py-6">등록된 토지 없음</p>
+                                  <p className="text-[10px] md:text-xs text-gray-400 text-center py-4 md:py-6">등록된 토지 없음</p>
                                )}
                             </div>
                          </div>
 
                          {/* 건물 현황 */}
-                         <div className="bg-white p-5 rounded-2xl border border-[#dadce0] shadow-sm">
-                            <div className="flex items-center justify-between mb-4">
-                               <h3 className="font-bold text-[#3c4043] flex items-center gap-2"><BuildingIcon size={16} className="text-[#1a73e8]"/> 건물 현황</h3>
-                               <button onClick={() => setActiveTab('BUILDING')} className="text-xs text-[#1a73e8] font-bold hover:underline">상세보기 →</button>
+                         <div className="bg-white p-3 md:p-4 rounded-xl border border-[#dadce0] shadow-sm">
+                            <div className="flex items-center justify-between mb-2 md:mb-4">
+                               <h3 className="font-bold text-xs md:text-sm text-[#3c4043] flex items-center gap-1 md:gap-2"><BuildingIcon size={14} className="md:w-4 md:h-4 text-[#1a73e8]"/> 건물 현황</h3>
+                               <button onClick={() => setActiveTab('BUILDING')} className="text-[10px] md:text-xs text-[#1a73e8] font-bold hover:underline">상세 →</button>
                             </div>
-                            <div className="space-y-2">
+                            <div className="space-y-1.5 md:space-y-2">
                                {selectedProperty.buildings.slice(0, 3).map(b => {
                                   const bUnits = propertyUnits.filter(u => u.buildingId === b.id);
                                   return (
-                                     <div key={b.id} className="flex items-center justify-between p-3 bg-[#f8f9fa] rounded-xl">
-                                        <div>
-                                           <p className="text-sm font-bold text-gray-800">{b.name}</p>
-                                           <p className="text-[10px] text-gray-500">지상{b.spec.floorCount.ground}층 · {b.spec.mainUsage}</p>
+                                     <div key={b.id} className="flex items-center justify-between p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                        <div className="min-w-0">
+                                           <p className="text-[11px] md:text-sm font-bold text-gray-800 truncate">{b.name}</p>
+                                           <p className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">지{b.spec.floorCount.ground}층·{b.spec.mainUsage.substring(0, 4)}</p>
                                         </div>
-                                        <div className="text-right">
-                                           <p className="text-xs font-bold text-[#1a73e8]">{formatArea(b.spec.grossFloorArea)}</p>
-                                           <p className="text-[10px] text-gray-400">{bUnits.length}개 호실</p>
+                                        <div className="text-right flex-shrink-0 ml-1">
+                                           <p className="text-[10px] md:text-xs font-bold text-[#1a73e8] whitespace-nowrap">{formatArea(b.spec.grossFloorArea)}</p>
+                                           <p className="text-[9px] md:text-[10px] text-gray-400">{bUnits.length}호실</p>
                                         </div>
                                      </div>
                                   );
                                })}
                                {selectedProperty.buildings.length > 3 && (
-                                  <p className="text-xs text-gray-400 text-center py-2">외 {selectedProperty.buildings.length - 3}개 동</p>
+                                  <p className="text-[10px] md:text-xs text-gray-400 text-center py-1 md:py-2">외 {selectedProperty.buildings.length - 3}개 동</p>
                                )}
                                {selectedProperty.buildings.length === 0 && (
-                                  <p className="text-xs text-gray-400 text-center py-6">등록된 건물 없음</p>
+                                  <p className="text-[10px] md:text-xs text-gray-400 text-center py-4 md:py-6">등록된 건물 없음</p>
                                )}
                             </div>
                          </div>
 
                          {/* 임대 현황 */}
-                         <div className="bg-white p-5 rounded-2xl border border-[#dadce0] shadow-sm">
-                            <div className="flex items-center justify-between mb-4">
-                               <h3 className="font-bold text-[#3c4043] flex items-center gap-2"><Layers size={16} className="text-[#1a73e8]"/> 임대 현황</h3>
-                               <button onClick={() => setActiveTab('UNIT')} className="text-xs text-[#1a73e8] font-bold hover:underline">상세보기 →</button>
+                         <div className="bg-white p-3 md:p-4 rounded-xl border border-[#dadce0] shadow-sm">
+                            <div className="flex items-center justify-between mb-2 md:mb-4">
+                               <h3 className="font-bold text-xs md:text-sm text-[#3c4043] flex items-center gap-1 md:gap-2"><Layers size={14} className="md:w-4 md:h-4 text-[#1a73e8]"/> 임대 현황</h3>
+                               <button onClick={() => setActiveTab('UNIT')} className="text-[10px] md:text-xs text-[#1a73e8] font-bold hover:underline">상세 →</button>
                             </div>
                             {propertyUnits.length > 0 ? (
-                               <div className="space-y-4">
+                               <div className="space-y-2 md:space-y-4">
                                   {/* 임대율 막대 */}
                                   <div>
-                                     <div className="flex justify-between text-xs mb-1">
+                                     <div className="flex justify-between text-[10px] md:text-xs mb-1">
                                         <span className="text-gray-500">임대율</span>
                                         <span className="font-bold text-[#1a73e8]">
                                            {Math.round((propertyUnits.filter(u => u.status === 'OCCUPIED').length / propertyUnits.length) * 100)}%
                                         </span>
                                      </div>
-                                     <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                                     <div className="h-2 md:h-3 bg-gray-200 rounded-full overflow-hidden">
                                         <div
                                            className="h-full bg-[#1a73e8] rounded-full transition-all"
                                            style={{ width: `${(propertyUnits.filter(u => u.status === 'OCCUPIED').length / propertyUnits.length) * 100}%` }}
@@ -898,34 +983,34 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                      </div>
                                   </div>
                                   {/* 상태별 분포 */}
-                                  <div className="grid grid-cols-3 gap-2 text-center">
-                                     <div className="p-3 bg-[#e8f0fe] rounded-xl">
-                                        <p className="text-lg font-black text-[#1a73e8]">{propertyUnits.filter(u => u.status === 'OCCUPIED').length}</p>
-                                        <p className="text-[10px] text-[#1a73e8]">임대중</p>
+                                  <div className="grid grid-cols-3 gap-1.5 md:gap-2 text-center">
+                                     <div className="p-2 md:p-3 bg-[#e8f0fe] rounded-lg md:rounded-xl">
+                                        <p className="text-sm md:text-lg font-black text-[#1a73e8]">{propertyUnits.filter(u => u.status === 'OCCUPIED').length}</p>
+                                        <p className="text-[8px] md:text-[10px] text-[#1a73e8]">임대중</p>
                                      </div>
-                                     <div className="p-3 bg-[#f8f9fa] rounded-xl">
-                                        <p className="text-lg font-black text-[#5f6368]">{propertyUnits.filter(u => u.status === 'VACANT').length}</p>
-                                        <p className="text-[10px] text-[#5f6368]">공실</p>
+                                     <div className="p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                        <p className="text-sm md:text-lg font-black text-[#5f6368]">{propertyUnits.filter(u => u.status === 'VACANT').length}</p>
+                                        <p className="text-[8px] md:text-[10px] text-[#5f6368]">공실</p>
                                      </div>
-                                     <div className="p-3 bg-[#f8f9fa] rounded-xl">
-                                        <p className="text-lg font-black text-[#5f6368]">{propertyUnits.filter(u => u.status === 'UNDER_REPAIR').length}</p>
-                                        <p className="text-[10px] text-[#5f6368]">보수중</p>
+                                     <div className="p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                        <p className="text-sm md:text-lg font-black text-[#5f6368]">{propertyUnits.filter(u => u.status === 'UNDER_REPAIR').length}</p>
+                                        <p className="text-[8px] md:text-[10px] text-[#5f6368]">보수중</p>
                                      </div>
                                   </div>
                                   {/* 총 면적 */}
-                                  <div className="p-3 bg-[#f8f9fa] rounded-xl">
-                                     <div className="flex justify-between text-xs">
+                                  <div className="p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                     <div className="flex justify-between text-[10px] md:text-xs">
                                         <span className="text-gray-500">총 임대면적</span>
-                                        <span className="font-bold">{formatArea(propertyUnits.reduce((sum, u) => sum + u.area, 0))}</span>
+                                        <span className="font-bold whitespace-nowrap">{formatArea(propertyUnits.reduce((sum, u) => sum + u.area, 0))}</span>
                                      </div>
-                                     <div className="flex justify-between text-xs mt-1">
+                                     <div className="flex justify-between text-[10px] md:text-xs mt-1">
                                         <span className="text-gray-500">임대중 면적</span>
-                                        <span className="font-bold text-[#1a73e8]">{formatArea(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + u.area, 0))}</span>
+                                        <span className="font-bold text-[#1a73e8] whitespace-nowrap">{formatArea(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + u.area, 0))}</span>
                                      </div>
                                   </div>
                                </div>
                             ) : (
-                               <p className="text-xs text-gray-400 text-center py-6">등록된 호실 없음</p>
+                               <p className="text-[10px] md:text-xs text-gray-400 text-center py-4 md:py-6">등록된 호실 없음</p>
                             )}
                          </div>
                       </div>
@@ -934,101 +1019,154 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                    );
                 })()}
                 {activeTab === 'LAND' && (
-                    <div className="space-y-6">
-                        <div className="flex justify-between items-center">
-                            <h3 className="font-black text-[#3c4043] flex items-center gap-2"><MapPin size={18} className="text-[#1a73e8]"/> 토지 목록</h3>
-                            <button onClick={openLotModal} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 토지 추가</button>
+                    <div className="space-y-3 md:space-y-6">
+                        <div className="flex justify-between items-center gap-2">
+                            <h3 className="font-black text-sm md:text-base text-[#3c4043] flex items-center gap-1 md:gap-2"><MapPin size={16} className="md:w-[18px] md:h-[18px] text-[#1a73e8]"/> 토지 목록</h3>
+                            <button onClick={openLotModal} className="bg-[#1a73e8] text-white px-3 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold flex items-center gap-1 md:gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={14} className="md:w-4 md:h-4"/> 추가</button>
                         </div>
-                        <div className="border border-[#dadce0] rounded-2xl overflow-hidden shadow-sm">
-                            <table className="w-full text-sm text-left">
-                                <thead className="bg-[#f8f9fa] text-[#5f6368] font-bold border-b border-[#dadce0] text-[11px] uppercase tracking-widest">
+                        <div className="border border-[#dadce0] rounded-2xl overflow-hidden shadow-sm overflow-x-auto">
+                            <table className="w-full text-xs md:text-sm text-left min-w-[400px]">
+                                <thead className="bg-[#f8f9fa] text-[#5f6368] font-bold border-b border-[#dadce0] text-[9px] md:text-[11px] uppercase tracking-wide md:tracking-widest">
                                     <tr>
-                                        <th className="p-5">지번 주소</th>
-                                        <th className="p-5">지목</th>
-                                        <th className="p-5 text-right">면적</th>
-                                        <th className="p-5 text-center w-24">관리</th>
+                                        <th className="p-2 md:p-5 whitespace-nowrap">지번 주소</th>
+                                        <th className="p-2 md:p-5 whitespace-nowrap">지목</th>
+                                        <th className="p-2 md:p-5 text-right whitespace-nowrap">면적</th>
+                                        <th className="p-2 md:p-5 text-center w-16 md:w-24">관리</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#f1f3f4]">
                                     {selectedProperty.lots.map((lot, index) => (
                                         <tr key={lot.id} className="hover:bg-gray-50 transition-colors group">
-                                            <td className="p-5">
-                                                <div className="flex items-center gap-2">
-                                                    {index === 0 && <span className="px-2 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[10px] font-black rounded">대표</span>}
-                                                    <span className="font-bold text-gray-800">{getFullAddress(lot.address)}</span>
+                                            <td className="p-2 md:p-5">
+                                                <div className="flex items-center gap-1 md:gap-2 flex-wrap md:flex-nowrap">
+                                                    {index === 0 && <span className="px-1.5 md:px-2 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[8px] md:text-[10px] font-black rounded flex-shrink-0">대표</span>}
+                                                    <span className="font-bold text-[11px] md:text-sm text-gray-800 tracking-tight">{getFullAddress(lot.address)}</span>
                                                 </div>
-                                                {lot.pnu && <p className="text-[10px] text-gray-400 mt-1">PNU: {lot.pnu}</p>}
+                                                {lot.pnu && <p className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 md:mt-1 hidden md:block">PNU: {lot.pnu}</p>}
                                             </td>
-                                            <td className="p-5"><span className="px-3 py-1 bg-gray-100 rounded-full text-xs font-black text-gray-600">{lot.jimok}</span></td>
-                                            <td className="p-5 text-right font-black text-[#1a73e8]">{formatArea(lot.area)}</td>
-                                            <td className="p-5 text-center">
-                                                <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={() => openEditLotModal(lot)} className="p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors" title="수정">
-                                                        <Edit2 size={14} className="text-[#1a73e8]" />
+                                            <td className="p-2 md:p-5"><span className="px-2 md:px-3 py-0.5 md:py-1 bg-gray-100 rounded-full text-[10px] md:text-xs font-black text-gray-600">{lot.jimok}</span></td>
+                                            <td className="p-2 md:p-5 text-right font-black text-[11px] md:text-sm text-[#1a73e8] whitespace-nowrap">{formatArea(lot.area)}</td>
+                                            <td className="p-2 md:p-5 text-center">
+                                                <div className="flex items-center justify-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => openEditLotModal(lot)} className="p-1 md:p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors" title="수정">
+                                                        <Edit2 size={12} className="md:w-3.5 md:h-3.5 text-[#1a73e8]" />
                                                     </button>
-                                                    <button onClick={() => handleDeleteLot(lot.id)} className="p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="삭제">
-                                                        <Trash2 size={14} className="text-red-500" />
+                                                    <button onClick={() => handleDeleteLot(lot.id)} className="p-1 md:p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="삭제">
+                                                        <Trash2 size={12} className="md:w-3.5 md:h-3.5 text-red-500" />
                                                     </button>
                                                 </div>
                                             </td>
                                         </tr>
                                     ))}
-                                    {selectedProperty.lots.length === 0 && <tr><td colSpan={4} className="p-20 text-center text-gray-400 italic">등록된 필지 데이터가 존재하지 않습니다.</td></tr>}
+                                    {selectedProperty.lots.length === 0 && <tr><td colSpan={4} className="p-10 md:p-20 text-center text-gray-400 italic text-xs md:text-sm">등록된 필지 데이터가 존재하지 않습니다.</td></tr>}
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 )}
                 {activeTab === 'BUILDING' && (
-                    <div className="space-y-6">
-                        <div className="flex justify-between items-center">
-                            <h3 className="font-black text-[#3c4043] flex items-center gap-2"><BuildingIcon size={18} className="text-[#1a73e8]"/> 건물 목록 ({selectedProperty.buildings.length}동)</h3>
-                            <button onClick={() => { setEditingBuildingId(null); setNewBuilding({ name: '', spec: { buildingArea: 0, grossFloorArea: 0, floorCount: { underground: 0, ground: 1 }, floors: [], completionDate: '', mainUsage: '업무시설', parkingCapacity: 0, elevatorCount: 0 } }); setBuildingTitleList([]); setBuildingFloorList([]); setSelectedBuildingTitle(null); setIsBuildingModalOpen(true); }} className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={16}/> 건물 추가</button>
+                    <div className="space-y-3 md:space-y-6">
+                        <div className="flex justify-between items-center gap-2">
+                            <h3 className="font-black text-sm md:text-base text-[#3c4043] flex items-center gap-1 md:gap-2"><BuildingIcon size={16} className="md:w-[18px] md:h-[18px] text-[#1a73e8]"/> 건물 ({selectedProperty.buildings.length}동)</h3>
+                            <button onClick={() => { setEditingBuildingId(null); setNewBuilding({ name: '', spec: { buildingArea: 0, grossFloorArea: 0, floorCount: { underground: 0, ground: 1 }, floors: [], completionDate: '', mainUsage: '업무시설', parkingCapacity: 0, elevatorCount: 0 } }); setBuildingTitleList([]); setBuildingFloorList([]); setSelectedBuildingTitle(null); setIsBuildingModalOpen(true); }} className="bg-[#1a73e8] text-white px-3 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold flex items-center gap-1 md:gap-2 shadow-lg hover:bg-[#1557b0] transition-all"><Plus size={14} className="md:w-4 md:h-4"/> 추가</button>
                         </div>
-                        <div className="space-y-4">
-                            {selectedProperty.buildings.map(b => {
+                        {/* 정렬/필터 UI */}
+                        <div className="flex items-center gap-2 md:gap-3 flex-wrap">
+                            <div className="flex items-center gap-1 md:gap-2">
+                                <span className="text-[10px] md:text-xs font-bold text-[#5f6368] hidden md:inline">정렬:</span>
+                                <select
+                                    value={buildingSortKey}
+                                    onChange={(e) => setBuildingSortKey(e.target.value as 'name' | 'area' | 'floorCount')}
+                                    className="px-2 md:px-3 py-1 md:py-1.5 border border-[#dadce0] rounded-lg text-[10px] md:text-xs font-medium focus:outline-none focus:border-[#1a73e8]"
+                                >
+                                    <option value="name">동명칭</option>
+                                    <option value="area">연면적</option>
+                                    <option value="floorCount">층수</option>
+                                </select>
+                                <button
+                                    onClick={() => setBuildingSortDesc(!buildingSortDesc)}
+                                    className={`p-1 md:p-1.5 border border-[#dadce0] rounded-lg hover:bg-[#f8f9fa] transition-colors ${buildingSortDesc ? 'bg-[#e8f0fe]' : ''}`}
+                                    title={buildingSortDesc ? '내림차순' : '오름차순'}
+                                >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`md:w-3.5 md:h-3.5 ${buildingSortDesc ? 'rotate-180' : ''}`}>
+                                        <path d="M12 5v14M19 12l-7 7-7-7"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div className="flex-1">
+                                <input
+                                    type="text"
+                                    placeholder="건물명 검색..."
+                                    value={buildingFilter}
+                                    onChange={(e) => setBuildingFilter(e.target.value)}
+                                    className="w-full max-w-xs px-2 md:px-3 py-1 md:py-1.5 border border-[#dadce0] rounded-lg text-[10px] md:text-xs focus:outline-none focus:border-[#1a73e8]"
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-3 md:space-y-4">
+                            {(() => {
+                                // 건물 필터링
+                                let filteredBuildings = selectedProperty.buildings.filter(b =>
+                                    buildingFilter === '' || b.name.toLowerCase().includes(buildingFilter.toLowerCase())
+                                );
+                                // 건물 정렬
+                                filteredBuildings = [...filteredBuildings].sort((a, b) => {
+                                    let compare = 0;
+                                    if (buildingSortKey === 'name') {
+                                        compare = a.name.localeCompare(b.name, 'ko');
+                                    } else if (buildingSortKey === 'area') {
+                                        compare = a.spec.grossFloorArea - b.spec.grossFloorArea;
+                                    } else if (buildingSortKey === 'floorCount') {
+                                        compare = (a.spec.floorCount.ground + a.spec.floorCount.underground) - (b.spec.floorCount.ground + b.spec.floorCount.underground);
+                                    }
+                                    return buildingSortDesc ? -compare : compare;
+                                });
+                                return filteredBuildings.map(b => {
                                 const isExpanded = expandedBuildingId === b.id;
                                 const buildingUnits = propertyUnits.filter(u => u.buildingId === b.id);
                                 return (
                                     <div key={b.id} className="bg-white border border-[#dadce0] rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                                         {/* 건물 헤더 (클릭으로 펼치기/접기) */}
                                         <div
-                                            className="p-6 cursor-pointer hover:bg-[#f8f9fa] transition-colors"
+                                            className="p-3 md:p-6 cursor-pointer hover:bg-[#f8f9fa] transition-colors"
                                             onClick={() => setExpandedBuildingId(isExpanded ? null : b.id)}
                                         >
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-4">
-                                                    <div className={`p-3 rounded-xl border transition-colors ${isExpanded ? 'bg-[#1a73e8] text-white border-[#1a73e8]' : 'bg-indigo-50 text-[#1a73e8] border-indigo-100'}`}>
-                                                        <BuildingIcon size={24}/>
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-shrink">
+                                                    <div className={`p-2 md:p-3 rounded-xl border transition-colors flex-shrink-0 ${isExpanded ? 'bg-[#1a73e8] text-white border-[#1a73e8]' : 'bg-indigo-50 text-[#1a73e8] border-indigo-100'}`}>
+                                                        <BuildingIcon size={20} className="md:w-6 md:h-6"/>
                                                     </div>
-                                                    <div>
-                                                        <div className="flex items-center gap-3">
-                                                            <h4 className="font-black text-xl text-gray-900">{b.name}</h4>
-                                                            {b.spec.earthquakeDesign && <span className="px-2 py-0.5 bg-[#e6f4ea] text-[#137333] text-[10px] font-bold rounded">내진</span>}
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <h4 className="font-black text-sm md:text-xl text-gray-900 truncate tracking-tight">{b.name}</h4>
+                                                            {b.spec.earthquakeDesign && <span className="px-1.5 md:px-2 py-0.5 bg-[#e6f4ea] text-[#137333] text-[9px] md:text-[10px] font-bold rounded flex-shrink-0">내진</span>}
                                                         </div>
-                                                        <p className="text-sm text-[#5f6368] mt-1 font-medium">
-                                                            {b.spec.detailUsage || b.spec.mainUsage} | 지상 {b.spec.floorCount.ground}층 · 지하 {b.spec.floorCount.underground}층
-                                                            {b.spec.completionDate && <span className="ml-2 text-xs">({b.spec.completionDate.substring(0, 4)}년)</span>}
+                                                        <p className="text-[10px] md:text-sm text-[#5f6368] mt-0.5 md:mt-1 font-medium whitespace-nowrap tracking-tight">
+                                                            <span className="hidden md:inline">{b.spec.detailUsage || b.spec.mainUsage} | </span>
+                                                            <span className="md:hidden">{(b.spec.detailUsage || b.spec.mainUsage).substring(0, 4)}{(b.spec.detailUsage || b.spec.mainUsage).length > 4 ? '..' : ''} </span>
+                                                            지{b.spec.floorCount.ground}·B{b.spec.floorCount.underground}
+                                                            <span className="hidden md:inline"> 지상 {b.spec.floorCount.ground}층 · 지하 {b.spec.floorCount.underground}층</span>
+                                                            {b.spec.completionDate && <span className="ml-1 md:ml-2 text-[9px] md:text-xs">({b.spec.completionDate.substring(0, 4)})</span>}
                                                         </p>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-6">
-                                                    <div className="grid grid-cols-3 gap-6 text-right">
+                                                <div className="flex items-center gap-2 md:gap-6 flex-shrink-0">
+                                                    <div className="grid grid-cols-3 gap-2 md:gap-6 text-right">
                                                         <div>
-                                                            <p className="text-[10px] text-gray-400 font-bold">건축면적</p>
-                                                            <p className="font-black text-gray-800">{formatArea(b.spec.buildingArea)}</p>
+                                                            <p className="text-[8px] md:text-[10px] text-gray-400 font-bold whitespace-nowrap">건축</p>
+                                                            <p className="font-black text-[11px] md:text-base text-gray-800 whitespace-nowrap tracking-tight">{formatArea(b.spec.buildingArea)}</p>
                                                         </div>
                                                         <div>
-                                                            <p className="text-[10px] text-gray-400 font-bold">연면적</p>
-                                                            <p className="font-black text-[#1a73e8]">{formatArea(b.spec.grossFloorArea)}</p>
+                                                            <p className="text-[8px] md:text-[10px] text-gray-400 font-bold whitespace-nowrap">연면적</p>
+                                                            <p className="font-black text-[11px] md:text-base text-[#1a73e8] whitespace-nowrap tracking-tight">{formatArea(b.spec.grossFloorArea)}</p>
                                                         </div>
                                                         <div>
-                                                            <p className="text-[10px] text-gray-400 font-bold">호실</p>
-                                                            <p className="font-black text-gray-800">{buildingUnits.length}개</p>
+                                                            <p className="text-[8px] md:text-[10px] text-gray-400 font-bold whitespace-nowrap">호실</p>
+                                                            <p className="font-black text-[11px] md:text-base text-gray-800 whitespace-nowrap">{buildingUnits.length}개</p>
                                                         </div>
                                                     </div>
-                                                    <div className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
-                                                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+                                                    <div className={`transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}>
+                                                        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="md:w-5 md:h-5"><path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
                                                     </div>
                                                 </div>
                                             </div>
@@ -1038,194 +1176,273 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                         {isExpanded && (
                                             <div className="border-t border-[#dadce0] bg-[#f8f9fa]">
                                                 {/* 건물 상세 정보 그리드 */}
-                                                <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-6 border-b border-[#dadce0]">
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">구조</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.structure || '-'}</p>
+                                                <div className="p-3 md:p-6 grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-6 border-b border-[#dadce0]">
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">구조</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124] truncate">{b.spec.structure || '-'}</p>
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">높이</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.height ? `${b.spec.height}m` : '-'}</p>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">높이</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124]">{b.spec.height ? `${b.spec.height}m` : '-'}</p>
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">지붕</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.roofType || '-'}</p>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">지붕</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124] truncate">{b.spec.roofType || '-'}</p>
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">사용승인</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.completionDate || '-'}</p>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">사용승인</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124]">{b.spec.completionDate || '-'}</p>
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">주차</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.parkingCapacity}대</p>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">주차</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124]">{b.spec.parkingCapacity}대</p>
                                                         {b.spec.parkingDetail && (
-                                                            <p className="text-xs text-[#5f6368] mt-1">기계{b.spec.parkingDetail.indoorMech + b.spec.parkingDetail.outdoorMech} / 자주{b.spec.parkingDetail.indoorSelf + b.spec.parkingDetail.outdoorSelf}</p>
+                                                            <p className="text-[8px] md:text-xs text-[#5f6368] mt-0.5 md:mt-1">기계{b.spec.parkingDetail.indoorMech + b.spec.parkingDetail.outdoorMech}/자주{b.spec.parkingDetail.indoorSelf + b.spec.parkingDetail.outdoorSelf}</p>
                                                         )}
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">승강기</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.elevatorCount}대</p>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">승강기</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124]">{b.spec.elevatorCount}대</p>
                                                         {b.spec.elevatorDetail && (
-                                                            <p className="text-xs text-[#5f6368] mt-1">승용{b.spec.elevatorDetail.passenger} / 비상{b.spec.elevatorDetail.emergency}</p>
+                                                            <p className="text-[8px] md:text-xs text-[#5f6368] mt-0.5 md:mt-1">승용{b.spec.elevatorDetail.passenger}/비상{b.spec.elevatorDetail.emergency}</p>
                                                         )}
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">세대/호수</p>
-                                                        <p className="font-bold text-[#202124]">{b.spec.householdCount || 0}세대 / {b.spec.unitCount || 0}호</p>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">세대/호수</p>
+                                                        <p className="font-bold text-[11px] md:text-sm text-[#202124] whitespace-nowrap">{b.spec.householdCount || 0}세대/{b.spec.unitCount || 0}호</p>
                                                     </div>
-                                                    <div className="bg-white p-4 rounded-xl border border-[#dadce0]">
-                                                        <p className="text-xs text-[#5f6368] font-medium mb-2">내진설계</p>
-                                                        <p className={`font-bold ${b.spec.earthquakeDesign ? 'text-[#137333]' : 'text-[#5f6368]'}`}>
+                                                    <div className="bg-white p-2 md:p-4 rounded-lg md:rounded-xl border border-[#dadce0]">
+                                                        <p className="text-[9px] md:text-xs text-[#5f6368] font-medium mb-1 md:mb-2">내진설계</p>
+                                                        <p className={`font-bold text-[11px] md:text-sm ${b.spec.earthquakeDesign ? 'text-[#137333]' : 'text-[#5f6368]'}`}>
                                                             {b.spec.earthquakeDesign ? '적용' : '-'}
                                                         </p>
                                                     </div>
                                                 </div>
 
                                                 {/* 층별 정보 테이블 */}
-                                                {b.spec.floors && b.spec.floors.length > 0 && (
-                                                    <div className="p-6 border-b border-[#dadce0]">
-                                                        <p className="text-xs font-black text-[#1a73e8] mb-3 flex items-center gap-2">
-                                                            <Layers size={14}/> 층별 정보 ({b.spec.floors.length}개 층)
+                                                {b.spec.floors && b.spec.floors.length > 0 && (() => {
+                                                    // 층별 합산 데이터 생성
+                                                    const floorMap = new Map<number, { floors: typeof b.spec.floors, totalArea: number, usages: string[] }>();
+                                                    b.spec.floors.forEach(floor => {
+                                                        const existing = floorMap.get(floor.floorNumber);
+                                                        if (existing) {
+                                                            existing.floors.push(floor);
+                                                            existing.totalArea += floor.area;
+                                                            if (floor.usage && !existing.usages.includes(floor.usage)) {
+                                                                existing.usages.push(floor.usage);
+                                                            }
+                                                        } else {
+                                                            floorMap.set(floor.floorNumber, {
+                                                                floors: [floor],
+                                                                totalArea: floor.area,
+                                                                usages: floor.usage ? [floor.usage] : []
+                                                            });
+                                                        }
+                                                    });
+                                                    const aggregatedFloors = Array.from(floorMap.entries())
+                                                        .map(([floorNumber, data]) => ({ floorNumber, ...data }))
+                                                        .sort((a, bb) => bb.floorNumber - a.floorNumber);
+                                                    const uniqueFloorCount = aggregatedFloors.length;
+
+                                                    return (
+                                                    <div className="p-3 md:p-6 border-b border-[#dadce0]">
+                                                        <p className="text-[10px] md:text-xs font-black text-[#1a73e8] mb-2 md:mb-3 flex items-center gap-1 md:gap-2">
+                                                            <Layers size={12} className="md:w-3.5 md:h-3.5"/> 층별 정보 ({uniqueFloorCount}개 층)
                                                         </p>
-                                                        <div className="bg-white rounded-xl border border-[#dadce0] overflow-hidden">
-                                                            <table className="w-full text-sm">
+                                                        <div className="bg-white rounded-lg md:rounded-xl border border-[#dadce0] overflow-hidden overflow-x-auto">
+                                                            <table className="w-full text-xs md:text-sm">
                                                                 <thead className="bg-[#f8f9fa]">
-                                                                    <tr className="text-[10px] text-[#5f6368] uppercase font-bold">
-                                                                        <th className="p-3 text-center">층</th>
-                                                                        <th className="p-3 text-center">면적({appSettings.areaUnit === 'PYEONG' ? '평' : '㎡'})</th>
-                                                                        <th className="p-3 text-center">용도</th>
-                                                                        <th className="p-3 text-center">호실</th>
-                                                                        <th className="p-3 text-center">사용현황</th>
-                                                                        <th className="p-3 text-center">사용자</th>
+                                                                    <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+                                                                        <th className="p-1.5 md:p-3 text-center w-6 md:w-8"></th>
+                                                                        <th className="p-1.5 md:p-3 text-center whitespace-nowrap">층</th>
+                                                                        <th className="p-1.5 md:p-3 text-center whitespace-nowrap">면적<span className="hidden md:inline">({appSettings.areaUnit === 'PYEONG' ? '평' : '㎡'})</span></th>
+                                                                        <th className="p-1.5 md:p-3 text-center whitespace-nowrap">용도</th>
+                                                                        <th className="p-1.5 md:p-3 text-center whitespace-nowrap">호실</th>
+                                                                        <th className="p-1.5 md:p-3 text-center whitespace-nowrap hidden md:table-cell">사용현황</th>
+                                                                        <th className="p-1.5 md:p-3 text-center whitespace-nowrap hidden md:table-cell">사용자</th>
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody className="divide-y divide-gray-100">
-                                                                    {b.spec.floors
-                                                                        .sort((a, bb) => bb.floorNumber - a.floorNumber)
-                                                                        .map((floor, idx) => {
-                                                                            const floorUnits = buildingUnits.filter(u => u.floor === floor.floorNumber);
-                                                                            const occupiedUnits = floorUnits.filter(u => u.status === 'OCCUPIED');
-                                                                            const tenantNames = occupiedUnits.length > 0
-                                                                                ? occupiedUnits.map(u => u.unitNumber + '호').join(', ')
-                                                                                : '-';
+                                                                    {aggregatedFloors.map((aggFloor) => {
+                                                                        const floorUnits = buildingUnits.filter(u => u.floor === aggFloor.floorNumber);
+                                                                        const occupiedUnits = floorUnits.filter(u => u.status === 'OCCUPIED');
+                                                                        const vacantUnits = floorUnits.filter(u => u.status === 'VACANT');
+                                                                        const isMultiUsage = aggFloor.floors.length > 1;
+                                                                        const floorKey = `${b.id}_${aggFloor.floorNumber}`;
+                                                                        const isExpanded = expandedFloors.has(floorKey);
 
-                                                                            return (
-                                                                                <tr key={idx} className="hover:bg-[#f8f9fa]">
-                                                                                    <td className="p-3 text-center font-bold text-[#202124]">
-                                                                                        {floor.floorNumber > 0 ? `${floor.floorNumber}F` : `B${Math.abs(floor.floorNumber)}F`}
-                                                                                    </td>
-                                                                                    <td className="p-3 text-center font-bold text-[#1a73e8]">
-                                                                                        {formatArea(floor.area)}
-                                                                                    </td>
-                                                                                    <td className="p-3 text-center text-[#5f6368] text-xs truncate max-w-[150px]" title={floor.usage}>
-                                                                                        {floor.usage || '-'}
-                                                                                    </td>
-                                                                                    <td className="p-3 text-center">
-                                                                                        {floorUnits.length > 0 ? (
-                                                                                            <span className="text-xs font-bold text-gray-700">{floorUnits.length}개</span>
-                                                                                        ) : (
-                                                                                            <span className="text-xs text-gray-400">-</span>
+                                                                        // 사용현황 계산
+                                                                        let usageStatus = '미등록';
+                                                                        if (floorUnits.length > 0) {
+                                                                            if (occupiedUnits.length === floorUnits.length) {
+                                                                                usageStatus = '전체사용';
+                                                                            } else if (occupiedUnits.length > 0) {
+                                                                                usageStatus = '일부사용';
+                                                                            } else {
+                                                                                usageStatus = '공실';
+                                                                            }
+                                                                        }
+
+                                                                        // 사용자 통합 (중복 제거)
+                                                                        const uniqueTenants = [...new Set(occupiedUnits.map(u => u.unitNumber + '호'))];
+                                                                        const tenantDisplay = uniqueTenants.length > 0 ? (uniqueTenants.length === 1 ? uniqueTenants[0] : `${uniqueTenants[0]} 외 ${uniqueTenants.length - 1}`) : '-';
+
+                                                                        return (
+                                                                            <React.Fragment key={aggFloor.floorNumber}>
+                                                                                <tr
+                                                                                    className={`hover:bg-[#f8f9fa] ${isMultiUsage ? 'cursor-pointer' : ''}`}
+                                                                                    onClick={() => {
+                                                                                        if (isMultiUsage) {
+                                                                                            setExpandedFloors(prev => {
+                                                                                                const next = new Set(prev);
+                                                                                                if (next.has(floorKey)) {
+                                                                                                    next.delete(floorKey);
+                                                                                                } else {
+                                                                                                    next.add(floorKey);
+                                                                                                }
+                                                                                                return next;
+                                                                                            });
+                                                                                        }
+                                                                                    }}
+                                                                                >
+                                                                                    <td className="p-1 md:p-2 text-center">
+                                                                                        {isMultiUsage && (
+                                                                                            <span className={`inline-block transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
+                                                                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="md:w-3 md:h-3">
+                                                                                                    <polyline points="9 18 15 12 9 6"/>
+                                                                                                </svg>
+                                                                                            </span>
                                                                                         )}
                                                                                     </td>
-                                                                                    <td className="p-3 text-center">
-                                                                                        {floorUnits.length > 0 ? (
-                                                                                            <div className="flex gap-1 flex-wrap justify-center">
-                                                                                                {occupiedUnits.length > 0 && (
-                                                                                                    <span className="px-2 py-0.5 bg-[#e6f4ea] text-[#137333] text-[10px] font-bold rounded">
-                                                                                                        임대 {occupiedUnits.length}
-                                                                                                    </span>
-                                                                                                )}
-                                                                                                {floorUnits.filter(u => u.status === 'VACANT').length > 0 && (
-                                                                                                    <span className="px-2 py-0.5 bg-[#fef7e0] text-[#b06000] text-[10px] font-bold rounded">
-                                                                                                        공실 {floorUnits.filter(u => u.status === 'VACANT').length}
-                                                                                                    </span>
-                                                                                                )}
-                                                                                            </div>
+                                                                                    <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#202124] whitespace-nowrap">
+                                                                                        {aggFloor.floorNumber > 0 ? `${aggFloor.floorNumber}F` : `B${Math.abs(aggFloor.floorNumber)}`}
+                                                                                    </td>
+                                                                                    <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#1a73e8] whitespace-nowrap tracking-tight">
+                                                                                        {formatArea(aggFloor.totalArea)}
+                                                                                    </td>
+                                                                                    <td className="p-1.5 md:p-3 text-center text-[#5f6368] text-[9px] md:text-xs">
+                                                                                        {isMultiUsage ? (
+                                                                                            <span className="px-1 md:px-2 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[8px] md:text-[10px] font-bold rounded whitespace-nowrap">
+                                                                                                복수({aggFloor.usages.length})
+                                                                                            </span>
                                                                                         ) : (
-                                                                                            <span className="text-xs text-gray-400">미등록</span>
+                                                                                            <span className="truncate max-w-[60px] md:max-w-[150px] inline-block" title={aggFloor.usages[0]}>
+                                                                                                {aggFloor.usages[0] || '-'}
+                                                                                            </span>
                                                                                         )}
                                                                                     </td>
-                                                                                    <td className="p-3 text-center text-xs text-[#5f6368] truncate max-w-[120px]" title={tenantNames}>
-                                                                                        {occupiedUnits.length > 0 ? tenantNames : '-'}
+                                                                                    <td className="p-1.5 md:p-3 text-center">
+                                                                                        {floorUnits.length > 0 ? (
+                                                                                            <span className="text-[9px] md:text-xs font-bold text-gray-700">{floorUnits.length}</span>
+                                                                                        ) : (
+                                                                                            <span className="text-[9px] md:text-xs text-gray-400">-</span>
+                                                                                        )}
+                                                                                    </td>
+                                                                                    <td className="p-1.5 md:p-3 text-center hidden md:table-cell">
+                                                                                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                                                                                            usageStatus === '전체사용' ? 'bg-[#e6f4ea] text-[#137333]' :
+                                                                                            usageStatus === '일부사용' ? 'bg-[#fff3e0] text-[#e65100]' :
+                                                                                            usageStatus === '공실' ? 'bg-[#fef7e0] text-[#b06000]' :
+                                                                                            'bg-gray-100 text-gray-400'
+                                                                                        }`}>
+                                                                                            {usageStatus}
+                                                                                        </span>
+                                                                                    </td>
+                                                                                    <td className="p-1.5 md:p-3 text-center text-xs text-[#5f6368] hidden md:table-cell" title={uniqueTenants.join(', ')}>
+                                                                                        {tenantDisplay}
                                                                                     </td>
                                                                                 </tr>
-                                                                            );
-                                                                        })}
+                                                                                {/* 세부 용도 펼침 */}
+                                                                                {isMultiUsage && isExpanded && aggFloor.floors.map((subFloor, subIdx) => (
+                                                                                    <tr key={`${aggFloor.floorNumber}_${subIdx}`} className="bg-[#f8f9fa]">
+                                                                                        <td className="p-1 md:p-2"></td>
+                                                                                        <td className="p-1 md:p-2 text-center text-[9px] md:text-xs text-gray-400">└</td>
+                                                                                        <td className="p-1 md:p-2 text-center text-[9px] md:text-xs text-[#5f6368]">{formatArea(subFloor.area)}</td>
+                                                                                        <td className="p-1 md:p-2 text-center text-[9px] md:text-xs text-[#5f6368]">{subFloor.usage || '-'}</td>
+                                                                                        <td className="p-1 md:p-2" colSpan={1}></td>
+                                                                                    </tr>
+                                                                                ))}
+                                                                            </React.Fragment>
+                                                                        );
+                                                                    })}
                                                                 </tbody>
                                                                 {/* 합계 행 */}
                                                                 <tfoot className="bg-[#e8f0fe] border-t-2 border-[#1a73e8]">
-                                                                    <tr className="font-bold text-[#1a73e8]">
-                                                                        <td className="p-3 text-center">합계</td>
-                                                                        <td className="p-3 text-center">
+                                                                    <tr className="font-bold text-[#1a73e8] text-[10px] md:text-sm">
+                                                                        <td className="p-1.5 md:p-3"></td>
+                                                                        <td className="p-1.5 md:p-3 text-center whitespace-nowrap">합계</td>
+                                                                        <td className="p-1.5 md:p-3 text-center whitespace-nowrap tracking-tight">
                                                                             {formatArea(b.spec.floors.reduce((sum, f) => sum + f.area, 0))}
                                                                         </td>
-                                                                        <td className="p-3 text-center">-</td>
-                                                                        <td className="p-3 text-center">{buildingUnits.length}개</td>
-                                                                        <td className="p-3 text-center text-xs">
+                                                                        <td className="p-1.5 md:p-3 text-center">-</td>
+                                                                        <td className="p-1.5 md:p-3 text-center whitespace-nowrap">{buildingUnits.length}</td>
+                                                                        <td className="p-1.5 md:p-3 text-center text-[9px] md:text-xs hidden md:table-cell">
                                                                             임대 {buildingUnits.filter(u => u.status === 'OCCUPIED').length} / 공실 {buildingUnits.filter(u => u.status === 'VACANT').length}
                                                                         </td>
-                                                                        <td className="p-3 text-center">-</td>
+                                                                        <td className="p-1.5 md:p-3 text-center hidden md:table-cell">-</td>
                                                                     </tr>
                                                                 </tfoot>
                                                             </table>
                                                         </div>
                                                     </div>
-                                                )}
+                                                    );
+                                                })()}
 
                                                 {/* 호실 요약 (층별 테이블에 이미 표시되므로 간략히) */}
                                                 {buildingUnits.length > 0 && (
-                                                    <div className="px-6 py-4 border-b border-[#dadce0] bg-white">
-                                                        <div className="flex items-center justify-between">
-                                                            <p className="text-xs font-bold text-[#5f6368] flex items-center gap-2">
-                                                                <Home size={14} className="text-[#1a73e8]"/>
-                                                                등록 호실 {buildingUnits.length}개
-                                                                <span className="text-[#137333]">(임대 {buildingUnits.filter(u => u.status === 'OCCUPIED').length})</span>
-                                                                <span className="text-[#b06000]">(공실 {buildingUnits.filter(u => u.status === 'VACANT').length})</span>
+                                                    <div className="px-3 md:px-6 py-2 md:py-4 border-b border-[#dadce0] bg-white">
+                                                        <div className="flex items-center justify-between flex-wrap gap-1 md:gap-2">
+                                                            <p className="text-[10px] md:text-xs font-bold text-[#5f6368] flex items-center gap-1 md:gap-2">
+                                                                <Home size={12} className="md:w-3.5 md:h-3.5 text-[#1a73e8]"/>
+                                                                호실 {buildingUnits.length}개
+                                                                <span className="text-[#137333]">(임대{buildingUnits.filter(u => u.status === 'OCCUPIED').length})</span>
+                                                                <span className="text-[#b06000]">(공실{buildingUnits.filter(u => u.status === 'VACANT').length})</span>
                                                             </p>
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); setActiveTab('UNIT'); }}
-                                                                className="text-xs font-bold text-[#1a73e8] hover:underline"
+                                                                className="text-[10px] md:text-xs font-bold text-[#1a73e8] hover:underline"
                                                             >
-                                                                호실 탭에서 관리 →
+                                                                호실 관리 →
                                                             </button>
                                                         </div>
                                                     </div>
                                                 )}
 
                                                 {/* 수정/삭제 버튼 */}
-                                                <div className="p-4 flex justify-end gap-2">
+                                                <div className="p-2 md:p-4 flex justify-end gap-1 md:gap-2">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); openEditBuildingModal(b); }}
-                                                        className="flex items-center gap-2 px-4 py-2 border border-[#dadce0] rounded-lg text-sm font-bold text-[#5f6368] hover:bg-white transition-colors"
+                                                        className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-1.5 md:py-2 border border-[#dadce0] rounded-lg text-[10px] md:text-sm font-bold text-[#5f6368] hover:bg-white transition-colors"
                                                     >
-                                                        <Edit2 size={14}/> 수정
+                                                        <Edit2 size={12} className="md:w-3.5 md:h-3.5"/> 수정
                                                     </button>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleDeleteBuilding(b.id); }}
-                                                        className="flex items-center gap-2 px-4 py-2 border border-red-200 rounded-lg text-sm font-bold text-red-500 hover:bg-red-50 transition-colors"
+                                                        className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-1.5 md:py-2 border border-red-200 rounded-lg text-[10px] md:text-sm font-bold text-red-500 hover:bg-red-50 transition-colors"
                                                     >
-                                                        <Trash2 size={14}/> 삭제
+                                                        <Trash2 size={12} className="md:w-3.5 md:h-3.5"/> 삭제
                                                     </button>
                                                 </div>
                                             </div>
                                         )}
                                     </div>
                                 );
-                            })}
-                            {selectedProperty.buildings.length === 0 && (
+                            })
+                            })()}
+                            {selectedProperty.buildings.filter(b => buildingFilter === '' || b.name.toLowerCase().includes(buildingFilter.toLowerCase())).length === 0 && (
                                 <div className="p-16 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50">
                                     <BuildingIcon size={48} className="mx-auto text-gray-300 mb-4"/>
-                                    <p className="text-gray-400 font-bold mb-2">등록된 건물이 없습니다</p>
-                                    <p className="text-gray-400 text-sm">물건 등록 시 PNU가 있으면 건물이 자동으로 등록됩니다.</p>
+                                    <p className="text-gray-400 font-bold mb-2">{buildingFilter ? '검색 결과가 없습니다' : '등록된 건물이 없습니다'}</p>
+                                    <p className="text-gray-400 text-sm">{buildingFilter ? '다른 검색어를 입력하세요' : '물건 등록 시 PNU가 있으면 건물이 자동으로 등록됩니다.'}</p>
                                 </div>
                             )}
                         </div>
                     </div>
                 )}
                 {activeTab === 'UNIT' && (
-                  <div className="space-y-6">
-                    <div className="flex justify-between items-center">
-                      <h3 className="font-black text-[#3c4043] flex items-center gap-2"><Layers size={18} className="text-[#1a73e8]"/> 호실 목록 ({propertyUnits.length}개)</h3>
+                  <div className="space-y-3 md:space-y-6">
+                    <div className="flex justify-between items-center gap-2">
+                      <h3 className="font-black text-sm md:text-base text-[#3c4043] flex items-center gap-1 md:gap-2"><Layers size={16} className="md:w-[18px] md:h-[18px] text-[#1a73e8]"/> 호실 ({propertyUnits.length}개)</h3>
                       <button
                         onClick={() => {
                           if (selectedProperty.buildings.length === 0) {
@@ -1235,15 +1452,15 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                           setNewUnit({buildingId: selectedProperty.buildings[0]?.id || '', unitNumber: '', floor: 1, area: 0, usage: '업무시설', status: 'VACANT', rentType: '월세', deposit: 0, monthlyRent: 0});
                           setIsUnitModalOpen(true);
                         }}
-                        className="bg-[#1a73e8] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg hover:bg-[#1557b0] transition-all"
+                        className="bg-[#1a73e8] text-white px-3 md:px-5 py-2 md:py-2.5 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold flex items-center gap-1 md:gap-2 shadow-lg hover:bg-[#1557b0] transition-all"
                       >
-                        <Plus size={16}/> 호실 추가
+                        <Plus size={14} className="md:w-4 md:h-4"/> 추가
                       </button>
                     </div>
 
                     {/* 건물이 없는 경우 안내 */}
                     {selectedProperty.buildings.length === 0 && (
-                      <div className="bg-[#fef7e0] border border-[#feefc3] p-4 rounded-xl text-sm text-[#b06000] font-medium">
+                      <div className="bg-[#fef7e0] border border-[#feefc3] p-3 md:p-4 rounded-lg md:rounded-xl text-[11px] md:text-sm text-[#b06000] font-medium">
                         호실을 추가하려면 먼저 <strong>건물 탭</strong>에서 건물을 등록해야 합니다.
                       </div>
                     )}
@@ -1252,13 +1469,13 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                     {selectedProperty.buildings.map(building => {
                       const buildingUnits = propertyUnits.filter(u => u.buildingId === building.id);
                       return (
-                        <div key={building.id} className="space-y-3">
+                        <div key={building.id} className="space-y-2 md:space-y-3">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <div className="p-2 bg-indigo-50 text-[#1a73e8] rounded-lg"><BuildingIcon size={16}/></div>
+                            <div className="flex items-center gap-2 md:gap-3">
+                              <div className="p-1.5 md:p-2 bg-indigo-50 text-[#1a73e8] rounded-lg"><BuildingIcon size={14} className="md:w-4 md:h-4"/></div>
                               <div>
-                                <h4 className="font-bold text-[#202124]">{building.name}</h4>
-                                <p className="text-[10px] text-[#5f6368]">{buildingUnits.length}개 호실</p>
+                                <h4 className="font-bold text-[11px] md:text-sm text-[#202124]">{building.name}</h4>
+                                <p className="text-[9px] md:text-[10px] text-[#5f6368]">{buildingUnits.length}개 호실</p>
                               </div>
                             </div>
                             <button
@@ -1266,21 +1483,21 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                 setNewUnit({buildingId: building.id, unitNumber: '', floor: 1, area: 0, usage: building.spec.detailUsage || building.spec.mainUsage || '업무시설', status: 'VACANT', rentType: '월세', deposit: 0, monthlyRent: 0});
                                 setIsUnitModalOpen(true);
                               }}
-                              className="text-xs font-bold text-[#1a73e8] hover:bg-[#e8f0fe] px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1"
+                              className="text-[10px] md:text-xs font-bold text-[#1a73e8] hover:bg-[#e8f0fe] px-2 md:px-3 py-1 md:py-1.5 rounded-lg transition-colors flex items-center gap-1"
                             >
-                              <Plus size={14}/> 호실 추가
+                              <Plus size={12} className="md:w-3.5 md:h-3.5"/> 추가
                             </button>
                           </div>
 
                           {buildingUnits.length > 0 ? (
-                            <div className="bg-white border border-[#dadce0] rounded-xl overflow-hidden">
+                            <div className="bg-white border border-[#dadce0] rounded-lg md:rounded-xl overflow-hidden overflow-x-auto">
                               {/* 정렬 버튼 */}
-                              <div className="px-4 py-2 bg-[#f8f9fa] border-b border-[#dadce0] flex items-center gap-2">
-                                <span className="text-[10px] text-gray-500 font-bold">정렬:</span>
+                              <div className="px-2 md:px-4 py-1.5 md:py-2 bg-[#f8f9fa] border-b border-[#dadce0] flex items-center gap-1 md:gap-2">
+                                <span className="text-[8px] md:text-[10px] text-gray-500 font-bold hidden md:inline">정렬:</span>
                                 {[
-                                  { key: 'floor', label: '층별' },
-                                  { key: 'area', label: '면적별' },
-                                  { key: 'status', label: '상태별' }
+                                  { key: 'floor', label: '층' },
+                                  { key: 'area', label: '면적' },
+                                  { key: 'status', label: '상태' }
                                 ].map(opt => (
                                   <button
                                     key={opt.key}
@@ -1288,23 +1505,23 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                       if (unitSortKey === opt.key) setUnitSortDesc(!unitSortDesc);
                                       else { setUnitSortKey(opt.key as any); setUnitSortDesc(true); }
                                     }}
-                                    className={`px-2 py-1 text-[10px] font-bold rounded ${unitSortKey === opt.key ? 'bg-[#1a73e8] text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}
+                                    className={`px-1.5 md:px-2 py-0.5 md:py-1 text-[8px] md:text-[10px] font-bold rounded ${unitSortKey === opt.key ? 'bg-[#1a73e8] text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}
                                   >
                                     {opt.label} {unitSortKey === opt.key && (unitSortDesc ? '↓' : '↑')}
                                   </button>
                                 ))}
                               </div>
-                              <table className="w-full text-sm">
+                              <table className="w-full text-xs md:text-sm min-w-[500px]">
                                 <thead className="bg-[#f8f9fa]">
-                                  <tr className="text-[10px] text-[#5f6368] uppercase font-bold">
-                                    <th className="p-3 text-center">호실</th>
-                                    <th className="p-3 text-center">층</th>
-                                    <th className="p-3 text-center">면적</th>
-                                    <th className="p-3 text-center">용도</th>
-                                    <th className="p-3 text-center">상태</th>
-                                    <th className="p-3 text-center">보증금</th>
-                                    <th className="p-3 text-center">월차임</th>
-                                    <th className="p-3 text-center w-20">관리</th>
+                                  <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">호실</th>
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">층</th>
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">면적</th>
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap hidden md:table-cell">용도</th>
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">상태</th>
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">보증금</th>
+                                    <th className="p-1.5 md:p-3 text-center whitespace-nowrap">월차임</th>
+                                    <th className="p-1.5 md:p-3 text-center w-12 md:w-20">관리</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
@@ -1318,34 +1535,34 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                     })
                                     .map(unit => (
                                       <tr key={unit.id} className="hover:bg-[#f8f9fa] group">
-                                        <td className="p-3 text-center font-bold text-[#202124]">{unit.unitNumber}호</td>
-                                        <td className="p-3 text-center text-gray-600">
-                                          {unit.floor > 0 ? `${unit.floor}F` : `B${Math.abs(unit.floor)}F`}
+                                        <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#202124] whitespace-nowrap">{unit.unitNumber}호</td>
+                                        <td className="p-1.5 md:p-3 text-center text-[10px] md:text-sm text-gray-600 whitespace-nowrap">
+                                          {unit.floor > 0 ? `${unit.floor}F` : `B${Math.abs(unit.floor)}`}
                                         </td>
-                                        <td className="p-3 text-center font-bold text-[#1a73e8]">{formatArea(unit.area)}</td>
-                                        <td className="p-3 text-center text-[#5f6368] text-xs">{unit.usage}</td>
-                                        <td className="p-3 text-center">
-                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                        <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#1a73e8] whitespace-nowrap tracking-tight">{formatArea(unit.area)}</td>
+                                        <td className="p-1.5 md:p-3 text-center text-[#5f6368] text-[9px] md:text-xs hidden md:table-cell">{unit.usage}</td>
+                                        <td className="p-1.5 md:p-3 text-center">
+                                          <span className={`px-1 md:px-2 py-0.5 rounded-full text-[8px] md:text-[10px] font-bold whitespace-nowrap ${
                                             unit.status === 'OCCUPIED' ? 'bg-[#e6f4ea] text-[#137333]' :
                                             unit.status === 'UNDER_REPAIR' ? 'bg-orange-50 text-orange-600' :
                                             'bg-[#fef7e0] text-[#b06000]'
                                           }`}>
-                                            {unit.status === 'OCCUPIED' ? '임대중' : unit.status === 'UNDER_REPAIR' ? '보수중' : '공실'}
+                                            {unit.status === 'OCCUPIED' ? '임대' : unit.status === 'UNDER_REPAIR' ? '보수' : '공실'}
                                           </span>
                                         </td>
-                                        <td className="p-3 text-center font-bold text-gray-700">
+                                        <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-gray-700 whitespace-nowrap tracking-tight">
                                           {unit.status === 'OCCUPIED' && unit.deposit ? formatMoneyInput(unit.deposit) : '-'}
                                         </td>
-                                        <td className="p-3 text-center font-bold text-gray-700">
+                                        <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-gray-700 whitespace-nowrap tracking-tight">
                                           {unit.status === 'OCCUPIED' && unit.monthlyRent ? formatMoneyInput(unit.monthlyRent) : '-'}
                                         </td>
-                                        <td className="p-3 text-center">
-                                          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button className="p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors" title="수정">
-                                              <Edit2 size={12} className="text-[#1a73e8]" />
+                                        <td className="p-1.5 md:p-3 text-center">
+                                          <div className="flex items-center justify-center gap-0.5 md:gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                                            <button className="p-1 md:p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors" title="수정">
+                                              <Edit2 size={10} className="md:w-3 md:h-3 text-[#1a73e8]" />
                                             </button>
-                                            <button className="p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="삭제">
-                                              <Trash2 size={12} className="text-red-500" />
+                                            <button className="p-1 md:p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="삭제">
+                                              <Trash2 size={10} className="md:w-3 md:h-3 text-red-500" />
                                             </button>
                                           </div>
                                         </td>
@@ -1354,27 +1571,27 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                 </tbody>
                                 {/* 합계 행 */}
                                 <tfoot className="bg-[#e8f0fe] border-t-2 border-[#1a73e8]">
-                                  <tr className="font-bold text-[#1a73e8]">
-                                    <td className="p-3 text-center">합계</td>
-                                    <td className="p-3 text-center">{buildingUnits.length}개</td>
-                                    <td className="p-3 text-center">{formatArea(buildingUnits.reduce((sum, u) => sum + u.area, 0))}</td>
-                                    <td className="p-3 text-center">-</td>
-                                    <td className="p-3 text-center text-xs">
-                                      임대 {buildingUnits.filter(u => u.status === 'OCCUPIED').length} / 공실 {buildingUnits.filter(u => u.status === 'VACANT').length}
+                                  <tr className="font-bold text-[#1a73e8] text-[10px] md:text-sm">
+                                    <td className="p-1.5 md:p-3 text-center whitespace-nowrap">합계</td>
+                                    <td className="p-1.5 md:p-3 text-center whitespace-nowrap">{buildingUnits.length}개</td>
+                                    <td className="p-1.5 md:p-3 text-center whitespace-nowrap tracking-tight">{formatArea(buildingUnits.reduce((sum, u) => sum + u.area, 0))}</td>
+                                    <td className="p-1.5 md:p-3 text-center hidden md:table-cell">-</td>
+                                    <td className="p-1.5 md:p-3 text-center text-[8px] md:text-xs whitespace-nowrap">
+                                      {buildingUnits.filter(u => u.status === 'OCCUPIED').length}/{buildingUnits.filter(u => u.status === 'VACANT').length}
                                     </td>
-                                    <td className="p-3 text-center">
+                                    <td className="p-1.5 md:p-3 text-center whitespace-nowrap tracking-tight">
                                       {formatMoneyInput(buildingUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.deposit || 0), 0))}
                                     </td>
-                                    <td className="p-3 text-center">
+                                    <td className="p-1.5 md:p-3 text-center whitespace-nowrap tracking-tight">
                                       {formatMoneyInput(buildingUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.monthlyRent || 0), 0))}
                                     </td>
-                                    <td className="p-3"></td>
+                                    <td className="p-1.5 md:p-3"></td>
                                   </tr>
                                 </tfoot>
                               </table>
                             </div>
                           ) : (
-                            <div className="py-6 text-center text-gray-400 border border-dashed border-gray-200 rounded-xl text-sm bg-[#f8f9fa]">
+                            <div className="py-4 md:py-6 text-center text-gray-400 border border-dashed border-gray-200 rounded-lg md:rounded-xl text-[11px] md:text-sm bg-[#f8f9fa]">
                               등록된 호실이 없습니다
                             </div>
                           )}
@@ -1416,16 +1633,16 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
              </div>
           </div>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-gray-400 bg-[#f8f9fa] rounded-2xl border-2 border-dashed border-gray-200">
-             <Layers size={64} className="mb-4 opacity-20"/>
-             <p className="font-bold">조회할 자산을 리스트에서 선택해 주세요.</p>
+          <div className="py-16 flex flex-col items-center justify-center text-gray-400 bg-[#f8f9fa] rounded-2xl border-2 border-dashed border-gray-200">
+             <Layers size={48} className="mb-3 opacity-20"/>
+             <p className="font-bold text-sm">조회할 자산을 리스트에서 선택해 주세요.</p>
           </div>
         )}
       </div>
 
       {isPropertyModalOpen && (
         <Modal onClose={() => setIsPropertyModalOpen(false)} disableOverlayClick={true}>
-           <div className="p-8 space-y-8">
+           <div className="p-4 md:p-6 space-y-4 md:space-y-6">
               <div className="flex justify-between items-center border-b border-gray-100 pb-6">
                  <h3 className="text-2xl font-black text-[#202124] flex items-center gap-3"><Edit2 size={24} className="text-[#1a73e8]"/> 물건 정보</h3>
                  <button onClick={() => setIsPropertyModalOpen(false)} className="text-[#5f6368] hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
@@ -1533,7 +1750,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
       {isUnitModalOpen && selectedProperty && (
         <Modal onClose={() => setIsUnitModalOpen(false)} disableOverlayClick={true}>
-            <div className="p-8 space-y-6">
+            <div className="p-4 md:p-6 space-y-4 md:space-y-6">
                 <div className="flex justify-between items-center border-b border-gray-100 pb-6">
                    <h3 className="text-xl font-black text-[#202124] flex items-center gap-3"><Layers size={24} className="text-[#1a73e8]"/> 호실 추가</h3>
                    <button onClick={() => setIsUnitModalOpen(false)} className="text-[#5f6368] hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
@@ -1690,7 +1907,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
       {isBuildingModalOpen && (
           <Modal onClose={() => { setIsBuildingModalOpen(false); setEditingBuildingId(null); setBuildingTitleList([]); setBuildingFloorList([]); setSelectedBuildingTitle(null); }} disableOverlayClick={true}>
-              <div className="p-8 space-y-6">
+              <div className="p-4 md:p-6 space-y-4 md:space-y-6">
                   <div className="flex justify-between items-center border-b border-gray-100 pb-6">
                       <h3 className="text-xl font-black text-gray-900 flex items-center gap-3">
                           <BuildingIcon size={24} className="text-[#1a73e8]"/>
@@ -1935,18 +2152,18 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                   {newBuilding.spec?.floors && newBuilding.spec.floors.length > 0 && (
                       <div className="bg-[#f8f9fa] p-6 rounded-2xl border border-[#dadce0] space-y-4">
                           <div className="flex items-center justify-between">
-                              <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2">
-                                  <Layers size={14}/> 층별 정보 ({newBuilding.spec.floors.length}개 층)
+                              <p className="text-[10px] md:text-xs font-black text-[#1a73e8] uppercase tracking-wide md:tracking-widest flex items-center gap-1 md:gap-2">
+                                  <Layers size={12} className="md:w-3.5 md:h-3.5"/> 층별 정보 ({newBuilding.spec.floors.length}개 층)
                               </p>
-                              <span className="text-[10px] text-[#5f6368]">건축물대장에서 자동 조회됨</span>
+                              <span className="text-[8px] md:text-[10px] text-[#5f6368]">건축물대장에서 자동 조회됨</span>
                           </div>
-                          <div className="max-h-48 overflow-y-auto">
-                              <table className="w-full text-sm">
+                          <div className="max-h-48 overflow-y-auto overflow-x-auto">
+                              <table className="w-full text-xs md:text-sm min-w-[280px]">
                                   <thead className="bg-white sticky top-0">
-                                      <tr className="text-[10px] text-[#5f6368] uppercase">
-                                          <th className="p-2 text-left font-bold">층</th>
-                                          <th className="p-2 text-right font-bold">면적({appSettings.areaUnit === 'PYEONG' ? '평' : '㎡'})</th>
-                                          <th className="p-2 text-left font-bold">용도</th>
+                                      <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase tracking-tight md:tracking-normal">
+                                          <th className="p-1.5 md:p-2 text-left font-bold whitespace-nowrap">층</th>
+                                          <th className="p-1.5 md:p-2 text-right font-bold whitespace-nowrap">면적</th>
+                                          <th className="p-1.5 md:p-2 text-left font-bold whitespace-nowrap">용도</th>
                                       </tr>
                                   </thead>
                                   <tbody className="divide-y divide-gray-100">
@@ -1954,13 +2171,13 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                           .sort((a, b) => b.floorNumber - a.floorNumber)
                                           .map((floor, idx) => (
                                               <tr key={idx} className="hover:bg-white">
-                                                  <td className="p-2 font-bold text-[#202124]">
-                                                      {floor.floorNumber > 0 ? `${floor.floorNumber}F` : `B${Math.abs(floor.floorNumber)}F`}
+                                                  <td className="p-1.5 md:p-2 font-bold text-[10px] md:text-sm text-[#202124] whitespace-nowrap">
+                                                      {floor.floorNumber > 0 ? `${floor.floorNumber}F` : `B${Math.abs(floor.floorNumber)}`}
                                                   </td>
-                                                  <td className="p-2 text-right font-bold text-[#1a73e8]">
+                                                  <td className="p-1.5 md:p-2 text-right font-bold text-[10px] md:text-sm text-[#1a73e8] whitespace-nowrap tracking-tight">
                                                       {formatArea(floor.area)}
                                                   </td>
-                                                  <td className="p-2 text-[#5f6368] text-xs truncate max-w-[200px]" title={floor.usage}>
+                                                  <td className="p-1.5 md:p-2 text-[#5f6368] text-[9px] md:text-xs truncate max-w-[100px] md:max-w-[200px]" title={floor.usage}>
                                                       {floor.usage || '-'}
                                                   </td>
                                               </tr>
@@ -2069,18 +2286,182 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           </div>
 
           {/* 하단 정보 */}
-          {selectedProperty.photos && selectedProperty.photos.length > 0 && (
-            <div className="p-3 border-t border-white/10 text-center text-white/60 text-sm" onClick={(e) => e.stopPropagation()}>
-              {currentPhotoIndex + 1} / {selectedProperty.photos.length}
+          {selectedProperty.photos && selectedProperty.photos.length > 0 && (() => {
+            const currentPhoto = selectedProperty.photos[currentPhotoIndex];
+            const linkedInfo = [];
+            if (currentPhoto?.linkedType === 'LOT' && currentPhoto.linkedLotId) {
+              const lot = selectedProperty.lots.find(l => l.id === currentPhoto.linkedLotId);
+              if (lot) linkedInfo.push(`토지: ${lot.address.eupMyeonDong} ${lot.address.bonbun}`);
+            }
+            if (currentPhoto?.linkedType === 'BUILDING' && currentPhoto.linkedBuildingId) {
+              const building = selectedProperty.buildings.find(b => b.id === currentPhoto.linkedBuildingId);
+              if (building) linkedInfo.push(`건물: ${building.name}`);
+            }
+            if (currentPhoto?.linkedType === 'FLOOR' && currentPhoto.linkedBuildingId) {
+              const building = selectedProperty.buildings.find(b => b.id === currentPhoto.linkedBuildingId);
+              if (building) linkedInfo.push(`${building.name} ${currentPhoto.linkedFloor}층`);
+            }
+            if (currentPhoto?.linkedType === 'UNIT' && currentPhoto.linkedUnitId) {
+              const unit = propertyUnits.find(u => u.id === currentPhoto.linkedUnitId);
+              if (unit) linkedInfo.push(`호실: ${unit.unitNumber}호`);
+            }
+            return (
+              <div className="p-2 border-t border-white/10 flex items-center justify-between text-white/60 text-xs" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-3">
+                  <span>{currentPhoto?.name || '사진 ' + (currentPhotoIndex + 1)}</span>
+                  {linkedInfo.length > 0 && <span className="text-[#1a73e8]">{linkedInfo.join(' · ')}</span>}
+                </div>
+                <span>{currentPhotoIndex + 1} / {selectedProperty.photos.length}</span>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* 사진 업로드 모달 */}
+      {isPhotoUploadModalOpen && selectedProperty && (
+        <div className="fixed inset-0 z-[250] bg-black/60 flex items-center justify-center" onClick={() => setIsPhotoUploadModalOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-[#dadce0]">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-black text-gray-900">사진 정보 입력</h3>
+                <button onClick={() => setIsPhotoUploadModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={20}/>
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">{pendingPhotoFiles.length}개 파일 선택됨</p>
             </div>
-          )}
+            <div className="p-6 space-y-4">
+              {/* 사진 이름 */}
+              <div>
+                <label className="text-xs font-bold text-gray-600 mb-1 block">사진 이름</label>
+                <input
+                  type="text"
+                  value={photoUploadForm.name}
+                  onChange={(e) => setPhotoUploadForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="예: 외관, 로비, 옥상 등"
+                  className="w-full px-3 py-2 border border-[#dadce0] rounded-lg text-sm focus:outline-none focus:border-[#1a73e8]"
+                />
+              </div>
+              {/* 연계 유형 */}
+              <div>
+                <label className="text-xs font-bold text-gray-600 mb-1 block">연계 대상</label>
+                <select
+                  value={photoUploadForm.linkedType}
+                  onChange={(e) => setPhotoUploadForm(prev => ({
+                    ...prev,
+                    linkedType: e.target.value as any,
+                    linkedLotId: '',
+                    linkedBuildingId: '',
+                    linkedFloor: null,
+                    linkedUnitId: ''
+                  }))}
+                  className="w-full px-3 py-2 border border-[#dadce0] rounded-lg text-sm focus:outline-none focus:border-[#1a73e8]"
+                >
+                  <option value="PROPERTY">물건 전체</option>
+                  <option value="LOT">토지</option>
+                  <option value="BUILDING">건물</option>
+                  <option value="FLOOR">층</option>
+                  <option value="UNIT">호실</option>
+                </select>
+              </div>
+              {/* 토지 선택 */}
+              {photoUploadForm.linkedType === 'LOT' && (
+                <div>
+                  <label className="text-xs font-bold text-gray-600 mb-1 block">토지 선택</label>
+                  <select
+                    value={photoUploadForm.linkedLotId}
+                    onChange={(e) => setPhotoUploadForm(prev => ({ ...prev, linkedLotId: e.target.value }))}
+                    className="w-full px-3 py-2 border border-[#dadce0] rounded-lg text-sm focus:outline-none focus:border-[#1a73e8]"
+                  >
+                    <option value="">선택하세요</option>
+                    {selectedProperty.lots.map(lot => (
+                      <option key={lot.id} value={lot.id}>{lot.address.eupMyeonDong} {lot.address.bonbun}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* 건물 선택 */}
+              {(photoUploadForm.linkedType === 'BUILDING' || photoUploadForm.linkedType === 'FLOOR') && (
+                <div>
+                  <label className="text-xs font-bold text-gray-600 mb-1 block">건물 선택</label>
+                  <select
+                    value={photoUploadForm.linkedBuildingId}
+                    onChange={(e) => setPhotoUploadForm(prev => ({ ...prev, linkedBuildingId: e.target.value, linkedFloor: null }))}
+                    className="w-full px-3 py-2 border border-[#dadce0] rounded-lg text-sm focus:outline-none focus:border-[#1a73e8]"
+                  >
+                    <option value="">선택하세요</option>
+                    {selectedProperty.buildings.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {/* 층 선택 */}
+              {photoUploadForm.linkedType === 'FLOOR' && photoUploadForm.linkedBuildingId && (() => {
+                const building = selectedProperty.buildings.find(b => b.id === photoUploadForm.linkedBuildingId);
+                if (!building) return null;
+                const floors: number[] = [];
+                for (let i = building.spec.floorCount.underground; i >= 1; i--) floors.push(-i);
+                for (let i = 1; i <= building.spec.floorCount.ground; i++) floors.push(i);
+                return (
+                  <div>
+                    <label className="text-xs font-bold text-gray-600 mb-1 block">층 선택</label>
+                    <select
+                      value={photoUploadForm.linkedFloor ?? ''}
+                      onChange={(e) => setPhotoUploadForm(prev => ({ ...prev, linkedFloor: e.target.value ? parseInt(e.target.value) : null }))}
+                      className="w-full px-3 py-2 border border-[#dadce0] rounded-lg text-sm focus:outline-none focus:border-[#1a73e8]"
+                    >
+                      <option value="">선택하세요</option>
+                      {floors.map(f => (
+                        <option key={f} value={f}>{f > 0 ? `${f}층` : `지하${Math.abs(f)}층`}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
+              {/* 호실 선택 */}
+              {photoUploadForm.linkedType === 'UNIT' && (
+                <div>
+                  <label className="text-xs font-bold text-gray-600 mb-1 block">호실 선택</label>
+                  <select
+                    value={photoUploadForm.linkedUnitId}
+                    onChange={(e) => setPhotoUploadForm(prev => ({ ...prev, linkedUnitId: e.target.value }))}
+                    className="w-full px-3 py-2 border border-[#dadce0] rounded-lg text-sm focus:outline-none focus:border-[#1a73e8]"
+                  >
+                    <option value="">선택하세요</option>
+                    {propertyUnits.map(unit => {
+                      const building = selectedProperty.buildings.find(b => b.id === unit.buildingId);
+                      return (
+                        <option key={unit.id} value={unit.id}>{building?.name} - {unit.unitNumber}호</option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t border-[#dadce0] flex gap-3">
+              <button
+                onClick={() => setIsPhotoUploadModalOpen(false)}
+                className="flex-1 py-2.5 border border-[#dadce0] rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-50"
+              >
+                취소
+              </button>
+              <button
+                onClick={handlePhotoUploadConfirm}
+                className="flex-1 py-2.5 bg-[#1a73e8] text-white rounded-lg text-sm font-bold hover:bg-[#1557b0]"
+              >
+                업로드
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* 토지(필지) 추가/수정 모달 */}
       {isLotModalOpen && selectedProperty && (
           <Modal onClose={() => { setIsLotModalOpen(false); setEditingLotId(null); }} disableOverlayClick={true}>
-              <div className="p-8 space-y-8">
+              <div className="p-4 md:p-6 space-y-4 md:space-y-6">
                   <div className="flex justify-between items-center border-b border-gray-100 pb-6">
                       <h3 className="text-xl font-black text-gray-900 flex items-center gap-3">
                         <MapPin size={24} className="text-[#1a73e8]"/>

@@ -36,24 +36,24 @@ export const FinanceManager: React.FC<FinanceManagerProps> = ({
   const [isBillModalOpen, setIsBillModalOpen] = useState(false);
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-[#dadce0] shadow-sm">
+    <div className="space-y-3 md:space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-[#dadce0] shadow-sm">
          <div>
-            <h2 className="text-xl font-black text-[#3c4043] flex items-center gap-2"><Wallet size={24} className="text-[#34a853]"/> 재무 건전성 및 수납 관리</h2>
-            <p className="text-sm text-[#5f6368] mt-1 font-medium">임대료, 관리비, 유지보수비 청구 이력 및 실시간 수납 상태 추적</p>
+            <h2 className="text-base md:text-xl font-black text-[#3c4043] flex items-center gap-2"><Wallet size={20} className="md:w-6 md:h-6 text-[#34a853]"/> 수납 관리</h2>
+            <p className="text-[10px] md:text-sm text-[#5f6368] mt-1 font-medium hidden md:block">임대료, 관리비, 유지보수비 청구 이력 및 실시간 수납 상태 추적</p>
          </div>
-         <button onClick={() => setIsBillModalOpen(true)} className="bg-[#1a73e8] text-white px-6 py-3 rounded-xl text-sm font-black flex items-center gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95"><Plus size={18}/> 개별 청구서 발행</button>
+         <button onClick={() => setIsBillModalOpen(true)} className="bg-[#1a73e8] text-white px-3 md:px-6 py-2 md:py-3 rounded-lg md:rounded-xl text-[10px] md:text-sm font-black flex items-center gap-1 md:gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95 whitespace-nowrap"><Plus size={14} className="md:w-[18px] md:h-[18px]"/> 청구서 발행</button>
       </div>
 
-      <div className="bg-white rounded-2xl border border-[#dadce0] shadow-sm overflow-hidden">
-        <table className="w-full text-sm text-left">
-           <thead className="bg-[#f8f9fa] border-b border-[#dadce0] text-[11px] font-black text-[#5f6368] uppercase tracking-widest">
+      <div className="bg-white rounded-xl md:rounded-2xl border border-[#dadce0] shadow-sm overflow-hidden overflow-x-auto">
+        <table className="w-full text-xs md:text-sm text-left min-w-[500px]">
+           <thead className="bg-[#f8f9fa] border-b border-[#dadce0] text-[8px] md:text-[11px] font-black text-[#5f6368] uppercase tracking-wide md:tracking-widest">
               <tr>
-                <th className="p-5">청구 월</th>
-                <th className="p-5">청구 항목 / 대상</th>
-                <th className="p-5 text-right">금액 (VAT 포함)</th>
-                <th className="p-5">수납 기한</th>
-                <th className="p-5 text-center">수납 제어</th>
+                <th className="p-2 md:p-5 whitespace-nowrap">청구 월</th>
+                <th className="p-2 md:p-5 whitespace-nowrap">항목</th>
+                <th className="p-2 md:p-5 text-right whitespace-nowrap">금액</th>
+                <th className="p-2 md:p-5 whitespace-nowrap">기한</th>
+                <th className="p-2 md:p-5 text-center whitespace-nowrap">수납</th>
               </tr>
            </thead>
            <tbody className="divide-y divide-[#f1f3f4]">
@@ -61,38 +61,38 @@ export const FinanceManager: React.FC<FinanceManagerProps> = ({
                 const isPaid = tx.status === 'PAID';
                 return (
                   <tr key={tx.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="p-5 font-black text-[#202124]">{tx.targetMonth}</td>
-                    <td className="p-5">
+                    <td className="p-2 md:p-5 font-black text-[10px] md:text-sm text-[#202124] whitespace-nowrap">{tx.targetMonth}</td>
+                    <td className="p-2 md:p-5">
                       <div className="flex flex-col">
-                        <span className="flex items-center gap-2 text-[#5f6368] font-black text-xs uppercase mb-1">
-                            <div className={`w-2 h-2 rounded-full ${tx.type === 'RENT' ? 'bg-[#1a73e8]' : tx.type === 'ADMIN_FEE' ? 'bg-[#34a853]' : 'bg-[#ea4335]'}`}></div>
-                            {tx.type === 'RENT' ? '임대료' : tx.type === 'ADMIN_FEE' ? '관리비' : tx.type === 'MAINTENANCE_COST' ? '유지보수비' : '기타'}
+                        <span className="flex items-center gap-1 md:gap-2 text-[#5f6368] font-black text-[9px] md:text-xs uppercase mb-0.5 md:mb-1">
+                            <div className={`w-1.5 md:w-2 h-1.5 md:h-2 rounded-full ${tx.type === 'RENT' ? 'bg-[#1a73e8]' : tx.type === 'ADMIN_FEE' ? 'bg-[#34a853]' : 'bg-[#ea4335]'}`}></div>
+                            {tx.type === 'RENT' ? '임대료' : tx.type === 'ADMIN_FEE' ? '관리비' : tx.type === 'MAINTENANCE_COST' ? '유지보수' : '기타'}
                         </span>
-                        <span className="text-[10px] text-gray-400 font-bold">TX-ID: {tx.id.substring(0, 8)}</span>
+                        <span className="text-[8px] md:text-[10px] text-gray-400 font-bold hidden md:block">TX: {tx.id.substring(0, 8)}</span>
                       </div>
                     </td>
-                    <td className="p-5 text-right font-black text-gray-900 text-base">{formatMoney(Math.abs(tx.amount))}</td>
-                    <td className="p-5">
+                    <td className="p-2 md:p-5 text-right font-black text-[10px] md:text-base text-gray-900 whitespace-nowrap tracking-tight">{formatMoney(Math.abs(tx.amount))}</td>
+                    <td className="p-2 md:p-5">
                       <div className="flex flex-col items-start">
-                        <span className={`flex items-center gap-1.5 text-xs font-bold ${!isPaid && new Date(tx.dueDate) < new Date() ? 'text-[#ea4335]' : 'text-gray-500'}`}>
-                           <Calendar size={14}/> {tx.dueDate}
+                        <span className={`flex items-center gap-1 text-[9px] md:text-xs font-bold whitespace-nowrap ${!isPaid && new Date(tx.dueDate) < new Date() ? 'text-[#ea4335]' : 'text-gray-500'}`}>
+                           <Calendar size={10} className="md:w-3.5 md:h-3.5 hidden md:block"/> {tx.dueDate}
                         </span>
-                        {isPaid && tx.paidDate && <span className="text-[10px] text-[#34a853] font-bold mt-1">완납일: {tx.paidDate}</span>}
+                        {isPaid && tx.paidDate && <span className="text-[8px] md:text-[10px] text-[#34a853] font-bold mt-0.5 md:mt-1 hidden md:block">완납: {tx.paidDate}</span>}
                       </div>
                     </td>
-                    <td className="p-5 text-center">
-                      <button 
+                    <td className="p-2 md:p-5 text-center">
+                      <button
                         onClick={() => onUpdateStatus(tx.id, isPaid ? 'UNPAID' : 'PAID')}
-                        className={`px-5 py-2 rounded-xl text-[11px] font-black border-2 transition-all hover:shadow-lg active:scale-95 min-w-[100px] ${isPaid ? 'bg-[#e6f4ea] text-[#137333] border-[#ceead6]' : 'bg-[#fce8e6] text-[#c5221f] border-[#fad2cf] shadow-inner'}`}
+                        className={`px-2 md:px-5 py-1 md:py-2 rounded-lg md:rounded-xl text-[9px] md:text-[11px] font-black border-2 transition-all hover:shadow-lg active:scale-95 whitespace-nowrap ${isPaid ? 'bg-[#e6f4ea] text-[#137333] border-[#ceead6]' : 'bg-[#fce8e6] text-[#c5221f] border-[#fad2cf] shadow-inner'}`}
                       >
-                        {isPaid ? '수납 완료' : '미납 (전환)'}
+                        {isPaid ? '완료' : '미납'}
                       </button>
                     </td>
                   </tr>
                 );
               })}
               {transactions.length === 0 && (
-                <tr><td colSpan={5} className="p-40 text-center text-gray-300 font-bold italic">금융 거래 내역이 비어 있습니다.</td></tr>
+                <tr><td colSpan={5} className="p-16 md:p-40 text-center text-gray-300 font-bold italic text-xs md:text-sm">금융 거래 내역이 비어 있습니다.</td></tr>
               )}
            </tbody>
         </table>
