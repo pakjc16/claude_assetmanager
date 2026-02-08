@@ -2,12 +2,13 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Stakeholder, StakeholderRole, StakeholderType, LeaseContract, MaintenanceContract, Property, Unit, RelatedPerson, Department } from '../types';
-import { User, Phone, Mail, Building, Briefcase, Plus, Search, X, FileText, AlertCircle, Upload, Paperclip, Lock, Key, Users, Edit2, Trash2, GitBranch, Download } from 'lucide-react';
+import { User, Phone, Mail, Building, Briefcase, Plus, Search, X, FileText, AlertCircle, Upload, Paperclip, Lock, Key, Users, Edit2, Trash2, GitBranch, Download, DollarSign } from 'lucide-react';
 
 interface StakeholderManagerProps {
   stakeholders: Stakeholder[];
   onAddStakeholder: (sh: Stakeholder) => void;
   onUpdateStakeholder: (sh: Stakeholder) => void;
+  onDeleteStakeholder?: (id: string) => void;
   leaseContracts: LeaseContract[];
   maintenanceContracts: MaintenanceContract[];
   properties: Property[];
@@ -16,10 +17,11 @@ interface StakeholderManagerProps {
   onUpdateUnit: (unit: Unit) => void;
   formatMoney: (amount: number) => string;
   moneyLabel?: string;
+  referenceDate?: string;
 }
 
 export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
-  stakeholders, onAddStakeholder, onUpdateStakeholder, leaseContracts, maintenanceContracts, properties, units, onUpdateProperty, onUpdateUnit, formatMoney
+  stakeholders, onAddStakeholder, onUpdateStakeholder, onDeleteStakeholder, leaseContracts, maintenanceContracts, properties, units, onUpdateProperty, onUpdateUnit, formatMoney, referenceDate
 }) => {
   const [filterRole, setFilterRole] = useState<StakeholderRole | 'ALL'>('ALL');
   const [filterPropertyId, setFilterPropertyId] = useState<string>('ALL'); // 자산 필터
@@ -28,7 +30,9 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+  const [viewStakeholderId, setViewStakeholderId] = useState<string | null>(null);
   const [selectedStakeholderId, setSelectedStakeholderId] = useState<string | null>(null);
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [formData, setFormData] = useState<Partial<Stakeholder>>({
@@ -41,6 +45,50 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   const [editingDepartment, setEditingDepartment] = useState<Partial<Department> | null>(null);
   const [editingDepartmentIndex, setEditingDepartmentIndex] = useState<number | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
+
+  // 한국 전화번호 자동 포맷팅
+  const formatPhoneNumber = (value: string): string => {
+    const digits = value.replace(/[^0-9]/g, '');
+    // 휴대폰: 010-0000-0000
+    if (digits.startsWith('010') || digits.startsWith('011') || digits.startsWith('016') || digits.startsWith('017') || digits.startsWith('018') || digits.startsWith('019')) {
+      if (digits.length <= 3) return digits;
+      if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+      return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+    }
+    // 서울: 02-000-0000 또는 02-0000-0000
+    if (digits.startsWith('02')) {
+      if (digits.length <= 2) return digits;
+      if (digits.length <= 5) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+      if (digits.length <= 9) return `${digits.slice(0, 2)}-${digits.slice(2, digits.length - 4)}-${digits.slice(digits.length - 4)}`;
+      return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6, 10)}`;
+    }
+    // 지역번호 3자리: 031-000-0000 ~ 064-000-0000
+    if (digits.length >= 3 && /^0[3-6][0-9]/.test(digits)) {
+      if (digits.length <= 3) return digits;
+      if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+      if (digits.length <= 10) return `${digits.slice(0, 3)}-${digits.slice(3, digits.length - 4)}-${digits.slice(digits.length - 4)}`;
+      return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7, 11)}`;
+    }
+    // 대표번호: 1588-0000, 1544-0000 등
+    if (/^1[0-9]{3}/.test(digits)) {
+      if (digits.length <= 4) return digits;
+      return `${digits.slice(0, 4)}-${digits.slice(4, 8)}`;
+    }
+    // 그 외: 그냥 반환
+    return value;
+  };
+
+  // 전화번호 유형 판별
+  const getPhoneType = (phone: string): string => {
+    const digits = phone.replace(/[^0-9]/g, '');
+    if (/^01[016789]/.test(digits)) return '휴대폰';
+    if (digits.startsWith('02')) return '서울';
+    if (/^0[3-6][0-9]/.test(digits)) return '지역';
+    if (/^1[0-9]{3}/.test(digits)) return '대표';
+    if (/^070/.test(digits)) return '인터넷';
+    if (/^050/.test(digits)) return '안심';
+    return '기타';
+  };
 
   const filtered = stakeholders.filter(s => {
     // 역할 필터
@@ -78,13 +126,44 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
     setIsFormOpen(true);
   };
 
+  const handleOpenView = (sh: Stakeholder) => {
+    setViewStakeholderId(sh.id);
+    setIsViewModalOpen(true);
+  };
+
+  const handleToggleCheck = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (checkedIds.size === filtered.length) {
+      setCheckedIds(new Set());
+    } else {
+      setCheckedIds(new Set(filtered.map(s => s.id)));
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (checkedIds.size === 0) return;
+    if (!confirm(`선택한 ${checkedIds.size}건을 삭제하시겠습니까?`)) return;
+    if (onDeleteStakeholder) {
+      checkedIds.forEach(id => onDeleteStakeholder(id));
+    }
+    setCheckedIds(new Set());
+  };
+
   const handleOpenHistory = (id: string) => {
     setSelectedStakeholderId(id);
     setIsHistoryOpen(true);
   };
   
   const handleSave = () => {
-    if (!formData.name || !formData.contact?.phone) return alert('이름과 연락처는 필수입니다.');
+    if (!formData.name || !formData.contact?.phone || !formData.contact?.email) return alert('이름, 연락처, 대표 이메일은 필수입니다.');
     if ((formData.type === 'CORPORATE' || formData.type === 'SOLE_PROPRIETOR') && !formData.businessRegistrationNumber) return alert('법인/사업자의 경우 사업자등록번호는 필수입니다.');
 
     const person: Stakeholder = {
@@ -110,7 +189,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       groupName: formData.groupName,
       // Stage 3 fields
       relatedPersons: formData.relatedPersons,
-      departments: formData.departments
+      departments: formData.departments,
+      additionalContacts: formData.additionalContacts
     };
 
     if (selectedStakeholderId) {
@@ -237,13 +317,14 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
     return { leases, maintenances };
   };
 
+  const badgeBase = "inline-flex items-center px-2 py-0.5 text-[10px] leading-4 rounded font-bold border";
   const getRoleBadge = (role: StakeholderRole) => {
     switch (role) {
-      case 'TENANT': return <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 text-[10px] rounded-full font-black uppercase">임차인</span>;
-      case 'LANDLORD': return <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 text-[10px] rounded-full font-black uppercase">임대인</span>;
-      case 'MANAGER': return <span className="px-2 py-0.5 bg-green-50 text-green-700 border border-green-100 text-[10px] rounded-full font-black uppercase">관리인</span>;
-      case 'VENDOR': return <span className="px-2 py-0.5 bg-orange-50 text-orange-700 border border-orange-100 text-[10px] rounded-full font-black uppercase">용역업체</span>;
-      case 'SAFETY_OFFICER': return <span className="px-2 py-0.5 bg-red-50 text-red-700 border border-red-100 text-[10px] rounded-full font-black uppercase">안전관리</span>;
+      case 'TENANT': return <span className={`${badgeBase} bg-[#e8f0fe] text-[#1a73e8] border-[#c5d9f7]`}>임차인</span>;
+      case 'LANDLORD': return <span className={`${badgeBase} bg-[#e8f0fe] text-[#1a73e8] border-[#c5d9f7]`}>임대인</span>;
+      case 'MANAGER': return <span className={`${badgeBase} bg-[#e8f0fe] text-[#1a73e8] border-[#c5d9f7]`}>관리인</span>;
+      case 'VENDOR': return <span className={`${badgeBase} bg-[#f1f3f4] text-[#5f6368] border-[#dadce0]`}>용역업체</span>;
+      case 'SAFETY_OFFICER': return <span className={`${badgeBase} bg-[#f1f3f4] text-[#5f6368] border-[#dadce0]`}>안전관리</span>;
       default: return null;
     }
   };
@@ -252,8 +333,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   const historyData = selectedStakeholderId ? getStakeholderContracts(selectedStakeholderId) : { leases: [], maintenances: [] };
 
   const getActiveTerm = (c: LeaseContract) => {
-      const today = new Date(); today.setHours(0,0,0,0);
-      const activeTerm = c.financialTerms.find(t => { const start = new Date(t.startDate); const end = new Date(t.endDate); return today >= start && today <= end; });
+      const refDate = referenceDate ? new Date(referenceDate + 'T00:00:00') : new Date(); refDate.setHours(0,0,0,0);
+      const activeTerm = c.financialTerms.find(t => { const start = new Date(t.startDate); const end = new Date(t.endDate); return refDate >= start && refDate <= end; });
       if(activeTerm) return activeTerm;
       const terms = [...c.financialTerms].sort((a,b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
       return terms[0] || { deposit: 0, monthlyRent: 0 };
@@ -271,15 +352,15 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
               placeholder="이름, 연락처 검색"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-8 md:pl-10 pr-3 md:pr-4 py-1.5 md:py-2 border border-gray-300 bg-white text-gray-900 rounded-lg text-[11px] md:text-sm focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm font-medium"
+              className="w-full pl-8 md:pl-10 pr-3 md:pr-4 py-1.5 md:py-2 border border-gray-300 bg-white text-gray-900 rounded-lg text-[11px] md:text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none shadow-sm font-medium"
             />
           </div>
-          <button onClick={handleOpenAdd} className="bg-indigo-600 text-white px-3 md:px-5 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 md:gap-2 hover:bg-indigo-700 shadow-md transition-all active:scale-95 whitespace-nowrap">
+          <button onClick={handleOpenAdd} className="bg-[#1a73e8] text-white px-3 md:px-5 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 md:gap-2 hover:bg-[#1557b0] shadow-md transition-all active:scale-95 whitespace-nowrap">
             <Plus size={14} className="md:w-4 md:h-4"/> 등록
           </button>
           <button
             onClick={() => csvInputRef.current?.click()}
-            className="bg-white border-2 border-indigo-600 text-indigo-600 px-3 md:px-5 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 md:gap-2 hover:bg-indigo-50 shadow-md transition-all active:scale-95 whitespace-nowrap"
+            className="bg-white border-2 border-[#1a73e8] text-[#1a73e8] px-3 md:px-5 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 md:gap-2 hover:bg-[#f1f3f4] shadow-md transition-all active:scale-95 whitespace-nowrap"
           >
             <Download size={14} className="md:w-4 md:h-4"/> CSV
           </button>
@@ -300,7 +381,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           <select
             value={filterPropertyId}
             onChange={(e) => setFilterPropertyId(e.target.value)}
-            className="flex-1 md:w-64 px-3 py-1.5 md:py-2 border border-gray-300 bg-white rounded-lg text-xs md:text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+            className="flex-1 md:w-64 px-3 py-1.5 md:py-2 border border-gray-300 bg-white rounded-lg text-xs md:text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"
           >
             <option value="ALL">전체 자산</option>
             {properties.map(p => (
@@ -313,7 +394,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
             type="checkbox"
             checked={showIndividuals}
             onChange={(e) => setShowIndividuals(e.target.checked)}
-            className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
+            className="w-4 h-4 text-[#1a73e8] rounded focus:ring-2 focus:ring-[#1a73e8]"
           />
           <span className="text-xs md:text-sm font-medium text-gray-700">조직구성 개인 표시</span>
         </label>
@@ -324,7 +405,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
            <div className="bg-white p-8 rounded-2xl border border-gray-200 shadow-2xl w-full max-w-2xl relative max-h-[90vh] overflow-y-auto animate-in zoom-in-95">
              <button onClick={() => setIsFormOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200"><X size={20}/></button>
              <h3 className="font-black text-xl mb-8 text-gray-900 border-b pb-4 flex items-center gap-3">
-               <div className="p-2 bg-indigo-600 text-white rounded-lg">
+               <div className="p-2 bg-[#1a73e8] text-white rounded-lg">
                  {formData.type === 'CORPORATE' ? <Building size={20}/> : <User size={20}/>}
                </div>
                {selectedStakeholderId ? '정보 수정' : '인물/업체 등록'}
@@ -332,35 +413,35 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
              
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 md:col-span-2">
-                 <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest block mb-3">유형 선택</label>
+                 <label className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest block mb-3">유형 선택</label>
                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                     <button
                       onClick={() => setFormData({...formData, type: 'INDIVIDUAL'})}
-                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'INDIVIDUAL' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'INDIVIDUAL' ? 'bg-[#1a73e8] text-white border-[#1a73e8] shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-[#dadce0]'}`}
                     >
                       개인
                     </button>
                     <button
                       onClick={() => setFormData({...formData, type: 'SOLE_PROPRIETOR'})}
-                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'SOLE_PROPRIETOR' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'SOLE_PROPRIETOR' ? 'bg-[#1a73e8] text-white border-[#1a73e8] shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-[#dadce0]'}`}
                     >
                       개인사업자
                     </button>
                     <button
                       onClick={() => setFormData({...formData, type: 'CORPORATE'})}
-                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'CORPORATE' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'CORPORATE' ? 'bg-[#1a73e8] text-white border-[#1a73e8] shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-[#dadce0]'}`}
                     >
                       법인사업자
                     </button>
                     <button
                       onClick={() => setFormData({...formData, type: 'INTERNAL_ORG'})}
-                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'INTERNAL_ORG' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'INTERNAL_ORG' ? 'bg-[#1a73e8] text-white border-[#1a73e8] shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-[#dadce0]'}`}
                     >
                       내부조직
                     </button>
                     <button
                       onClick={() => setFormData({...formData, type: 'CUSTOM_GROUP'})}
-                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'CUSTOM_GROUP' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                      className={`py-2.5 px-2 text-xs rounded-lg border transition-all font-black ${formData.type === 'CUSTOM_GROUP' ? 'bg-[#1a73e8] text-white border-[#1a73e8] shadow-md' : 'bg-white text-gray-600 border-gray-200 hover:border-[#dadce0]'}`}
                     >
                       임의그룹
                     </button>
@@ -368,8 +449,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
               </div>
 
               <div>
-                 <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest block mb-2">주요 역할</label>
-                 <select className="w-full border border-gray-200 bg-white text-gray-900 p-2.5 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold" value={formData.roles?.[0]} onChange={e => setFormData({...formData, roles: [e.target.value as StakeholderRole]})}>
+                 <label className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest block mb-2">관계</label>
+                 <select className="w-full border border-gray-200 bg-white text-gray-900 p-2.5 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.roles?.[0]} onChange={e => setFormData({...formData, roles: [e.target.value as StakeholderRole]})}>
                    <option value="TENANT">임차인</option>
                    <option value="LANDLORD">임대인</option>
                    <option value="MANAGER">관리인/PM</option>
@@ -387,7 +468,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                      '그룹명'} <span className="text-red-500">*</span>
                   </label>
                   <input
-                    className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold"
+                    className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold"
                     value={formData.name}
                     onChange={e => setFormData({...formData, name: e.target.value})}
                     placeholder={
@@ -404,7 +485,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                {(formData.type === 'SOLE_PROPRIETOR' || formData.type === 'CORPORATE') && (
                  <div>
                    <label className="text-xs font-bold text-gray-400 block mb-1.5">대표자명</label>
-                   <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold" value={formData.representative} onChange={e => setFormData({...formData, representative: e.target.value})} placeholder="홍길동" />
+                   <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.representative} onChange={e => setFormData({...formData, representative: e.target.value})} placeholder="홍길동" />
                  </div>
                )}
 
@@ -412,7 +493,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                {formData.type === 'INDIVIDUAL' && (
                  <div>
                     <label className="text-xs font-bold text-gray-400 block mb-1.5 flex items-center gap-1.5"><Lock size={12}/> 주민등록번호 (민감정보)</label>
-                    <input className="w-full border border-gray-200 bg-gray-50 text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono" type="password" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} placeholder="000000-0000000" />
+                    <input className="w-full border border-gray-200 bg-gray-50 text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-mono" type="password" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} placeholder="000000-0000000" />
                  </div>
                )}
 
@@ -421,12 +502,12 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                  <>
                    <div>
                       <label className="text-xs font-bold text-gray-400 block mb-1.5">사업자등록번호 <span className="text-red-500">*</span></label>
-                      <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold" value={formData.businessRegistrationNumber} onChange={e => setFormData({...formData, businessRegistrationNumber: e.target.value})} placeholder="000-00-00000" />
+                      <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.businessRegistrationNumber} onChange={e => setFormData({...formData, businessRegistrationNumber: e.target.value})} placeholder="000-00-00000" />
                    </div>
                    {formData.type === 'CORPORATE' && (
                      <div>
                         <label className="text-xs font-bold text-gray-400 block mb-1.5">법인등록번호</label>
-                        <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} placeholder="000000-0000000" />
+                        <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} placeholder="000000-0000000" />
                      </div>
                    )}
                  </>
@@ -438,12 +519,12 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    {/* 조직도 관리 */}
                    <div className="md:col-span-2 mt-4">
                      <div className="border-t border-gray-100 pt-4">
-                       <label className="text-xs md:text-sm font-bold text-indigo-600 block mb-3 uppercase tracking-widest flex items-center gap-2">
+                       <label className="text-xs md:text-sm font-bold text-[#1a73e8] block mb-3 uppercase tracking-widest flex items-center gap-2">
                          <GitBranch size={14} /> 조직도 (부서 관리)
                        </label>
 
                        {/* 부서 추가 폼 */}
-                       <div className="bg-indigo-50 p-3 rounded-lg mb-3 border border-indigo-100">
+                       <div className="bg-[#e8f0fe] p-3 rounded-lg mb-3 border border-[#dadce0]">
                          <div className="grid grid-cols-2 gap-2">
                            <input
                              className="border border-gray-200 bg-white p-2 rounded text-sm"
@@ -465,7 +546,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          <button
                            type="button"
                            onClick={handleAddDepartment}
-                           className="mt-2 text-[10px] md:text-xs bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 font-bold flex items-center gap-1"
+                           className="mt-2 text-[10px] md:text-xs bg-[#1a73e8] text-white px-3 py-1.5 rounded hover:bg-[#1557b0] font-bold flex items-center gap-1"
                          >
                            <Plus size={12} />
                            {editingDepartmentIndex !== null ? '저장' : '추가'}
@@ -494,10 +575,10 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
                                  // 레벨에 따른 색상 결정
                                  const bgColor = level === 0
-                                   ? 'bg-gradient-to-r from-indigo-500 to-indigo-600'
+                                   ? 'bg-[#1a73e8]'
                                    : level === 1
-                                   ? 'bg-blue-500'
-                                   : 'bg-blue-400';
+                                   ? 'bg-[#4a90d9]'
+                                   : 'bg-[#7baaf0]';
                                  const textSize = level === 0 ? 'text-xs md:text-sm' : 'text-[10px] md:text-xs';
 
                                  return (
@@ -531,7 +612,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                                              setEditingDepartment(dept);
                                              setEditingDepartmentIndex(deptIndex);
                                            }}
-                                           className="p-0.5 bg-white rounded text-blue-600 hover:bg-gray-100"
+                                           className="p-0.5 bg-white rounded text-[#1a73e8] hover:bg-gray-100"
                                          >
                                            <Edit2 size={8} />
                                          </button>
@@ -637,49 +718,106 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
                <div className="md:col-span-2 border-t border-gray-100 my-2"></div>
                
-               <div><label className="text-xs font-bold text-gray-400 block mb-1.5">연락처 (대표 번호)</label><input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-bold" value={formData.contact?.phone} onChange={e => setFormData({...formData, contact: {...formData.contact!, phone: e.target.value}})} placeholder="010-0000-0000" /></div>
-               <div><label className="text-xs font-bold text-gray-400 block mb-1.5">대표 이메일</label><input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" value={formData.contact?.email} onChange={e => setFormData({...formData, contact: {...formData.contact!, email: e.target.value}})} placeholder="info@company.com" /></div>
+               <div>
+                 <label className="text-xs font-bold text-gray-400 block mb-1.5">연락처 (대표 번호) <span className="text-red-500">*</span></label>
+                 <div className="relative">
+                   <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.contact?.phone} onChange={e => setFormData({...formData, contact: {...formData.contact!, phone: formatPhoneNumber(e.target.value)}})} placeholder="010-0000-0000" maxLength={15} />
+                   {formData.contact?.phone && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1.5 py-0.5 rounded">{getPhoneType(formData.contact.phone)}</span>}
+                 </div>
+               </div>
+               <div><label className="text-xs font-bold text-gray-400 block mb-1.5">대표 이메일 <span className="text-red-500">*</span></label><input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none" type="email" value={formData.contact?.email} onChange={e => setFormData({...formData, contact: {...formData.contact!, email: e.target.value}})} placeholder="info@company.com" /></div>
+
+               {/* 추가 연락처 */}
+               <div className="md:col-span-2">
+                 <label className="text-xs font-bold text-gray-400 block mb-2">추가 연락처</label>
+                 <div className="space-y-2">
+                   {(formData.additionalContacts || []).map((ac, idx) => (
+                     <div key={idx} className="flex gap-2 items-center bg-gray-50 p-2 rounded-lg">
+                       <input
+                         className="w-24 border border-gray-200 bg-white p-2 rounded text-sm font-bold"
+                         placeholder="구분"
+                         value={ac.label}
+                         onChange={e => {
+                           const updated = [...(formData.additionalContacts || [])];
+                           updated[idx] = {...ac, label: e.target.value};
+                           setFormData({...formData, additionalContacts: updated});
+                         }}
+                         list="contact-label-options"
+                       />
+                       <div className="relative flex-1">
+                         <input
+                           className="w-full border border-gray-200 bg-white p-2 rounded text-sm font-bold"
+                           placeholder="010-0000-0000"
+                           value={ac.phone}
+                           onChange={e => {
+                             const updated = [...(formData.additionalContacts || [])];
+                             updated[idx] = {...ac, phone: formatPhoneNumber(e.target.value)};
+                             setFormData({...formData, additionalContacts: updated});
+                           }}
+                           maxLength={15}
+                         />
+                         {ac.phone && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[8px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1 py-0.5 rounded">{getPhoneType(ac.phone)}</span>}
+                       </div>
+                       <button type="button" onClick={() => { const updated = (formData.additionalContacts || []).filter((_, i) => i !== idx); setFormData({...formData, additionalContacts: updated}); }} className="p-1.5 text-red-500 hover:bg-red-50 rounded"><X size={14} /></button>
+                     </div>
+                   ))}
+                   <button type="button" onClick={() => setFormData({...formData, additionalContacts: [...(formData.additionalContacts || []), {label: '', phone: ''}]})} className="text-sm text-[#1a73e8] hover:text-[#1a73e8] font-medium flex items-center gap-1">
+                     <Plus size={14} /> 연락처 추가
+                   </button>
+                 </div>
+                 <datalist id="contact-label-options">
+                   <option value="사무실" />
+                   <option value="팩스" />
+                   <option value="자택" />
+                   <option value="비상연락처" />
+                   <option value="담당자" />
+                 </datalist>
+               </div>
 
                {/* 등록 주소지 (다음 주소검색) */}
                <div className="md:col-span-2">
                  <label className="text-xs font-bold text-gray-400 block mb-1.5">등록 주소지</label>
                  <div className="flex gap-2">
                    <input
-                     className="flex-1 border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                     value={formData.contact?.address}
-                     onChange={e => setFormData({...formData, contact: {...formData.contact!, phone: formData.contact?.phone || '', email: formData.contact?.email || '', address: e.target.value}})}
-                     placeholder="주소 입력 또는 검색"
+                     className="flex-1 border border-gray-200 bg-gray-50 text-gray-900 p-3 rounded-lg outline-none"
+                     value={formData.contact?.address || ''}
+                     readOnly
+                     placeholder="주소 검색 버튼을 눌러주세요"
                    />
                    <button
                      type="button"
                      onClick={() => {
-                       // 다음 주소검색 API 호출
-                       const script = document.createElement('script');
-                       script.src = '//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
-                       script.onload = () => {
+                       const openPostcode = () => {
                          new (window as any).daum.Postcode({
                            oncomplete: (data: any) => {
                              const fullAddr = data.roadAddress || data.jibunAddress;
-                             setFormData({...formData, contact: {...formData.contact!, phone: formData.contact?.phone || '', email: formData.contact?.email || '', address: fullAddr}});
+                             setFormData(prev => ({...prev, contact: {...prev.contact!, phone: prev.contact?.phone || '', email: prev.contact?.email || '', address: fullAddr, addressDetail: ''}}));
                            }
                          }).open();
                        };
                        if (!(window as any).daum?.Postcode) {
+                         const script = document.createElement('script');
+                         script.src = '//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+                         script.onload = () => openPostcode();
                          document.head.appendChild(script);
                        } else {
-                         new (window as any).daum.Postcode({
-                           oncomplete: (data: any) => {
-                             const fullAddr = data.roadAddress || data.jibunAddress;
-                             setFormData({...formData, contact: {...formData.contact!, phone: formData.contact?.phone || '', email: formData.contact?.email || '', address: fullAddr}});
-                           }
-                         }).open();
+                         openPostcode();
                        }
                      }}
-                     className="px-4 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold text-sm whitespace-nowrap"
+                     className="px-4 bg-[#1a73e8] text-white rounded-lg hover:bg-[#1557b0] font-bold text-sm whitespace-nowrap"
                    >
                      <Search size={16} />
                    </button>
                  </div>
+                 {formData.contact?.address && (
+                   <input
+                     className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none mt-2"
+                     value={formData.contact?.addressDetail || ''}
+                     onChange={e => setFormData({...formData, contact: {...formData.contact!, addressDetail: e.target.value}})}
+                     placeholder="상세주소 입력 (동/호수 등)"
+                     autoFocus
+                   />
+                 )}
                </div>
 
                {/* 개인용 추가 필드 */}
@@ -691,7 +829,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <div>
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">소속회사</label>
                      <select
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.companyId || ''}
                        onChange={e => setFormData({...formData, companyId: e.target.value || undefined, departmentId: undefined})}
                      >
@@ -709,7 +847,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <div>
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">소속부서</label>
                      <select
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.departmentId || ''}
                        onChange={e => setFormData({...formData, departmentId: e.target.value || undefined})}
                        disabled={!formData.companyId}
@@ -732,7 +870,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                            type="checkbox"
                            checked={formData.isLeader || false}
                            onChange={e => setFormData({...formData, isLeader: e.target.checked})}
-                           className="w-4 h-4 text-indigo-600 rounded focus:ring-2 focus:ring-indigo-500"
+                           className="w-4 h-4 text-[#1a73e8] rounded focus:ring-2 focus:ring-[#1a73e8]"
                          />
                          <span className="text-sm font-medium text-gray-700">이 부서의 조직장입니다</span>
                        </label>
@@ -744,7 +882,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">직급</label>
                      <input
                        list="position-options"
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.position || ''}
                        onChange={e => setFormData({...formData, position: e.target.value})}
                        placeholder="직급 선택 또는 입력"
@@ -772,7 +910,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">직책</label>
                      <input
                        list="jobtitle-options"
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.jobTitle || ''}
                        onChange={e => setFormData({...formData, jobTitle: e.target.value})}
                        placeholder="직책 선택 또는 입력"
@@ -795,7 +933,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <div>
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">직무</label>
                      <input
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.jobFunction || ''}
                        onChange={e => setFormData({...formData, jobFunction: e.target.value})}
                        placeholder="예: 회계, 영업, 마케팅, 개발"
@@ -805,12 +943,12 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    {/* 연관인물 테이블 */}
                    <div className="md:col-span-2 mt-4">
                      <div className="border-t border-gray-100 pt-4">
-                       <label className="text-xs md:text-sm font-bold text-indigo-600 block mb-3 uppercase tracking-widest flex items-center gap-2">
+                       <label className="text-xs md:text-sm font-bold text-[#1a73e8] block mb-3 uppercase tracking-widest flex items-center gap-2">
                          <Users size={14} /> 연관인물 관리
                        </label>
 
                        {/* 연관인물 추가 폼 */}
-                       <div className="bg-indigo-50 p-3 rounded-lg mb-3 border border-indigo-100">
+                       <div className="bg-[#e8f0fe] p-3 rounded-lg mb-3 border border-[#dadce0]">
                          <div className="grid grid-cols-2 gap-2">
                            <select
                              className="border border-gray-200 bg-white p-2 rounded text-xs md:text-sm"
@@ -835,7 +973,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          <button
                            type="button"
                            onClick={handleAddRelatedPerson}
-                           className="mt-2 text-[10px] md:text-xs bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 font-bold flex items-center gap-1"
+                           className="mt-2 text-[10px] md:text-xs bg-[#1a73e8] text-white px-3 py-1.5 rounded hover:bg-[#1557b0] font-bold flex items-center gap-1"
                          >
                            <Plus size={12} />
                            {editingRelatedPersonIndex !== null ? '저장' : '추가'}
@@ -868,7 +1006,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                                              setEditingRelatedPerson(rp);
                                              setEditingRelatedPersonIndex(idx);
                                            }}
-                                           className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                           className="p-1 text-[#1a73e8] hover:bg-[#f1f3f4] rounded"
                                          >
                                            <Edit2 size={12} />
                                          </button>
@@ -902,7 +1040,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <div>
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">소속회사</label>
                      <select
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.companyId || ''}
                        onChange={e => setFormData({...formData, companyId: e.target.value || undefined})}
                      >
@@ -1006,7 +1144,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          onClick={() => {
                            setFormData({...formData, bankAccounts: [...(formData.bankAccounts || []), {bankName: '', accountNumber: '', accountHolder: ''}]});
                          }}
-                         className="text-sm text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1"
+                         className="text-sm text-[#1a73e8] hover:text-[#1a73e8] font-medium flex items-center gap-1"
                        >
                          <Plus size={14} /> 계좌 추가
                        </button>
@@ -1017,7 +1155,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <div className="md:col-span-2">
                      <label className="text-xs font-bold text-gray-400 block mb-1.5">세금계산서 발행주소</label>
                      <input
-                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
                        value={formData.taxInvoiceAddress || ''}
                        onChange={e => setFormData({...formData, taxInvoiceAddress: e.target.value})}
                        placeholder="세금계산서 수신 이메일 또는 주소"
@@ -1037,17 +1175,17 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
                return (
                  <div className="mt-6 border-t border-gray-100 pt-6">
-                   <h4 className="text-sm font-black text-indigo-600 mb-4 uppercase tracking-widest flex items-center gap-2">
+                   <h4 className="text-sm font-black text-[#1a73e8] mb-4 uppercase tracking-widest flex items-center gap-2">
                      <Key size={16} /> 소유 자산
                    </h4>
                    {hasAssets ? (
                      <div className="space-y-3">
                        {ownedProperties.length > 0 && (
-                         <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                           <p className="text-xs font-bold text-blue-700 mb-2">물건 ({ownedProperties.length})</p>
+                         <div className="bg-[#e8f0fe] p-3 rounded-lg border border-[#c5d9f7]">
+                           <p className="text-xs font-bold text-[#1a73e8] mb-2">물건 ({ownedProperties.length})</p>
                            <div className="flex flex-wrap gap-2">
                              {ownedProperties.map(p => (
-                               <span key={p.id} className="px-2 py-1 bg-white text-blue-700 text-xs font-medium rounded border border-blue-200">
+                               <span key={p.id} className="px-2 py-1 bg-white text-[#1a73e8] text-xs font-medium rounded border border-blue-200">
                                  {p.name}
                                </span>
                              ))}
@@ -1055,11 +1193,11 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          </div>
                        )}
                        {ownedLots.length > 0 && (
-                         <div className="bg-green-50 p-3 rounded-lg border border-green-100">
-                           <p className="text-xs font-bold text-green-700 mb-2">토지 ({ownedLots.length})</p>
+                         <div className="bg-[#f1f3f4] p-3 rounded-lg border border-[#dadce0]">
+                           <p className="text-xs font-bold text-[#1a73e8] mb-2">토지 ({ownedLots.length})</p>
                            <div className="flex flex-wrap gap-2">
                              {ownedLots.map(l => (
-                               <span key={l.id} className="px-2 py-1 bg-white text-green-700 text-xs font-medium rounded border border-green-200">
+                               <span key={l.id} className="px-2 py-1 bg-white text-[#1a73e8] text-xs font-medium rounded border border-green-200">
                                  {l.address.bonbun}{l.address.bubun ? `-${l.address.bubun}` : ''}
                                </span>
                              ))}
@@ -1067,11 +1205,11 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          </div>
                        )}
                        {ownedBuildings.length > 0 && (
-                         <div className="bg-purple-50 p-3 rounded-lg border border-purple-100">
-                           <p className="text-xs font-bold text-purple-700 mb-2">건물 ({ownedBuildings.length})</p>
+                         <div className="bg-[#f1f3f4] p-3 rounded-lg border border-[#dadce0]">
+                           <p className="text-xs font-bold text-[#3c4043] mb-2">건물 ({ownedBuildings.length})</p>
                            <div className="flex flex-wrap gap-2">
                              {ownedBuildings.map(b => (
-                               <span key={b.id} className="px-2 py-1 bg-white text-purple-700 text-xs font-medium rounded border border-purple-200">
+                               <span key={b.id} className="px-2 py-1 bg-white text-[#3c4043] text-xs font-medium rounded border border-[#dadce0]">
                                  {b.name}
                                </span>
                              ))}
@@ -1079,16 +1217,16 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          </div>
                        )}
                        {ownedUnits.length > 0 && (
-                         <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
-                           <p className="text-xs font-bold text-orange-700 mb-2">호실 ({ownedUnits.length})</p>
+                         <div className="bg-[#f1f3f4] p-3 rounded-lg border border-[#dadce0]">
+                           <p className="text-xs font-bold text-[#3c4043] mb-2">호실 ({ownedUnits.length})</p>
                            <div className="flex flex-wrap gap-2">
                              {ownedUnits.slice(0, 10).map(u => (
-                               <span key={u.id} className="px-2 py-1 bg-white text-orange-700 text-xs font-medium rounded border border-orange-200">
+                               <span key={u.id} className="px-2 py-1 bg-white text-[#3c4043] text-xs font-medium rounded border border-[#dadce0]">
                                  {u.unitNumber}호
                                </span>
                              ))}
                              {ownedUnits.length > 10 && (
-                               <span className="px-2 py-1 bg-white text-orange-700 text-xs font-bold rounded border border-orange-200">
+                               <span className="px-2 py-1 bg-white text-[#3c4043] text-xs font-bold rounded border border-[#dadce0]">
                                  +{ownedUnits.length - 10}
                                </span>
                              )}
@@ -1111,7 +1249,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
              <div className="mt-10 flex justify-end gap-3">
                <button onClick={() => setIsFormOpen(false)} className="px-8 py-3 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 font-bold transition-all">취소</button>
-               <button onClick={handleSave} className="bg-indigo-600 text-white px-12 py-3 rounded-xl hover:bg-indigo-700 font-bold shadow-lg transition-all active:scale-95">
+               <button onClick={handleSave} className="bg-[#1a73e8] text-white px-12 py-3 rounded-xl hover:bg-[#1557b0] font-bold shadow-lg transition-all active:scale-95">
                  저장
                </button>
              </div>
@@ -1127,7 +1265,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
             <div className="p-6 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-2xl">
               <div>
                 <h3 className="font-black text-xl text-gray-900 flex items-center gap-3">
-                  <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg"><FileText size={20}/></div>
+                  <div className="p-2 bg-[#e8f0fe] text-[#1a73e8] rounded-lg"><FileText size={20}/></div>
                   통합 계약 거래 이력
                 </h3>
                 <p className="text-sm text-gray-500 mt-1">
@@ -1143,7 +1281,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                 <div className="space-y-10">
                   {historyData.leases.length > 0 && (
                     <div>
-                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest mb-4 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-indigo-600"></div> 임대차 계약 리스트</h4>
+                      <h4 className="text-xs font-black text-[#1a73e8] uppercase tracking-widest mb-4 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-[#1a73e8]"></div> 임대차 계약 리스트</h4>
                       <div className="overflow-hidden border border-gray-100 rounded-xl shadow-sm">
                         <table className="w-full text-sm text-left">
                           <thead className="bg-gray-50 text-gray-500 font-bold border-b border-gray-100 text-[11px] uppercase">
@@ -1156,9 +1294,9 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                               <tr key={lease.id} className="hover:bg-gray-50/50">
                                 <td className="p-4 font-bold text-gray-800">{lease.term.startDate} ~ {lease.term.endDate}</td>
                                 <td className="p-4"><span className="px-2 py-1 bg-gray-100 text-[10px] font-bold rounded-md uppercase">{lease.type.split('_').join(' ')}</span></td>
-                                <td className="p-4 font-black text-right text-indigo-700">{formatMoney(activeTerm.deposit)} / {formatMoney(activeTerm.monthlyRent)}</td>
+                                <td className="p-4 font-black text-right text-[#1a73e8]">{formatMoney(activeTerm.deposit)} / {formatMoney(activeTerm.monthlyRent)}</td>
                                 <td className="p-4 text-center">
-                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${lease.status === 'ACTIVE' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${lease.status === 'ACTIVE' ? 'bg-[#e8f0fe] text-[#1a73e8] border-[#c5d9f7]' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
                                     {lease.status === 'ACTIVE' ? '정상' : '종료'}
                                   </span>
                                 </td>
@@ -1182,8 +1320,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                               <tr key={mc.id} className="hover:bg-gray-50/50">
                                 <td className="p-4 font-bold text-gray-800">{mc.term.startDate} ~ {mc.term.endDate}</td>
                                 <td className="p-4 font-bold text-gray-600">{mc.serviceType}</td>
-                                <td className="p-4 font-black text-right text-orange-700">{formatMoney(mc.monthlyCost)}</td>
-                                <td className="p-4 text-center"><span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">진행중</span></td>
+                                <td className="p-4 font-black text-right text-[#3c4043]">{formatMoney(mc.monthlyCost)}</td>
+                                <td className="p-4 text-center"><span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#e8f0fe] text-[#1a73e8] border border-[#c5d9f7]">진행중</span></td>
                               </tr>
                             ))}
                           </tbody>
@@ -1199,72 +1337,344 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         document.body
       )}
 
+      {/* 상세보기 모달 (읽기전용) */}
+      {isViewModalOpen && viewStakeholderId && typeof document !== 'undefined' && createPortal(
+        (() => {
+          const vp = stakeholders.find(s => s.id === viewStakeholderId);
+          if (!vp) return null;
+          const vpContracts = getStakeholderContracts(vp.id);
+          const vpCompany = vp.companyId ? stakeholders.find(s => s.id === vp.companyId) : null;
+          const vpDept = vp.departmentId && vpCompany?.departments ? vpCompany.departments.find(d => d.id === vp.departmentId) : null;
+          const vpRelatedProps = properties.filter(p => p.ownerId === vp.id || p.lots.some(l => l.ownerId === vp.id) || p.buildings.some(b => b.ownerId === vp.id));
+          const vpOwnedUnits = units.filter(u => u.ownerId === vp.id);
+
+          const typeLabel = vp.type === 'INDIVIDUAL' ? '개인' : vp.type === 'SOLE_PROPRIETOR' ? '개인사업자' : vp.type === 'CORPORATE' ? '법인사업자' : vp.type === 'INTERNAL_ORG' ? '내부조직' : '임의그룹';
+
+          return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setIsViewModalOpen(false)}>
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-2xl w-full max-w-lg relative max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              {/* 헤더 */}
+              <div className="p-5 md:p-6 border-b border-gray-100 flex justify-between items-start">
+                <div className="flex items-center gap-3">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center border-2 ${
+                    vp.type === 'CORPORATE' ? 'bg-gray-50 text-gray-400 border-gray-100' :
+                    vp.type === 'SOLE_PROPRIETOR' ? 'bg-[#f1f3f4] text-[#5f6368] border-[#dadce0]' :
+                    'bg-[#e8f0fe] text-[#1a73e8] border-[#dadce0]'
+                  }`}>
+                    {vp.type === 'CORPORATE' || vp.type === 'SOLE_PROPRIETOR' ? <Building size={22}/> : <User size={22}/>}
+                  </div>
+                  <div>
+                    <h3 className="font-black text-lg text-gray-900">{vp.name}</h3>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      <span className="px-2 py-0.5 bg-gray-100 text-gray-500 text-[10px] rounded-full font-bold">{typeLabel}</span>
+                      {vp.roles.map(r => <span key={r}>{getRoleBadge(r)}</span>)}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => { setIsViewModalOpen(false); handleOpenEdit(vp); }} className="p-2 text-gray-400 hover:text-[#1a73e8] hover:bg-[#f1f3f4] rounded-lg" title="수정"><Edit2 size={16}/></button>
+                  <button onClick={() => setIsViewModalOpen(false)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg"><X size={16}/></button>
+                </div>
+              </div>
+
+              {/* 본문 */}
+              <div className="p-5 md:p-6 space-y-4">
+                {/* 연락처 */}
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">연락처</h4>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Phone size={14} className="text-gray-300"/>
+                      <a href={`tel:${vp.contact.phone}`} className="font-bold text-gray-800 hover:text-[#1a73e8]">{vp.contact.phone}</a>
+                      <span className="text-[9px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1.5 py-0.5 rounded">{getPhoneType(vp.contact.phone)}</span>
+                    </div>
+                    {vp.additionalContacts && vp.additionalContacts.map((ac, idx) => (
+                      <div key={idx} className="flex items-center gap-2 text-sm pl-5">
+                        <a href={`tel:${ac.phone}`} className="text-gray-600 hover:text-[#1a73e8]">{ac.label ? `${ac.label}: ` : ''}{ac.phone}</a>
+                        <span className="text-[8px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1 py-0.5 rounded">{getPhoneType(ac.phone)}</span>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-2 text-sm">
+                      <Mail size={14} className="text-gray-300"/>
+                      <a href={`mailto:${vp.contact.email}`} className="text-gray-700 hover:text-[#1a73e8]">{vp.contact.email}</a>
+                    </div>
+                    {vp.contact.address && (
+                      <div className="flex items-start gap-2 text-sm">
+                        <Building size={14} className="text-gray-300 flex-shrink-0 mt-0.5"/>
+                        <span className="text-gray-600">{vp.contact.address}{vp.contact.addressDetail ? ` ${vp.contact.addressDetail}` : ''}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 소속 */}
+                {vpCompany && (
+                  <div className="space-y-1">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">소속</h4>
+                    <p className="text-sm text-gray-700">{vpCompany.name}{vpDept ? ` · ${vpDept.name}` : ''}{vp.position ? ` · ${vp.position}` : ''}{vp.jobTitle ? ` · ${vp.jobTitle}` : ''}</p>
+                  </div>
+                )}
+
+                {/* 사업자 정보 */}
+                {(vp.type === 'CORPORATE' || vp.type === 'SOLE_PROPRIETOR') && (
+                  <div className="space-y-1">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">사업자 정보</h4>
+                    <div className="text-sm text-gray-700 space-y-1">
+                      {vp.representative && <p>대표자: <span className="font-bold">{vp.representative}</span></p>}
+                      {vp.businessRegistrationNumber && <p>사업자등록번호: <span className="font-mono">{vp.businessRegistrationNumber}</span></p>}
+                      {vp.registrationNumber && vp.type === 'CORPORATE' && <p>법인등록번호: <span className="font-mono">{vp.registrationNumber}</span></p>}
+                    </div>
+                  </div>
+                )}
+
+                {/* 계약 현황 */}
+                {(vpContracts.leases.length > 0 || vpContracts.maintenances.length > 0) && (
+                  <div className="space-y-2">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">계약 현황</h4>
+                    {vpContracts.leases.map(lease => {
+                      const term = getActiveTerm(lease);
+                      return (
+                        <div key={lease.id} className="bg-gray-50 rounded-lg p-3 border border-gray-100 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-gray-800">{lease.term.startDate} ~ {lease.term.endDate}</span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${lease.status === 'ACTIVE' ? 'bg-[#e8f0fe] text-[#1a73e8] border-[#c5d9f7]' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                              {lease.status === 'ACTIVE' ? '유효' : '만료'}
+                            </span>
+                          </div>
+                          <p className="text-gray-500 mt-1">보증금 <span className="font-bold text-gray-700">{formatMoney(term.deposit)}</span> · 월세 <span className="font-bold text-gray-700">{formatMoney(term.monthlyRent)}</span></p>
+                        </div>
+                      );
+                    })}
+                    {vpContracts.maintenances.map(mc => (
+                      <div key={mc.id} className="bg-gray-50 rounded-lg p-3 border border-gray-100 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-800">{mc.serviceType} · {mc.term.startDate} ~ {mc.term.endDate}</span>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#e8f0fe] text-[#1a73e8] border border-[#c5d9f7]">진행중</span>
+                        </div>
+                        <p className="text-gray-500 mt-1">월 <span className="font-bold text-gray-700">{formatMoney(mc.monthlyCost)}</span></p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 소유 자산 */}
+                {(vpRelatedProps.length > 0 || vpOwnedUnits.length > 0) && (
+                  <div className="space-y-1">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">소유 자산</h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {vpRelatedProps.map(p => <span key={p.id} className="px-2 py-1 bg-[#e8f0fe] text-[#1a73e8] text-xs font-bold rounded border border-[#c5d9f7]">{p.name}</span>)}
+                      {vpOwnedUnits.slice(0, 5).map(u => <span key={u.id} className="px-2 py-1 bg-[#f1f3f4] text-[#3c4043] text-xs font-bold rounded border border-[#dadce0]">{u.unitNumber}호</span>)}
+                      {vpOwnedUnits.length > 5 && <span className="px-2 py-1 bg-[#f1f3f4] text-[#3c4043] text-xs font-bold rounded border border-[#dadce0]">+{vpOwnedUnits.length - 5}</span>}
+                    </div>
+                  </div>
+                )}
+
+                {/* 연관인물 */}
+                {vp.relatedPersons && vp.relatedPersons.length > 0 && (
+                  <div className="space-y-1">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">연관인물</h4>
+                    <div className="flex flex-wrap gap-1.5">
+                      {vp.relatedPersons.map((rp, idx) => {
+                        const rpPerson = stakeholders.find(s => s.id === rp.personId);
+                        return <span key={idx} className="px-2 py-1 bg-gray-50 text-gray-600 text-xs font-medium rounded border border-gray-200">{rpPerson?.name || '알 수 없음'} ({rp.relationship})</span>;
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 하단 액션 */}
+              <div className="p-4 md:p-5 border-t border-gray-100 flex justify-end gap-2">
+                <button onClick={() => { setIsViewModalOpen(false); handleOpenHistory(vp.id); }} className="px-4 py-2 text-xs font-bold bg-white border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50">이력 보기</button>
+                <button onClick={() => { setIsViewModalOpen(false); handleOpenEdit(vp); }} className="px-4 py-2 text-xs font-bold bg-[#1a73e8] text-white rounded-lg hover:bg-[#1557b0]">수정</button>
+              </div>
+            </div>
+          </div>
+          );
+        })(),
+        document.body
+      )}
+
       {/* Filter Tabs */}
       <div className="flex bg-white rounded-lg md:rounded-xl border border-gray-200 p-0.5 md:p-1 w-fit shadow-sm overflow-x-auto">
         {[
           { id: 'ALL', label: '전체' }, { id: 'TENANT', label: '임차인' }, { id: 'LANDLORD', label: '임대인' }, { id: 'MANAGER', label: '관리자' }, { id: 'VENDOR', label: '업체' },
         ].map(tab => (
-           <button key={tab.id} onClick={() => setFilterRole(tab.id as any)} className={`px-3 md:px-6 py-1.5 md:py-2 text-[10px] md:text-xs font-black rounded-md md:rounded-lg transition-all whitespace-nowrap ${filterRole === tab.id ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>{tab.label}</button>
+           <button key={tab.id} onClick={() => setFilterRole(tab.id as any)} className={`px-3 md:px-6 py-1.5 md:py-2 text-[10px] md:text-xs font-black rounded-md md:rounded-lg transition-all whitespace-nowrap ${filterRole === tab.id ? 'bg-[#1a73e8] text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>{tab.label}</button>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-6">
-        {filtered.map(person => (
-          <div key={person.id} className="bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-gray-200 shadow-sm hover:shadow-xl transition-all group flex flex-col h-full">
-            <div className="flex justify-between items-start mb-3 md:mb-5">
-              <div className="flex items-center gap-2 md:gap-4">
-                 <div className={`w-10 md:w-12 h-10 md:h-12 rounded-lg md:rounded-xl flex items-center justify-center text-base md:text-lg font-black border-2 ${
-                   person.type === 'CORPORATE' ? 'bg-gray-50 text-gray-400 border-gray-100' : 'bg-indigo-50 text-indigo-600 border-indigo-100 shadow-inner'
+      {/* 일괄 선택 액션 바 */}
+      {checkedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-[#e8f0fe] border border-[#dadce0] rounded-lg p-2 md:p-3">
+          <input type="checkbox" checked={checkedIds.size === filtered.length} onChange={handleSelectAll} className="w-4 h-4 text-[#1a73e8] rounded" />
+          <span className="text-xs md:text-sm font-bold text-[#1a73e8]">{checkedIds.size}건 선택됨</span>
+          <div className="flex gap-2 ml-auto">
+            <button onClick={() => { const first = stakeholders.find(s => checkedIds.has(s.id)); if (first) handleOpenEdit(first); }} className="px-3 py-1.5 text-[10px] md:text-xs font-bold bg-white border border-[#dadce0] text-[#1a73e8] rounded-lg hover:bg-[#f1f3f4] transition-all flex items-center gap-1">
+              <Edit2 size={12}/> 수정
+            </button>
+            <button onClick={handleBulkDelete} className="px-3 py-1.5 text-[10px] md:text-xs font-bold bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-all flex items-center gap-1">
+              <Trash2 size={12}/> 삭제
+            </button>
+            <button onClick={() => setCheckedIds(new Set())} className="px-3 py-1.5 text-[10px] md:text-xs font-bold text-gray-500 hover:text-gray-700 transition-all">
+              선택 해제
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
+        {filtered.map(person => {
+          const personContracts = getStakeholderContracts(person.id);
+          const refDate = referenceDate ? new Date(referenceDate + 'T00:00:00') : new Date(); refDate.setHours(0,0,0,0);
+          const thirtyDaysLater = new Date(refDate); thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
+
+          // 계약 상태 분류 (기준일자 기준)
+          const activeLeases = personContracts.leases.filter(c => { const start = new Date(c.term.startDate); const end = new Date(c.term.endDate); return start <= refDate && end >= refDate; });
+          const expiredLeases = personContracts.leases.filter(c => { const end = new Date(c.term.endDate); return end < refDate; });
+          const expiringLeases = activeLeases.filter(c => { const end = new Date(c.term.endDate); return end <= thirtyDaysLater && end >= refDate; });
+
+          // 채권/채무 계산 (보증금 기준)
+          const totalDeposit = activeLeases.reduce((sum, c) => { const t = getActiveTerm(c); return sum + t.deposit; }, 0);
+          const totalMonthlyRent = activeLeases.reduce((sum, c) => { const t = getActiveTerm(c); return sum + t.monthlyRent; }, 0);
+          const totalMaintenanceCost = personContracts.maintenances.filter(m => m.status === 'ACTIVE').reduce((sum, m) => sum + m.monthlyCost, 0);
+
+          // 임차인: 보증금=채권(돌려받을돈), 월세=채무(내야할돈)
+          // 임대인: 보증금=채무(돌려줄돈), 월세=채권(받을돈)
+          const isTenant = person.roles.includes('TENANT');
+          const isLandlord = person.roles.includes('LANDLORD');
+          const isVendor = person.roles.includes('VENDOR');
+          const creditAmount = isTenant ? totalDeposit : isLandlord ? totalMonthlyRent : 0;
+          const debtAmount = isTenant ? totalMonthlyRent : isLandlord ? totalDeposit : isVendor ? totalMaintenanceCost : 0;
+
+          // 관련 물건
+          const relatedPropertyIds = new Set<string>();
+          personContracts.leases.forEach(c => { if (c.targetId) { const prop = properties.find(p => p.id === c.targetId || p.buildings.some(b => b.id === c.targetId) || p.lots.some(l => l.id === c.targetId)); if (prop) relatedPropertyIds.add(prop.id); else { const propByUnit = properties.find(p => units.some(u => u.id === c.targetId && u.propertyId === p.id)); if (propByUnit) relatedPropertyIds.add(propByUnit.id); } } });
+          personContracts.maintenances.forEach(c => { if (c.targetId) { const prop = properties.find(p => p.id === c.targetId || p.buildings.some(b => b.id === c.targetId)); if (prop) relatedPropertyIds.add(prop.id); } });
+          // 소유 자산도 포함
+          properties.forEach(p => { if (p.ownerId === person.id || p.lots.some(l => l.ownerId === person.id) || p.buildings.some(b => b.ownerId === person.id)) relatedPropertyIds.add(p.id); });
+          units.forEach(u => { if (u.ownerId === person.id) relatedPropertyIds.add(u.propertyId); });
+          const relatedProps = properties.filter(p => relatedPropertyIds.has(p.id));
+
+          // 소속 정보
+          const company = person.companyId ? stakeholders.find(s => s.id === person.companyId) : null;
+          const dept = person.departmentId && company?.departments ? company.departments.find(d => d.id === person.departmentId) : null;
+
+          const totalContracts = personContracts.leases.length + personContracts.maintenances.length;
+
+          return (
+          <div key={person.id} onClick={() => handleOpenView(person)} className={`bg-white rounded-xl md:rounded-2xl border shadow-sm hover:shadow-lg transition-all group flex flex-col h-full overflow-hidden cursor-pointer ${checkedIds.has(person.id) ? 'border-[#1a73e8] ring-2 ring-[#e8f0fe]' : 'border-gray-200'}`}>
+            {/* 헤더: 체크박스 + 이름 + 역할 + 액션 버튼 */}
+            <div className="flex justify-between items-start p-3 md:p-4 pb-0">
+              <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+                 <input
+                   type="checkbox"
+                   checked={checkedIds.has(person.id)}
+                   onClick={e => handleToggleCheck(person.id, e)}
+                   onChange={() => {}}
+                   className="w-4 h-4 text-[#1a73e8] rounded border-gray-300 focus:ring-[#1a73e8] flex-shrink-0 cursor-pointer"
+                 />
+                 <div className={`w-9 md:w-10 h-9 md:h-10 rounded-lg flex-shrink-0 flex items-center justify-center font-black border-2 ${
+                   person.type === 'CORPORATE' ? 'bg-gray-50 text-gray-400 border-gray-100' :
+                   person.type === 'SOLE_PROPRIETOR' ? 'bg-[#f1f3f4] text-[#5f6368] border-[#dadce0]' :
+                   'bg-[#e8f0fe] text-[#1a73e8] border-[#dadce0]'
                  }`}>
-                   {person.type === 'CORPORATE' ? <Building size={18} className="md:w-[22px] md:h-[22px]"/> : <User size={18} className="md:w-[22px] md:h-[22px]"/>}
+                   {person.type === 'CORPORATE' || person.type === 'SOLE_PROPRIETOR' ? <Building size={16} className="md:w-[18px] md:h-[18px]"/> : <User size={16} className="md:w-[18px] md:h-[18px]"/>}
                  </div>
-                 <div>
-                   <h3 className="font-black text-gray-900 text-sm md:text-lg leading-tight truncate max-w-[120px] md:max-w-none">{person.name}</h3>
-                   <div className="flex flex-wrap gap-1 md:gap-1.5 mt-1 md:mt-1.5">{person.roles.map(r => <span key={r}>{getRoleBadge(r)}</span>)}</div>
+                 <div className="min-w-0 flex-1">
+                   <h3 className="font-black text-gray-900 text-xs md:text-sm leading-tight truncate">{person.name}</h3>
+                   <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                     {relatedProps.map(p => (
+                       <span key={p.id} className={`${badgeBase} bg-[#f1f3f4] text-[#3c4043] border-[#dadce0]`}>{p.name}</span>
+                     ))}
+                     {person.roles.map(r => <span key={r}>{getRoleBadge(r)}</span>)}
+                   </div>
                  </div>
               </div>
-              {person.businessLicenseFile && (
-                <div className="p-1.5 md:p-2 bg-gray-50 rounded-lg text-gray-400" title="사업자등록증 보유">
-                   <Paperclip size={14} className="md:w-4 md:h-4"/>
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2 md:space-y-3 mt-auto text-[10px] md:text-xs text-gray-600 bg-gray-50/70 p-2.5 md:p-4 rounded-lg md:rounded-xl border border-gray-100">
-              {person.type === 'CORPORATE' ? (
-                <>
-                  <div className="flex items-center gap-2">
-                    <Briefcase size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
-                    <span className="font-bold text-gray-700" title="사업자등록번호">{person.businessRegistrationNumber || '-'}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Building size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
-                    <span className="font-medium text-gray-500 text-[9px] md:text-[10px] font-mono" title="법인등록번호">{person.registrationNumber}</span>
-                  </div>
-                </>
-              ) : (
-                <div className="flex items-center gap-2 bg-white py-1 md:py-1.5 px-2 md:px-2.5 rounded-lg border border-indigo-100/50 shadow-sm">
-                   <Lock size={10} className="md:w-3 md:h-3 text-indigo-400"/>
-                   <span className="font-black text-indigo-400 uppercase tracking-tighter text-[8px] md:text-[10px]">개인정보 보호됨</span>
-                </div>
-              )}
-
-              <div className="flex items-center gap-2 pt-0.5 md:pt-1">
-                <Phone size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
-                <a href={`tel:${person.contact.phone}`} className="font-bold text-indigo-600 hover:underline">{person.contact.phone}</a>
-              </div>
-              <div className="flex items-center gap-2">
-                <Mail size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/>
-                <a href={`mailto:${person.contact.email}`} className="truncate hover:text-indigo-600 hover:underline font-medium text-[9px] md:text-xs">{person.contact.email}</a>
+              <div className="flex items-center gap-0.5 flex-shrink-0">
+                <button onClick={e => { e.stopPropagation(); handleOpenEdit(person); }} className="p-1.5 text-gray-400 hover:text-[#1a73e8] hover:bg-[#f1f3f4] rounded-lg transition-colors" title="수정"><Edit2 size={14}/></button>
+                <button onClick={e => { e.stopPropagation(); handleOpenHistory(person.id); }} className="p-1.5 text-gray-400 hover:text-[#1a73e8] hover:bg-[#f1f3f4] rounded-lg transition-colors" title="이력"><FileText size={14}/></button>
               </div>
             </div>
 
-            <div className="mt-3 md:mt-6 pt-0 flex gap-1.5 md:gap-2">
-              <button onClick={() => handleOpenEdit(person)} className="flex-1 py-2 md:py-2.5 text-[9px] md:text-[11px] font-black border border-gray-200 rounded-lg md:rounded-xl text-gray-600 bg-white hover:bg-gray-50 shadow-sm transition-all active:scale-95">수정</button>
-              <button onClick={() => handleOpenHistory(person.id)} className="flex-1 py-2 md:py-2.5 text-[9px] md:text-[11px] font-black bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-lg md:rounded-xl hover:bg-indigo-100 shadow-sm transition-all active:scale-95">이력</button>
+            {/* 본문 */}
+            <div className="p-3 md:p-4 pt-2 md:pt-3 flex-1 flex flex-col gap-2 md:gap-2.5 text-[10px] md:text-xs">
+
+              {/* 연락처 + 이메일 */}
+              <div className="flex items-center gap-1.5">
+                <Phone size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
+                <a href={`tel:${person.contact.phone}`} className="font-bold text-gray-700 hover:text-[#1a73e8]">{person.contact.phone}</a>
+                <span className="text-[8px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1 py-0.5 rounded">{getPhoneType(person.contact.phone)}</span>
+                {person.additionalContacts && person.additionalContacts.length > 0 && (
+                  <span className="text-[8px] text-gray-400">+{person.additionalContacts.length}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Mail size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
+                <a href={`mailto:${person.contact.email}`} className="truncate text-gray-600 hover:text-[#1a73e8] font-medium">{person.contact.email}</a>
+              </div>
+
+              {/* 소속 */}
+              {company && (
+                <div className="flex items-center gap-1.5">
+                  <Building size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
+                  <span className="text-gray-600 font-medium truncate">{company.name}{dept ? ` · ${dept.name}` : ''}{person.jobTitle ? ` · ${person.jobTitle}` : ''}</span>
+                </div>
+              )}
+              {!company && person.representative && (person.type === 'CORPORATE' || person.type === 'SOLE_PROPRIETOR') && (
+                <div className="flex items-center gap-1.5">
+                  <Building size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
+                  <span className="text-gray-600 font-medium truncate">대표: {person.representative}</span>
+                </div>
+              )}
+
+              {/* 계약 현황 */}
+              <div className="flex items-center gap-1.5">
+                <FileText size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
+                {totalContracts > 0 ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-gray-600">계약 {totalContracts}건</span>
+                    {activeLeases.length > 0 && <span className="px-1.5 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[9px] font-bold rounded border border-[#c5d9f7]">유효 {activeLeases.length}</span>}
+                    {expiringLeases.length > 0 && <span className="px-1.5 py-0.5 bg-[#f1f3f4] text-[#5f6368] text-[9px] font-bold rounded border border-[#dadce0]">만료임박 {expiringLeases.length}</span>}
+                    {expiredLeases.length > 0 && <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[9px] font-bold rounded border border-gray-200">만료 {expiredLeases.length}</span>}
+                  </div>
+                ) : (
+                  <span className="text-gray-300 italic">계약 없음</span>
+                )}
+              </div>
+
+              {/* 채권/채무 요약 */}
+              {(creditAmount > 0 || debtAmount > 0) && (
+                <div className="flex items-center gap-1.5 bg-gray-50 rounded-lg p-1.5 md:p-2 border border-gray-100">
+                  <DollarSign size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
+                  <div className="flex gap-2 flex-wrap">
+                    {creditAmount > 0 && (
+                      <span className="text-[9px] md:text-[10px]">
+                        <span className="text-[#1a73e8] font-black">채권</span>
+                        <span className="text-[#1a73e8] font-bold ml-1">{formatMoney(creditAmount)}</span>
+                      </span>
+                    )}
+                    {debtAmount > 0 && (
+                      <span className="text-[9px] md:text-[10px]">
+                        <span className="text-red-500 font-black">채무</span>
+                        <span className="text-red-600 font-bold ml-1">{formatMoney(debtAmount)}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 이슈 (만료임박 경고) */}
+              {expiringLeases.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-[#f1f3f4] rounded-lg p-1.5 md:p-2 border border-[#dadce0]">
+                  <AlertCircle size={12} className="text-[#5f6368] flex-shrink-0"/>
+                  <span className="text-[9px] md:text-[10px] text-[#5f6368] font-bold">30일 내 만료 계약 {expiringLeases.length}건</span>
+                </div>
+              )}
             </div>
           </div>
-        ))}
+          );
+        })}
         {filtered.length === 0 && <div className="col-span-full py-12 md:py-20 text-center text-gray-400 italic text-xs md:text-sm">검색 결과가 없습니다.</div>}
       </div>
     </div>

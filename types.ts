@@ -36,7 +36,9 @@ export interface Stakeholder {
     phone: string;
     email: string;
     address?: string;
+    addressDetail?: string;
   };
+  additionalContacts?: { label: string; phone: string }[];
   note?: string;
 
   // 개인 정보 확장

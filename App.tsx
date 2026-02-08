@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, Search, MapPin, Key } from 'lucide-react';
+import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, MapPin, Key, Calendar } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { PropertyManager } from './components/PropertyManager';
 import { StakeholderManager } from './components/StakeholderManager';
@@ -143,6 +143,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('DASHBOARD');
   const [currencyUnit, setCurrencyUnit] = useState<MoneyUnit>('WON');
   const [areaUnit, setAreaUnit] = useState<AreaUnit>('M2');
+  const [referenceDate, setReferenceDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(loadSettings);
 
@@ -277,12 +278,6 @@ function App() {
 
                {/* 우측 액션 */}
                <div className="flex items-center gap-1 md:gap-2">
-                  {/* 검색 (PC) */}
-                  <div className="relative hidden xl:block w-64">
-                     <Search size={16} className="absolute left-3 top-2 text-[#5f6368]"/>
-                     <input type="text" placeholder="검색..." className="w-full bg-[#f1f3f4] border-none rounded-lg pl-9 pr-3 py-1.5 text-sm focus:bg-white focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
-                  </div>
-
                   {/* 단위 설정 드롭다운 */}
                   <div className="relative">
                      <button
@@ -293,6 +288,9 @@ function App() {
                               : 'bg-[#f1f3f4] text-[#3c4043] border-transparent hover:border-[#dadce0]'
                         }`}
                      >
+                        <Calendar size={14} className="text-[#ea4335]"/>
+                        <span className="hidden md:inline">{referenceDate.slice(5).replace('-', '/')}</span>
+                        <span className="text-[#dadce0]">|</span>
                         <Ruler size={14} className="text-[#1a73e8]"/>
                         <span>{areaUnit === 'M2' ? '㎡' : '평'}</span>
                         <span className="text-[#dadce0]">|</span>
@@ -303,7 +301,27 @@ function App() {
                      {isUnitMenuOpen && (
                         <>
                            <div className="fixed inset-0 z-40" onClick={() => setIsUnitMenuOpen(false)}/>
-                           <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-xl shadow-2xl border border-[#dadce0] py-2 z-50">
+                           <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-xl shadow-2xl border border-[#dadce0] py-2 z-50">
+                              <div className="px-3 py-1.5 text-[10px] font-bold text-[#5f6368] uppercase flex items-center gap-2">
+                                 <Calendar size={12} className="text-[#ea4335]"/> 기준일자
+                              </div>
+                              <div className="px-3 py-1.5">
+                                 <div className="flex items-center gap-1.5">
+                                    <input
+                                       type="date"
+                                       value={referenceDate}
+                                       onChange={e => setReferenceDate(e.target.value)}
+                                       className="flex-1 border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-sm text-[#202124] font-bold focus:ring-2 focus:ring-[#1a73e8] outline-none"
+                                    />
+                                    <button
+                                       onClick={() => setReferenceDate(new Date().toISOString().split('T')[0])}
+                                       className="px-2 py-1.5 text-[10px] font-bold text-[#1a73e8] bg-[#e8f0fe] rounded-lg hover:bg-[#d2e3fc] whitespace-nowrap"
+                                    >
+                                       오늘
+                                    </button>
+                                 </div>
+                              </div>
+                              <div className="border-t border-[#dadce0] my-2"></div>
                               <div className="px-3 py-1.5 text-[10px] font-bold text-[#5f6368] uppercase flex items-center gap-2">
                                  <Ruler size={12} className="text-[#1a73e8]"/> 면적 단위
                               </div>
@@ -387,7 +405,7 @@ function App() {
                     formatMoney={formatMoney} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput}
                   />
                )}
-               {activeTab === 'STAKEHOLDER' && <StakeholderManager stakeholders={stakeholders} onAddStakeholder={s => setStakeholders(prev => [...prev, s])} onUpdateStakeholder={s => setStakeholders(prev => prev.map(sh => sh.id === s.id ? s : sh))} leaseContracts={leaseContracts} maintenanceContracts={maintenanceContracts} formatMoney={formatMoney} />}
+               {activeTab === 'STAKEHOLDER' && <StakeholderManager stakeholders={stakeholders} onAddStakeholder={s => setStakeholders(prev => [...prev, s])} onUpdateStakeholder={s => setStakeholders(prev => prev.map(sh => sh.id === s.id ? s : sh))} onDeleteStakeholder={id => setStakeholders(prev => prev.filter(s => s.id !== id))} leaseContracts={leaseContracts} maintenanceContracts={maintenanceContracts} properties={properties} units={units} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))} formatMoney={formatMoney} referenceDate={referenceDate} />}
                {activeTab === 'VALUATION' && (
                  /* Fixed duplicate attributes error by renaming repeated parseNumberInput to parseMoneyInput */
                  <ValuationManager properties={properties} valuations={valuations} comparables={comparables} onAddValuation={v => setValuations(prev => [...prev, v])} onUpdateValuation={v => setValuations(prev => prev.map(va => va.id === v.id ? v : va))} onDeleteValuation={id => setValuations(prev => prev.filter(v => v.id !== id))} onAddComparable={c => setComparables(prev => [...prev, c])} formatMoney={formatMoney} formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'MAN' ? '만원' : '억원'} areaUnit={areaUnit} />
