@@ -1,6 +1,27 @@
 
-export type StakeholderType = 'INDIVIDUAL' | 'CORPORATE';
+export type StakeholderType = 'INDIVIDUAL' | 'SOLE_PROPRIETOR' | 'CORPORATE' | 'INTERNAL_ORG' | 'CUSTOM_GROUP';
 export type StakeholderRole = 'LANDLORD' | 'TENANT' | 'MANAGER' | 'VENDOR' | 'SAFETY_OFFICER';
+
+// 조직도 부서 정보
+export interface Department {
+  id: string;
+  name: string;
+  parentId?: string;  // 상위 부서 ID
+  employeeIds: string[];  // 소속 직원 ID 목록
+}
+
+// 연관인물 정보
+export interface RelatedPerson {
+  personId: string;  // Stakeholder ID
+  relationship: string;  // 관계 (예: 배우자, 가족, 동업자 등)
+}
+
+// 계좌정보
+export interface BankAccount {
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+}
 
 export interface Stakeholder {
   id: string;
@@ -17,6 +38,30 @@ export interface Stakeholder {
     address?: string;
   };
   note?: string;
+
+  // 개인 정보 확장
+  companyId?: string;  // 소속회사 (INDIVIDUAL, SOLE_PROPRIETOR용)
+  departmentId?: string;  // 소속부서 ID
+  isLeader?: boolean;  // 조직장 여부
+  position?: string;  // 직급 (예: 사원, 대리, 과장, 차장, 부장 등)
+  jobTitle?: string;  // 직책 (예: 팀장, 본부장, 실장 등)
+  jobFunction?: string;  // 직무 (수동 입력)
+
+  // 계좌정보
+  bankAccounts?: BankAccount[];  // 여러 계좌 가능
+
+  // 세금계산서 발행주소
+  taxInvoiceAddress?: string;
+
+  // 연관인물 (INDIVIDUAL용)
+  relatedPersons?: RelatedPerson[];
+
+  // 임의그룹용 (CUSTOM_GROUP)
+  groupName?: string;  // 그룹 이름
+  memberIds?: string[];  // 그룹 구성원 ID 목록
+
+  // 조직도 (SOLE_PROPRIETOR, CORPORATE, INTERNAL_ORG용)
+  departments?: Department[];
 }
 
 export interface JibunAddress {
@@ -77,6 +122,7 @@ export interface Building {
   name: string;              // 동명칭 또는 건물명
   mgmBldrgstPk?: string;     // 관리건축물대장PK (API 연동용)
   spec: BuildingSpec;
+  ownerId?: string;          // 소유자 ID (Stakeholder)
 }
 
 export type PropertyType = 'AGGREGATE' | 'LAND_AND_BUILDING' | 'LAND';
@@ -87,6 +133,7 @@ export interface Lot {
   jimok: string;
   area: number;
   pnu?: string;  // VWorld PNU 코드 (토지정보 조회용)
+  ownerId?: string;  // 소유자 ID (Stakeholder)
 }
 
 export interface PropertyPhoto {
@@ -112,22 +159,24 @@ export interface Property {
   lots: Lot[];
   buildings: Building[];
   totalLandArea: number;
+  ownerId?: string;      // 소유자 ID (Stakeholder)
   managerId?: string;
   photos?: PropertyPhoto[];
 }
 
 export interface Unit {
   id: string;
-  propertyId: string; 
-  buildingId: string; 
+  propertyId: string;
+  buildingId: string;
   unitNumber: string;
-  floor: number;      
-  area: number;       
+  floor: number;
+  area: number;
   usage: string;
   status: 'OCCUPIED' | 'VACANT' | 'UNDER_REPAIR';
   rentType?: string;
   deposit?: number;
   monthlyRent?: number;
+  ownerId?: string;  // 소유자 ID (Stakeholder)
 }
 
 export type LeaseType = 'LEASE_OUT' | 'LEASE_IN' | 'SUBLEASE_OUT' | 'SUBLEASE_IN';
