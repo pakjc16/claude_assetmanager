@@ -203,6 +203,66 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 
 ## 개발 이력
 
+### 2025-02-08: 인물/업체 관리 고도화 - 조직도 및 조직장/구성원 관리
+
+**types.ts 확장**:
+- `StakeholderType`에 `SOLE_PROPRIETOR`, `INTERNAL_ORG`, `CUSTOM_GROUP` 추가
+- `Department`, `RelatedPerson`, `BankAccount` 인터페이스 추가
+- `Stakeholder` 인터페이스에 확장 필드 추가:
+  - 조직 관련: `companyId`, `departmentId`, `isLeader`, `position`, `jobTitle`, `jobFunction`
+  - 재무 관련: `bankAccounts`, `taxInvoiceAddress`
+  - 관계 관련: `relatedPersons`, `memberIds`, `groupName`, `departments`
+- `Building`, `Lot`, `Property`, `Unit`에 `ownerId` 필드 추가
+
+**StakeholderManager.tsx 주요 기능**:
+- **5가지 인물/업체 타입 지원**:
+  - 개인 (INDIVIDUAL)
+  - 개인사업자 (SOLE_PROPRIETOR)
+  - 법인사업자 (CORPORATE)
+  - 내부조직 (INTERNAL_ORG)
+  - 임의그룹 (CUSTOM_GROUP)
+
+- **조직도 관리 (다이어그램 시각화)**:
+  - 무한 depth 계층 구조 지원 (재귀 렌더링)
+  - 부서별 색상 구분 (최상위: indigo gradient, 하위: blue shades)
+  - 조직장과 구성원 구분 표시:
+    - **조직장**: 부서명 아래 서브타이틀 형식 (직책 + 이름)
+    - **구성원**: 부서 아래 별도 섹션 (직급 + 이름)
+  - 클릭 시 해당 인물 수정 모달 오픈
+  - 부서 추가/수정/삭제 인라인 편집
+
+- **필터 및 검색**:
+  - 역할별 필터 (임차인, 임대인, 관리자, 업체)
+  - 자산 기반 필터 (물건별 소유자 필터링)
+  - 개인 타입 표시/숨김 체크박스 (기본값: 숨김)
+  - 이름/연락처 실시간 검색
+
+- **개인 정보 관리**:
+  - 소속회사 및 소속부서 선택
+  - 조직장 여부 체크박스
+  - 직급/직책 datalist 자동완성 (수동 입력 가능)
+  - 연관인물 추가/수정/삭제 (배우자, 가족, 동업자 등)
+
+- **사업자 정보 관리**:
+  - 복수 계좌정보 등록 (은행명, 계좌번호, 예금주)
+  - 세금계산서 발행주소
+  - 사업자등록번호/법인등록번호 관리
+
+- **CSV 대량 등록**: 인물/업체 일괄 등록 기능
+
+- **소유 자산 표시**: 임대인의 경우 소유 자산 목록 자동 표시 (물건/토지/건물/호실)
+
+**UI/UX 개선**:
+- 타입별 아이콘 및 색상 구분
+- 모바일 반응형 디자인 적용
+- 조직도 연결선 자동 생성
+- 호버 시 편집/삭제 버튼 표시
+
+**개발 패턴 참고**:
+- 조직도 재귀 렌더링: `renderDepartment(dept, level)` 함수 패턴
+- 필터링 로직: 역할, 검색어, 타입, 자산 소유 여부 복합 조건
+- datalist를 활용한 자동완성: 선택 및 수동 입력 동시 지원
+
 ### 2025-02-07: 모바일 반응형 UI 전면 개선 (앱 전체 적용)
 
 **적용된 컴포넌트**:
