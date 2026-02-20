@@ -1,10 +1,11 @@
 
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail } from '../types';
-import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2 } from 'lucide-react';
+import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder } from '../types';
+import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check } from 'lucide-react';
 import { AddressSearch } from './AddressSearch';
 import { AppSettings } from '../App';
+import FloorPlanViewer from './FloorPlanViewer';
 
 // 토지임야목록조회 API 호출 함수
 interface LandInfo {
@@ -266,13 +267,32 @@ interface PropertyManagerProps {
   parseMoneyInput: (str: string) => number;
   moneyLabel: string;
   appSettings: AppSettings;
+  // 층/조닝 관련
+  leaseContracts: LeaseContract[];
+  stakeholders: Stakeholder[];
+  floorPlans: FloorPlan[];
+  floorZones: FloorZone[];
+  onSaveFloorPlan: (plan: FloorPlan) => void;
+  onDeleteFloorPlan: (id: string) => void;
+  onSaveZone: (zone: FloorZone) => void;
+  onDeleteZone: (id: string) => void;
 }
 
+// 조닝 세부용도 라벨
+const ZONE_USAGE_LABELS: Record<ZoneUsage, string> = {
+  STORE: '매장', COMMON: '공용면적', OFFICE: '사무실', MEETING_ROOM: '회의실', RESTAURANT: '식당',
+  AUDITORIUM: '강당', STORAGE: '창고', SAMPLE_ROOM: '샘플실', CANTEEN: '캔틴', PARKING: '주차장',
+  LIVING_ROOM: '거실', MASTER_BEDROOM: '안방', BEDROOM: '방', BATHROOM: '화장실', CORRIDOR: '동선',
+  VOID: '보이드', LANDSCAPE: '조경공간'
+};
+const ZONE_USAGE_OPTIONS: ZoneUsage[] = ['STORE', 'COMMON', 'OFFICE', 'MEETING_ROOM', 'RESTAURANT', 'AUDITORIUM', 'STORAGE', 'SAMPLE_ROOM', 'CANTEEN', 'PARKING', 'LIVING_ROOM', 'MASTER_BEDROOM', 'BEDROOM', 'BATHROOM', 'CORRIDOR', 'VOID', 'LANDSCAPE'];
+
 export const PropertyManager: React.FC<PropertyManagerProps> = ({
-  properties, units, onAddProperty, onUpdateProperty, onDeleteProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, parseMoneyInput, moneyLabel, appSettings
+  properties, units, onAddProperty, onUpdateProperty, onDeleteProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, parseMoneyInput, moneyLabel, appSettings,
+  leaseContracts, stakeholders, floorPlans, floorZones, onSaveFloorPlan, onDeleteFloorPlan, onSaveZone, onDeleteZone
 }) => {
   const [selectedPropId, setSelectedPropId] = useState<string>(properties[0]?.id || '');
-  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LAND' | 'BUILDING' | 'UNIT'>('OVERVIEW');
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LAND' | 'BUILDING' | 'FLOOR' | 'UNIT' | 'ZONING'>('OVERVIEW');
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
   const [isUnitModalOpen, setIsUnitModalOpen] = useState(false);
   const [isBuildingModalOpen, setIsBuildingModalOpen] = useState(false);
@@ -312,6 +332,18 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
   // 층별정보 세부 펼침 상태 (건물ID_층번호 형태로 저장)
   const [expandedFloors, setExpandedFloors] = useState<Set<string>>(new Set());
+
+  // 층 탭 상태
+  const [floorTabBldgId, setFloorTabBldgId] = useState<string>('');
+  const [floorTabZoneFilter, setFloorTabZoneFilter] = useState<ZoneUsage | ''>('');
+  const [floorPlanViewerOpen, setFloorPlanViewerOpen] = useState(false);
+  const [viewerFloorNumber, setViewerFloorNumber] = useState<number | null>(null);
+
+  // 조닝 탭 상태
+  const [zoningBldgId, setZoningBldgId] = useState<string>('');
+  const [zoningFloorNum, setZoningFloorNum] = useState<number | null>(null);
+  const [zoningEditZone, setZoningEditZone] = useState<FloorZone | null>(null);
+  const [zoningDetailForm, setZoningDetailForm] = useState<Partial<ZoneDetail>>({});
 
   // 사진 업로드 모달 상태
   const [isPhotoUploadModalOpen, setIsPhotoUploadModalOpen] = useState(false);
@@ -837,7 +869,9 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                  { id: 'OVERVIEW', label: '개요', icon: <Home size={12} className="md:w-3.5 md:h-3.5"/> },
                  { id: 'LAND', label: '토지', icon: <MapPin size={12} className="md:w-3.5 md:h-3.5"/> },
                  { id: 'BUILDING', label: '건물', icon: <BuildingIcon size={12} className="md:w-3.5 md:h-3.5"/> },
-                 { id: 'UNIT', label: '호실', icon: <Layers size={12} className="md:w-3.5 md:h-3.5"/> }
+                 { id: 'FLOOR', label: '층', icon: <Layers size={12} className="md:w-3.5 md:h-3.5"/> },
+                 { id: 'UNIT', label: '호실', icon: <Home size={12} className="md:w-3.5 md:h-3.5"/> },
+                 { id: 'ZONING', label: '조닝', icon: <Grid3X3 size={12} className="md:w-3.5 md:h-3.5"/> }
                ].map((tab) => (
                  <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-3 md:px-6 py-2.5 md:py-4 text-[10px] md:text-xs font-bold uppercase tracking-wide md:tracking-widest transition-all flex items-center gap-1.5 md:gap-3 whitespace-nowrap ${activeTab === tab.id ? 'border-b-2 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
                    {tab.icon} {tab.label}
@@ -1500,6 +1534,579 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                         </div>
                     </div>
                 )}
+                {/* ========== 층 탭 ========== */}
+                {activeTab === 'FLOOR' && (() => {
+                  if (!selectedProperty || selectedProperty.buildings.length === 0) {
+                    return (
+                      <div className="py-12 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-[#f8f9fa]">
+                        <BuildingIcon size={40} className="mx-auto text-gray-300 mb-3"/>
+                        <p className="text-gray-400 font-bold">건물을 먼저 등록하세요</p>
+                      </div>
+                    );
+                  }
+                  const effectiveBldgId = floorTabBldgId || selectedProperty.buildings[0]?.id || '';
+                  const bldg = selectedProperty.buildings.find(b => b.id === effectiveBldgId) || selectedProperty.buildings[0];
+                  if (!bldg) return null;
+
+                  const allFloorNumbers = [...new Set([
+                    ...bldg.spec.floors.map(f => f.floorNumber),
+                    ...propertyUnits.filter(u => u.buildingId === bldg.id).map(u => u.floor),
+                  ])].sort((a, b) => b - a);
+
+                  const getFloorSpec = (n: number) => bldg.spec.floors.find(f => f.floorNumber === n);
+                  const getFloorLabel = (n: number) => n > 0 ? `${n}F` : `B${Math.abs(n)}`;
+
+                  // 해당 건물의 모든 조닝 데이터 (층별)
+                  const getFloorZones = (floorNum: number): FloorZone[] => {
+                    const plan = floorPlans.find(p => p.propertyId === selectedProperty!.id && p.buildingId === bldg.id && p.floorNumber === floorNum);
+                    return plan ? floorZones.filter(z => z.floorPlanId === plan.id) : [];
+                  };
+
+                  // 현재 필터에 맞는 조닝유형별 컬럼 헤더 & 값 추출
+                  const zf = floorTabZoneFilter;
+
+                  // 필터가 있을 때 해당 유형 조닝이 있는 층만 필터 (필터 없으면 전체 층)
+                  const displayFloors = zf ? allFloorNumbers.filter(n => {
+                    const zones = getFloorZones(n);
+                    return zones.some(z => z.detail?.usage === zf);
+                  }) : allFloorNumbers;
+
+                  // 조닝유형별 세부정보 렌더
+                  const renderZoneInfo = (zones: FloorZone[], floorNum: number) => {
+                    const filtered = zf ? zones.filter(z => z.detail?.usage === zf) : zones;
+                    if (filtered.length === 0) return <span className="text-[9px] text-[#9aa0a6]">-</span>;
+
+                    if (!zf) {
+                      // 필터 없음: 조닝유형별 개수 요약
+                      const usageCounts: Record<string, number> = {};
+                      filtered.forEach(z => {
+                        const u = z.detail?.usage;
+                        if (u) usageCounts[ZONE_USAGE_LABELS[u]] = (usageCounts[ZONE_USAGE_LABELS[u]] || 0) + 1;
+                      });
+                      const noUsage = filtered.filter(z => !z.detail?.usage).length;
+                      return (
+                        <div className="flex flex-wrap gap-1">
+                          {Object.entries(usageCounts).map(([label, cnt]) => (
+                            <span key={label} className="px-1.5 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[8px] md:text-[9px] font-bold rounded whitespace-nowrap">
+                              {label}{cnt > 1 ? ` ×${cnt}` : ''}
+                            </span>
+                          ))}
+                          {noUsage > 0 && <span className="px-1.5 py-0.5 bg-gray-100 text-gray-400 text-[8px] md:text-[9px] font-bold rounded">미지정 ×{noUsage}</span>}
+                        </div>
+                      );
+                    }
+
+                    // 특정 유형 필터
+                    switch (zf) {
+                      case 'OFFICE':
+                        return (
+                          <div className="space-y-0.5">
+                            {filtered.map(z => (
+                              <div key={z.id} className="flex items-center gap-2 text-[9px] md:text-[10px]">
+                                <span className="font-bold text-[#202124]">{z.detail?.departmentName || z.name}</span>
+                                {z.detail?.headcount && <span className="text-[#5f6368]">{z.detail.headcount}명</span>}
+                                {z.estimatedArea && <span className="text-[#1a73e8] font-bold">약 {formatArea(z.estimatedArea)}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      case 'MEETING_ROOM':
+                        return (
+                          <div className="space-y-0.5">
+                            {filtered.map(z => (
+                              <div key={z.id} className="flex items-center gap-2 text-[9px] md:text-[10px]">
+                                <span className="font-bold text-[#202124]">{z.name}</span>
+                                {z.detail?.meetingCapacity && <span className="text-[#5f6368]">{z.detail.meetingCapacity}인실</span>}
+                                {z.estimatedArea && <span className="text-[#1a73e8] font-bold">약 {formatArea(z.estimatedArea)}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      case 'STORAGE': case 'SAMPLE_ROOM':
+                        return (
+                          <div className="space-y-0.5">
+                            {filtered.map(z => (
+                              <div key={z.id} className="flex items-center gap-2 text-[9px] md:text-[10px]">
+                                <span className="font-bold text-[#202124]">{z.name}</span>
+                                {z.detail?.storageDepartment && <span className="text-[#5f6368]">{z.detail.storageDepartment}</span>}
+                                {z.detail?.managerPrimary && <span className="text-[#5f6368]">정: {z.detail.managerPrimary}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      case 'PARKING':
+                        return (
+                          <span className="font-bold text-[10px] md:text-xs text-[#202124]">
+                            {filtered.reduce((s, z) => s + (z.detail?.parkingSpaces || 0), 0)}대
+                            {filtered.some(z => z.detail?.parkingAssignee) && (
+                              <span className="text-[#5f6368] font-normal ml-1">({filtered.map(z => z.detail?.parkingAssignee).filter(Boolean).join(', ')})</span>
+                            )}
+                          </span>
+                        );
+                      case 'BATHROOM':
+                        return <span className="font-bold text-[10px] md:text-xs text-[#202124]">{filtered.length}개</span>;
+                      case 'BEDROOM':
+                        return (
+                          <span className="font-bold text-[10px] md:text-xs text-[#202124]">
+                            {filtered.map(z => `방${z.detail?.bedroomNumber || ''}`).join(', ')}
+                          </span>
+                        );
+                      default:
+                        return (
+                          <div className="flex flex-wrap gap-1">
+                            {filtered.map(z => (
+                              <span key={z.id} className="text-[9px] md:text-[10px] font-bold text-[#202124]">{z.name}</span>
+                            ))}
+                          </div>
+                        );
+                    }
+                  };
+
+                  // 합계 면적
+                  const totalArea = (zf ? displayFloors : allFloorNumbers).reduce((s, n) => {
+                    const spec = getFloorSpec(n);
+                    return s + (spec?.area || 0);
+                  }, 0);
+
+                  // 조닝유형별 컬럼 헤더
+                  const getFilterColumnHeader = (): string => {
+                    if (!zf) return '조닝 구성';
+                    return ZONE_USAGE_LABELS[zf] + ' 정보';
+                  };
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-black text-sm md:text-base text-[#3c4043] flex items-center gap-1 md:gap-2">
+                            <Layers size={16} className="md:w-[18px] md:h-[18px] text-[#1a73e8]"/> 층별 현황
+                          </h3>
+                          {selectedProperty.buildings.length > 1 && (
+                            <select value={effectiveBldgId} onChange={e => setFloorTabBldgId(e.target.value)}
+                              className="px-2 md:px-3 py-1 md:py-1.5 border border-[#dadce0] rounded-lg text-[10px] md:text-xs font-bold focus:outline-none focus:border-[#1a73e8]">
+                              {selectedProperty.buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                            </select>
+                          )}
+                          <select value={floorTabZoneFilter} onChange={e => setFloorTabZoneFilter(e.target.value as ZoneUsage | '')}
+                            className="px-2 md:px-3 py-1 md:py-1.5 border border-[#dadce0] rounded-lg text-[10px] md:text-xs font-bold focus:outline-none focus:border-[#1a73e8]">
+                            <option value="">전체 조닝</option>
+                            {ZONE_USAGE_OPTIONS.map(u => <option key={u} value={u}>{ZONE_USAGE_LABELS[u]}</option>)}
+                          </select>
+                        </div>
+                        <span className="text-[10px] md:text-xs text-[#5f6368] font-bold">{displayFloors.length}개 층</span>
+                      </div>
+
+                      {displayFloors.length > 0 ? (
+                        <div className="bg-white border border-[#dadce0] rounded-xl overflow-hidden overflow-x-auto">
+                          <table className="w-full text-xs md:text-sm min-w-[400px]">
+                            <thead className="bg-[#f8f9fa]">
+                              <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+                                <th className="p-1.5 md:p-2.5 text-center whitespace-nowrap w-14">층</th>
+                                <th className="p-1.5 md:p-2.5 text-center whitespace-nowrap">면적</th>
+                                <th className="p-1.5 md:p-2.5 text-center whitespace-nowrap hidden md:table-cell">용도</th>
+                                <th className="p-1.5 md:p-2.5 text-left whitespace-nowrap">{getFilterColumnHeader()}</th>
+                                <th className="p-1.5 md:p-2.5 text-center whitespace-nowrap w-10">도면</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {displayFloors.map(floorNum => {
+                                const floorSpec = getFloorSpec(floorNum);
+                                const zones = getFloorZones(floorNum);
+                                const hasPlan = floorPlans.some(p => p.propertyId === selectedProperty!.id && p.buildingId === bldg.id && p.floorNumber === floorNum);
+                                return (
+                                  <tr key={floorNum} className="hover:bg-[#f8f9fa]">
+                                    <td className="p-1.5 md:p-2.5 text-center">
+                                      <span className="font-black text-[10px] md:text-xs text-[#202124]">{getFloorLabel(floorNum)}</span>
+                                    </td>
+                                    <td className="p-1.5 md:p-2.5 text-center font-bold text-[10px] md:text-xs text-[#1a73e8] whitespace-nowrap">
+                                      {floorSpec ? formatArea(floorSpec.area) : '-'}
+                                    </td>
+                                    <td className="p-1.5 md:p-2.5 text-center text-[9px] md:text-[10px] text-[#5f6368] hidden md:table-cell whitespace-nowrap">
+                                      {floorSpec?.usage || '-'}
+                                    </td>
+                                    <td className="p-1.5 md:p-2.5">{renderZoneInfo(zones, floorNum)}</td>
+                                    <td className="p-1.5 md:p-2.5 text-center">
+                                      <button onClick={() => { setViewerFloorNumber(floorNum); setFloorPlanViewerOpen(true); }}
+                                        className="p-1 hover:bg-[#e8f0fe] rounded transition-colors" title={hasPlan ? '도면 보기' : '도면 추가'}>
+                                        <FileImage size={12} className={hasPlan ? 'text-[#1a73e8]' : 'text-gray-400'}/>
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot className="bg-[#e8f0fe] border-t-2 border-[#1a73e8]">
+                              <tr className="font-bold text-[#1a73e8] text-[10px] md:text-sm">
+                                <td className="p-1.5 md:p-2.5 text-center">합계</td>
+                                <td className="p-1.5 md:p-2.5 text-center whitespace-nowrap">{formatArea(totalArea)}</td>
+                                <td className="p-1.5 md:p-2.5 hidden md:table-cell"></td>
+                                <td className="p-1.5 md:p-2.5" colSpan={2}></td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="py-8 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-[#f8f9fa]">
+                          <Layers size={32} className="mx-auto text-gray-300 mb-2"/>
+                          <p className="text-gray-400 font-bold text-sm">{zf ? `${ZONE_USAGE_LABELS[zf]} 구역이 없습니다` : '층 정보가 없습니다'}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ========== 조닝 탭 ========== */}
+                {activeTab === 'ZONING' && (() => {
+                  if (!selectedProperty || selectedProperty.buildings.length === 0) {
+                    return (
+                      <div className="py-12 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-[#f8f9fa]">
+                        <Grid3X3 size={40} className="mx-auto text-gray-300 mb-3"/>
+                        <p className="text-gray-400 font-bold">건물을 먼저 등록하세요</p>
+                      </div>
+                    );
+                  }
+                  const effectiveBldgId = zoningBldgId || selectedProperty.buildings[0]?.id || '';
+                  const zBldg = selectedProperty.buildings.find(b => b.id === effectiveBldgId) || selectedProperty.buildings[0];
+                  if (!zBldg) return null;
+
+                  const bldgFloorNums = [...new Set([
+                    ...zBldg.spec.floors.map(f => f.floorNumber),
+                    ...propertyUnits.filter(u => u.buildingId === zBldg.id).map(u => u.floor),
+                  ])].sort((a, b) => b - a);
+                  const effectiveFloor = zoningFloorNum ?? bldgFloorNums[0] ?? null;
+
+                  const plan = floorPlans.find(p => p.propertyId === selectedProperty!.id && p.buildingId === zBldg.id && p.floorNumber === effectiveFloor);
+                  const zones = plan ? floorZones.filter(z => z.floorPlanId === plan.id) : [];
+
+                  const getDetailSummary = (zone: FloorZone): string => {
+                    const d = zone.detail;
+                    if (!d) return '-';
+                    switch (d.usage) {
+                      case 'OFFICE': return [d.departmentName, d.headcount ? `${d.headcount}명` : ''].filter(Boolean).join(' / ') || '-';
+                      case 'MEETING_ROOM': return d.meetingCapacity ? `${d.meetingCapacity}인실` : '-';
+                      case 'STORAGE': case 'SAMPLE_ROOM': return [d.storageDepartment, d.managerPrimary ? `정: ${d.managerPrimary}` : ''].filter(Boolean).join(' / ') || '-';
+                      case 'PARKING': return [d.parkingSpaces ? `${d.parkingSpaces}대` : '', d.parkingAssignee].filter(Boolean).join(' / ') || '-';
+                      case 'BATHROOM': return [d.toiletCount ? `양변기${d.toiletCount}` : '', d.urinalCount ? `소변기${d.urinalCount}` : '', d.sinkCount ? `세면대${d.sinkCount}` : ''].filter(Boolean).join(' ') || '-';
+                      case 'BEDROOM': return `방${d.bedroomNumber || ''}`;
+                      default: return d.note || '-';
+                    }
+                  };
+
+                  const handleEditZone = (zone: FloorZone) => {
+                    setZoningEditZone(zone);
+                    setZoningDetailForm(zone.detail ? { ...zone.detail } : {});
+                  };
+
+                  const handleSaveZoneDetail = () => {
+                    if (!zoningEditZone) return;
+                    const detail = zoningDetailForm.usage ? zoningDetailForm as ZoneDetail : undefined;
+                    if (detail?.usage === 'BEDROOM' && !detail.bedroomNumber) {
+                      const existingNums = zones.filter(z => z.id !== zoningEditZone.id && z.detail?.usage === 'BEDROOM').map(z => z.detail?.bedroomNumber || 0);
+                      detail.bedroomNumber = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+                    }
+                    onSaveZone({ ...zoningEditZone, detail, excludeFromGFA: zoningEditZone.excludeFromGFA, updatedAt: new Date().toISOString() });
+                    setZoningEditZone(null);
+                    setZoningDetailForm({});
+                  };
+
+                  return (
+                    <div className="space-y-3">
+                      {/* 건물 + 층 선택 */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-black text-sm md:text-base text-[#3c4043] flex items-center gap-1 md:gap-2">
+                          <Grid3X3 size={16} className="md:w-[18px] md:h-[18px] text-[#1a73e8]"/> 조닝
+                        </h3>
+                        {selectedProperty.buildings.length > 1 && (
+                          <select value={effectiveBldgId} onChange={e => { setZoningBldgId(e.target.value); setZoningFloorNum(null); }}
+                            className="px-2 md:px-3 py-1 md:py-1.5 border border-[#dadce0] rounded-lg text-[10px] md:text-xs font-bold focus:outline-none focus:border-[#1a73e8]">
+                            {selectedProperty.buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                          </select>
+                        )}
+                        <select value={effectiveFloor ?? ''} onChange={e => setZoningFloorNum(e.target.value ? Number(e.target.value) : null)}
+                          className="px-2 md:px-3 py-1 md:py-1.5 border border-[#dadce0] rounded-lg text-[10px] md:text-xs font-bold focus:outline-none focus:border-[#1a73e8]">
+                          {bldgFloorNums.map(n => <option key={n} value={n}>{n > 0 ? `${n}F` : `B${Math.abs(n)}`}</option>)}
+                        </select>
+                        {effectiveFloor !== null && (
+                          <button onClick={() => { setViewerFloorNumber(effectiveFloor); setFloorPlanViewerOpen(true); }}
+                            className="flex items-center gap-1 px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-bold text-[#1a73e8] border border-[#1a73e8] rounded-lg hover:bg-[#e8f0fe] transition-colors">
+                            <FileImage size={12}/> 도면 보기
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 조닝 테이블 */}
+                      {(() => {
+                        const boundary = zones.find(z => z.type === 'FLOOR_BOUNDARY');
+                        const displayZones = zones.filter(z => z.type !== 'FLOOR_BOUNDARY');
+                        const boundaryArea = boundary?.estimatedArea || 0;
+                        const zonedArea = displayZones.filter(z => !z.excludeFromGFA).reduce((s, z) => s + (z.estimatedArea || 0), 0);
+                        const miscArea = Math.max(0, boundaryArea - zonedArea);
+                        const totalZoneCount = displayZones.length + (boundary && miscArea > 0 ? 1 : 0);
+                        const excludedArea = displayZones.filter(z => z.excludeFromGFA).reduce((s, z) => s + (z.estimatedArea || 0), 0);
+
+                        return displayZones.length > 0 || boundary ? (
+                          <div className="bg-white border border-[#dadce0] rounded-xl overflow-hidden overflow-x-auto">
+                            <table className="w-full text-xs md:text-sm min-w-[500px]">
+                              <thead className="bg-[#f8f9fa]">
+                                <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+                                  <th className="p-1.5 md:p-3 text-left whitespace-nowrap">구역명</th>
+                                  <th className="p-1.5 md:p-3 text-center whitespace-nowrap">면적</th>
+                                  <th className="p-1.5 md:p-3 text-center whitespace-nowrap">세부용도</th>
+                                  <th className="p-1.5 md:p-3 text-left whitespace-nowrap">상세정보</th>
+                                  <th className="p-1.5 md:p-3 text-center whitespace-nowrap hidden md:table-cell">산입</th>
+                                  <th className="p-1.5 md:p-3 text-center w-12">관리</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {displayZones.map(zone => (
+                                  <tr key={zone.id} className={`hover:bg-[#f8f9fa] cursor-pointer ${zone.excludeFromGFA ? 'opacity-60' : ''}`} onClick={() => handleEditZone(zone)}>
+                                    <td className="p-1.5 md:p-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: zone.color, opacity: zone.opacity }}/>
+                                        <span className="font-bold text-[10px] md:text-sm text-[#202124]">
+                                          {zone.detail?.usage === 'BEDROOM' ? `방${zone.detail.bedroomNumber || ''}` : zone.name}
+                                        </span>
+                                      </div>
+                                    </td>
+                                    <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#1a73e8] whitespace-nowrap">
+                                      {zone.estimatedArea ? `약 ${formatArea(zone.estimatedArea)}` : '-'}
+                                    </td>
+                                    <td className="p-1.5 md:p-3 text-center">
+                                      {zone.detail?.usage ? (
+                                        <span className="px-2 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[9px] md:text-[10px] font-bold rounded whitespace-nowrap">
+                                          {ZONE_USAGE_LABELS[zone.detail.usage]}
+                                        </span>
+                                      ) : <span className="text-gray-400 text-[9px]">미지정</span>}
+                                    </td>
+                                    <td className="p-1.5 md:p-3 text-[9px] md:text-xs text-[#5f6368] truncate max-w-[200px]">{getDetailSummary(zone)}</td>
+                                    <td className="p-1.5 md:p-3 text-center hidden md:table-cell">
+                                      {zone.excludeFromGFA ? (
+                                        <span className="text-[9px] text-red-400 font-bold">제외</span>
+                                      ) : (
+                                        <span className="text-[9px] text-green-500 font-bold">포함</span>
+                                      )}
+                                    </td>
+                                    <td className="p-1.5 md:p-3 text-center">
+                                      <button onClick={(e) => { e.stopPropagation(); handleEditZone(zone); }}
+                                        className="p-1 md:p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors">
+                                        <Edit2 size={10} className="md:w-3 md:h-3 text-[#1a73e8]"/>
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                                {/* 기타영역 (미조닝 면적) */}
+                                {boundary && miscArea > 0.1 && (
+                                  <tr className="bg-[#f8f9fa]">
+                                    <td className="p-1.5 md:p-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="w-3 h-3 rounded-sm flex-shrink-0 bg-gray-300"/>
+                                        <span className="font-bold text-[10px] md:text-sm text-[#5f6368]">기타영역</span>
+                                      </div>
+                                    </td>
+                                    <td className="p-1.5 md:p-3 text-center font-bold text-[10px] md:text-sm text-[#5f6368] whitespace-nowrap">
+                                      약 {formatArea(miscArea)}
+                                    </td>
+                                    <td className="p-1.5 md:p-3 text-center"><span className="text-gray-400 text-[9px]">미지정</span></td>
+                                    <td className="p-1.5 md:p-3 text-[9px] text-[#9aa0a6]">바닥영역 중 조닝 미설정 부분</td>
+                                    <td className="p-1.5 md:p-3 text-center hidden md:table-cell"><span className="text-[9px] text-green-500 font-bold">포함</span></td>
+                                    <td className="p-1.5 md:p-3"></td>
+                                  </tr>
+                                )}
+                              </tbody>
+                              <tfoot className="bg-[#e8f0fe] border-t-2 border-[#1a73e8]">
+                                <tr className="font-bold text-[#1a73e8] text-[10px] md:text-sm">
+                                  <td className="p-1.5 md:p-3">합계 {totalZoneCount}개</td>
+                                  <td className="p-1.5 md:p-3 text-center whitespace-nowrap">약 {formatArea(boundaryArea)}</td>
+                                  <td className="p-1.5 md:p-3" colSpan={2}>
+                                    {excludedArea > 0 && <span className="text-[9px] text-[#5f6368] font-normal">(산입제외 약 {formatArea(excludedArea)})</span>}
+                                  </td>
+                                  <td className="p-1.5 md:p-3 hidden md:table-cell"></td>
+                                  <td className="p-1.5 md:p-3"></td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        ) : (
+                          <div className="py-8 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-[#f8f9fa]">
+                            <Grid3X3 size={32} className="mx-auto text-gray-300 mb-2"/>
+                            <p className="text-gray-400 font-bold text-sm">{plan ? '등록된 구역이 없습니다' : '도면을 먼저 업로드하세요'}</p>
+                            <p className="text-gray-400 text-xs mt-1">도면 뷰어에서 구역을 설정하면 여기에 표시됩니다</p>
+                          </div>
+                        );
+                      })()}
+
+                      {/* 조닝 편집 모달 */}
+                      {zoningEditZone && (
+                        <Modal onClose={() => { setZoningEditZone(null); setZoningDetailForm({}); }}>
+                          <div className="p-4 md:p-6 space-y-4">
+                            <div className="flex justify-between items-center border-b border-gray-100 pb-4">
+                              <h3 className="text-lg md:text-xl font-black text-[#202124] flex items-center gap-2">
+                                <span className="w-4 h-4 rounded" style={{ backgroundColor: zoningEditZone.color, opacity: zoningEditZone.opacity }}/>
+                                {zoningEditZone.name} - 세부정보
+                              </h3>
+                              <button onClick={() => { setZoningEditZone(null); setZoningDetailForm({}); }} className="text-[#5f6368] hover:bg-gray-100 p-2 rounded-full"><X size={20}/></button>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3 md:gap-4">
+                              <div>
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">면적</label>
+                                <p className="font-bold text-sm text-[#1a73e8]">{zoningEditZone.estimatedArea ? `약 ${formatArea(zoningEditZone.estimatedArea)}` : '-'}</p>
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">연결 호실</label>
+                                <p className="font-bold text-sm text-[#202124]">
+                                  {zoningEditZone.linkedUnitId ? units.find(u => u.id === zoningEditZone.linkedUnitId)?.unitNumber + '호' : '-'}
+                                </p>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-[#5f6368] mb-1 block uppercase tracking-widest">세부용도</label>
+                              <select value={zoningDetailForm.usage || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, usage: e.target.value as ZoneUsage })}
+                                className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#e8f0fe] focus:border-[#1a73e8] outline-none">
+                                <option value="">선택하세요</option>
+                                {ZONE_USAGE_OPTIONS.map(u => <option key={u} value={u}>{ZONE_USAGE_LABELS[u]}</option>)}
+                              </select>
+                            </div>
+                            {/* 사무실 */}
+                            {zoningDetailForm.usage === 'OFFICE' && (
+                              <div className="grid grid-cols-2 gap-3 bg-[#f8f9fa] p-3 rounded-lg">
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">부서명</label>
+                                  <input type="text" value={zoningDetailForm.departmentName || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, departmentName: e.target.value })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="예: 총무팀"/>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">근무인원</label>
+                                  <input type="number" value={zoningDetailForm.headcount || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, headcount: Number(e.target.value) || undefined })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="0"/>
+                                </div>
+                              </div>
+                            )}
+                            {/* 회의실 */}
+                            {zoningDetailForm.usage === 'MEETING_ROOM' && (
+                              <div className="bg-[#f8f9fa] p-3 rounded-lg">
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">수용인원 (몇인실)</label>
+                                <input type="number" value={zoningDetailForm.meetingCapacity || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, meetingCapacity: Number(e.target.value) || undefined })}
+                                  className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="예: 10"/>
+                              </div>
+                            )}
+                            {/* 창고/샘플실 */}
+                            {(zoningDetailForm.usage === 'STORAGE' || zoningDetailForm.usage === 'SAMPLE_ROOM') && (
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-[#f8f9fa] p-3 rounded-lg">
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">부서명</label>
+                                  <input type="text" value={zoningDetailForm.storageDepartment || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, storageDepartment: e.target.value })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">정관리자</label>
+                                  <input type="text" value={zoningDetailForm.managerPrimary || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, managerPrimary: e.target.value })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm"/>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">부관리자</label>
+                                  <input type="text" value={zoningDetailForm.managerSecondary || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, managerSecondary: e.target.value })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm"/>
+                                </div>
+                              </div>
+                            )}
+                            {/* 주차장 */}
+                            {zoningDetailForm.usage === 'PARKING' && (
+                              <div className="space-y-3 bg-[#f8f9fa] p-3 rounded-lg">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">주차대수</label>
+                                    <input type="number" value={zoningDetailForm.parkingSpaces || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, parkingSpaces: Number(e.target.value) || undefined })}
+                                      className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="0"/>
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">배정대상</label>
+                                    <input type="text" value={zoningDetailForm.parkingAssignee || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, parkingAssignee: e.target.value })}
+                                      className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="예: 대표이사"/>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">지정주차 차량번호</label>
+                                  <div className="space-y-1">
+                                    {(zoningDetailForm.assignedVehicles || []).map((v, i) => (
+                                      <div key={i} className="flex items-center gap-1">
+                                        <input type="text" value={v} onChange={e => {
+                                          const arr = [...(zoningDetailForm.assignedVehicles || [])];
+                                          arr[i] = e.target.value;
+                                          setZoningDetailForm({ ...zoningDetailForm, assignedVehicles: arr });
+                                        }} className="flex-1 border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="예: 12가3456"/>
+                                        <button onClick={() => {
+                                          const arr = (zoningDetailForm.assignedVehicles || []).filter((_, idx) => idx !== i);
+                                          setZoningDetailForm({ ...zoningDetailForm, assignedVehicles: arr });
+                                        }} className="p-1 text-red-400 hover:text-red-600"><X size={14}/></button>
+                                      </div>
+                                    ))}
+                                    <button onClick={() => setZoningDetailForm({ ...zoningDetailForm, assignedVehicles: [...(zoningDetailForm.assignedVehicles || []), ''] })}
+                                      className="text-[10px] font-bold text-[#1a73e8] flex items-center gap-0.5 hover:underline"><Plus size={12}/>차량 추가</button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {/* 화장실 */}
+                            {zoningDetailForm.usage === 'BATHROOM' && (
+                              <div className="grid grid-cols-3 gap-3 bg-[#f8f9fa] p-3 rounded-lg">
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">양변기</label>
+                                  <input type="number" value={zoningDetailForm.toiletCount || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, toiletCount: Number(e.target.value) || undefined })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="0"/>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">소변기</label>
+                                  <input type="number" value={zoningDetailForm.urinalCount || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, urinalCount: Number(e.target.value) || undefined })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="0"/>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">세면대</label>
+                                  <input type="number" value={zoningDetailForm.sinkCount || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, sinkCount: Number(e.target.value) || undefined })}
+                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="0"/>
+                                </div>
+                              </div>
+                            )}
+                            {/* 방 자동연번 */}
+                            {zoningDetailForm.usage === 'BEDROOM' && (
+                              <div className="bg-[#f8f9fa] p-3 rounded-lg">
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">방 번호 (자동)</label>
+                                <p className="text-sm font-bold text-[#202124]">
+                                  방{zoningDetailForm.bedroomNumber || (() => {
+                                    const existingNums = zones.filter(z => z.id !== zoningEditZone.id && z.detail?.usage === 'BEDROOM').map(z => z.detail?.bedroomNumber || 0);
+                                    return existingNums.length > 0 ? Math.max(...existingNums) + 1 : 1;
+                                  })()}
+                                </p>
+                              </div>
+                            )}
+                            {/* 연면적 산입 제외 */}
+                            <label className="flex items-center gap-2 cursor-pointer py-1">
+                              <input type="checkbox" checked={zoningEditZone.excludeFromGFA || false}
+                                onChange={e => setZoningEditZone({ ...zoningEditZone, excludeFromGFA: e.target.checked })}
+                                className="w-4 h-4 rounded border-[#dadce0] text-[#1a73e8] focus:ring-[#1a73e8]"/>
+                              <span className="text-xs font-bold text-[#5f6368]">연면적 산입 제외</span>
+                              <span className="text-[9px] text-[#9aa0a6]">(주차장, 필로티 등 건축물대장 연면적에 미포함)</span>
+                            </label>
+                            {/* 메모 */}
+                            {zoningDetailForm.usage && (
+                              <div>
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">메모</label>
+                                <textarea value={zoningDetailForm.note || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, note: e.target.value })}
+                                  className="w-full border border-[#dadce0] p-2 rounded-lg text-sm resize-none" rows={2} placeholder="기타 참고사항"/>
+                              </div>
+                            )}
+                            <div className="flex justify-end gap-2 pt-4 border-t border-gray-100">
+                              <button onClick={() => { setZoningEditZone(null); setZoningDetailForm({}); }}
+                                className="px-4 py-2 text-xs font-bold text-[#5f6368] hover:bg-[#f8f9fa] rounded-lg">취소</button>
+                              <button onClick={handleSaveZoneDetail}
+                                className="px-4 py-2 text-xs font-bold bg-[#1a73e8] text-white rounded-lg hover:bg-[#1557b0]">저장</button>
+                            </div>
+                          </div>
+                        </Modal>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {activeTab === 'UNIT' && (
                   <div className="space-y-3 md:space-y-6">
                     <div className="flex justify-between items-center gap-2">
@@ -2861,6 +3468,37 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
               </div>
           </Modal>
       )}
+
+      {/* 도면 뷰어 (층/조닝 탭) */}
+      {floorPlanViewerOpen && viewerFloorNumber !== null && selectedProperty && (() => {
+        const bldgId = activeTab === 'ZONING' ? (zoningBldgId || selectedProperty.buildings[0]?.id) : (floorTabBldgId || selectedProperty.buildings[0]?.id);
+        const bldg = selectedProperty.buildings.find(b => b.id === bldgId);
+        if (!bldg) return null;
+        const floorSpec = bldg.spec.floors.find(f => f.floorNumber === viewerFloorNumber);
+        const floorArea = floorSpec?.area || 0;
+        const bldgUnits = units.filter(u => u.buildingId === bldg.id);
+        return (
+          <FloorPlanViewer
+            isOpen={floorPlanViewerOpen}
+            onClose={() => { setFloorPlanViewerOpen(false); setViewerFloorNumber(null); }}
+            propertyId={selectedProperty.id}
+            propertyName={selectedProperty.name}
+            building={bldg}
+            floorNumber={viewerFloorNumber}
+            floorArea={floorArea}
+            units={bldgUnits}
+            leaseContracts={leaseContracts}
+            stakeholders={stakeholders}
+            floorPlans={floorPlans}
+            floorZones={floorZones}
+            onSaveFloorPlan={onSaveFloorPlan}
+            onDeleteFloorPlan={onDeleteFloorPlan}
+            onSaveZone={onSaveZone}
+            onDeleteZone={onDeleteZone}
+            allFloorPlans={floorPlans}
+          />
+        );
+      })()}
     </div>
   );
 };

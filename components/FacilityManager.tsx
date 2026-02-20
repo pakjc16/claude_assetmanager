@@ -605,8 +605,8 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
     try {
       const data = await fetchElevatorFullData(no, apiKey, referenceDate);
 
-      // 기본정보 자동입력
-      setElevatorInfo(prev => ({ ...prev, ...data.elevatorInfo }));
+      // 기본정보 자동입력 + 조회 기준일자 기록
+      setElevatorInfo(prev => ({ ...prev, ...data.elevatorInfo, lastFetchedAt: new Date().toISOString() } as any));
 
       // 설비명칭 자동입력 (비어있을 때만)
       if (!facilityForm.name && data.elevatorInfo.buldNm) {
@@ -1107,6 +1107,11 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
                            {!elevatorApiError && elevatorInfo.buldNm && !isElevatorLoading && (
                               <span className="text-xs text-[#34a853] font-bold flex items-center gap-1">
                                  <CheckCircle size={12}/> 조회 완료
+                                 {(elevatorInfo as any).lastFetchedAt && (
+                                   <span className="text-[#5f6368] font-normal ml-1">
+                                     ({new Date((elevatorInfo as any).lastFetchedAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 기준)
+                                   </span>
+                                 )}
                               </span>
                            )}
                         </div>

@@ -115,18 +115,34 @@ function App() {
   const [valuations, setValuations] = useState<ValuationHistory[]>(INIT_VALUATIONS);
   const [facilities, setFacilities] = useState<Facility[]>(INIT_FACILITIES);
   const [facilityLogs, setFacilityLogs] = useState<FacilityLog[]>(INIT_FACILITY_LOGS);
-  const [elevatorInsurances, setElevatorInsurances] = useState<ElevatorInsurance[]>([]);
-  const [elevatorSafetyManagers, setElevatorSafetyManagers] = useState<ElevatorSafetyManager[]>([]);
-  const [elevatorInspections, setElevatorInspections] = useState<ElevatorInspection[]>([]);
-  const [elevatorMalfunctions, setElevatorMalfunctions] = useState<ElevatorMalfunction[]>([]);
-  const [elevatorAccidents, setElevatorAccidents] = useState<ElevatorAccident[]>([]);
-  const [elevatorPartDefects, setElevatorPartDefects] = useState<ElevatorPartDefect[]>([]);
-  const [elevatorMaintenanceContracts, setElevatorMaintenanceContracts] = useState<ElevatorMaintenanceContract[]>([]);
+  // localStorage 동기화 헬퍼
+  const loadLocal = <T,>(key: string, fallback: T): T => {
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch { return fallback; }
+  };
+
+  const [elevatorInsurances, setElevatorInsurances] = useState<ElevatorInsurance[]>(() => loadLocal('rf_elvInsurances', []));
+  const [elevatorSafetyManagers, setElevatorSafetyManagers] = useState<ElevatorSafetyManager[]>(() => loadLocal('rf_elvSafetyMgrs', []));
+  const [elevatorInspections, setElevatorInspections] = useState<ElevatorInspection[]>(() => loadLocal('rf_elvInspections', []));
+  const [elevatorMalfunctions, setElevatorMalfunctions] = useState<ElevatorMalfunction[]>(() => loadLocal('rf_elvMalfunctions', []));
+  const [elevatorAccidents, setElevatorAccidents] = useState<ElevatorAccident[]>(() => loadLocal('rf_elvAccidents', []));
+  const [elevatorPartDefects, setElevatorPartDefects] = useState<ElevatorPartDefect[]>(() => loadLocal('rf_elvPartDefects', []));
+  const [elevatorMaintenanceContracts, setElevatorMaintenanceContracts] = useState<ElevatorMaintenanceContract[]>(() => loadLocal('rf_elvMaintContracts', []));
   const [comparables, setComparables] = useState<MarketComparable[]>(INIT_COMPARABLES);
 
   // 도면 및 조닝 상태
-  const [floorPlans, setFloorPlans] = useState<FloorPlan[]>([]);
-  const [floorZones, setFloorZones] = useState<FloorZone[]>([]);
+  const [floorPlans, setFloorPlans] = useState<FloorPlan[]>(() => loadLocal('rf_floorPlans', []));
+  const [floorZones, setFloorZones] = useState<FloorZone[]>(() => loadLocal('rf_floorZones', []));
+
+  // 승강기 + 도면/조닝 데이터 localStorage 자동 저장
+  useEffect(() => { try { localStorage.setItem('rf_elvInsurances', JSON.stringify(elevatorInsurances)); } catch {} }, [elevatorInsurances]);
+  useEffect(() => { try { localStorage.setItem('rf_elvSafetyMgrs', JSON.stringify(elevatorSafetyManagers)); } catch {} }, [elevatorSafetyManagers]);
+  useEffect(() => { try { localStorage.setItem('rf_elvInspections', JSON.stringify(elevatorInspections)); } catch {} }, [elevatorInspections]);
+  useEffect(() => { try { localStorage.setItem('rf_elvMalfunctions', JSON.stringify(elevatorMalfunctions)); } catch {} }, [elevatorMalfunctions]);
+  useEffect(() => { try { localStorage.setItem('rf_elvAccidents', JSON.stringify(elevatorAccidents)); } catch {} }, [elevatorAccidents]);
+  useEffect(() => { try { localStorage.setItem('rf_elvPartDefects', JSON.stringify(elevatorPartDefects)); } catch {} }, [elevatorPartDefects]);
+  useEffect(() => { try { localStorage.setItem('rf_elvMaintContracts', JSON.stringify(elevatorMaintenanceContracts)); } catch {} }, [elevatorMaintenanceContracts]);
+  useEffect(() => { try { localStorage.setItem('rf_floorPlans', JSON.stringify(floorPlans)); } catch {} }, [floorPlans]);
+  useEffect(() => { try { localStorage.setItem('rf_floorZones', JSON.stringify(floorZones)); } catch {} }, [floorZones]);
 
   // Formatting Logic
   // 금액 포맷: 원/만원은 소수점 없음, 억원은 소수점 2자리까지
@@ -352,6 +368,12 @@ function App() {
                     onAddUnit={u => setUnits(prev => [...prev, u])} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))}
                     formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatMoney} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'}
                     appSettings={appSettings}
+                    leaseContracts={leaseContracts} stakeholders={stakeholders}
+                    floorPlans={floorPlans} floorZones={floorZones}
+                    onSaveFloorPlan={plan => setFloorPlans(prev => [...prev.filter(p => p.id !== plan.id), plan])}
+                    onDeleteFloorPlan={id => setFloorPlans(prev => prev.filter(p => p.id !== id))}
+                    onSaveZone={zone => setFloorZones(prev => [...prev.filter(z => z.id !== zone.id), zone])}
+                    onDeleteZone={id => setFloorZones(prev => prev.filter(z => z.id !== id))}
                   />
                )}
                {activeTab === 'FACILITY' && (

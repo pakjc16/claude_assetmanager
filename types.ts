@@ -529,6 +529,34 @@ export interface ZonePoint {
 // 조닝 영역 타입
 export type ZoneType = 'FLOOR_BOUNDARY' | 'PLANNED' | 'LINKED';
 
+// 조닝 세부용도
+export type ZoneUsage = 'STORE' | 'COMMON' | 'OFFICE' | 'MEETING_ROOM' | 'STORAGE' | 'SAMPLE_ROOM' | 'CANTEEN' | 'RESTAURANT' | 'PARKING' | 'AUDITORIUM' | 'LIVING_ROOM' | 'MASTER_BEDROOM' | 'BEDROOM' | 'BATHROOM' | 'CORRIDOR' | 'VOID' | 'LANDSCAPE';
+
+// 조닝 세부정보 (용도별 상세)
+export interface ZoneDetail {
+  usage: ZoneUsage;
+  note?: string;
+  // 사무실
+  headcount?: number;
+  departmentName?: string;
+  // 회의실
+  meetingCapacity?: number;
+  // 창고/샘플실
+  storageDepartment?: string;
+  managerPrimary?: string;
+  managerSecondary?: string;
+  // 주차장
+  parkingSpaces?: number;
+  assignedVehicles?: string[];
+  parkingAssignee?: string;
+  // 화장실
+  toiletCount?: number;
+  urinalCount?: number;
+  sinkCount?: number;
+  // 방 자동 연번
+  bedroomNumber?: number;
+}
+
 // 조닝 영역 정보
 export interface FloorZone {
   id: string;
@@ -541,6 +569,10 @@ export interface FloorZone {
   estimatedArea?: number; // 추정 면적 (㎡) - 바닥 기준 면적으로 계산
   linkedUnitId?: string;  // 연결된 호실 ID (실제조닝인 경우)
   parentZoneId?: string;  // 상위 영역 ID (분할된 경우)
+  detail?: ZoneDetail;    // 세부용도 정보
+  excludeFromGFA?: boolean; // 연면적 산입 제외
+  labelOffsetX?: number;  // 레이블 X 오프셋 (정규화 좌표, 중심 대비)
+  labelOffsetY?: number;  // 레이블 Y 오프셋 (정규화 좌표, 중심 대비)
   createdAt: string;
   updatedAt: string;
 }

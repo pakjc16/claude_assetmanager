@@ -4,7 +4,7 @@ import Konva from 'konva';
 import {
   Upload, ZoomIn, ZoomOut, RotateCcw, Move, Pencil, MousePointer, Scissors, Trash2, Link, Unlink,
   X, Printer, Layers, Eye, EyeOff, FileImage, Square, Triangle, RotateCw, Combine, Edit3, Wand2, Loader2, Settings2,
-  Undo2, Redo2, GripVertical
+  Undo2, Redo2, GripVertical, Copy
 } from 'lucide-react';
 
 // OpenCV.js 타입 선언
@@ -564,16 +564,47 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     return [ring];
   };
 
-  // polygon-clipping 결과 → ZonePoint[][] (다중 다각형)
+  // 홀이 있는 폴리곤 → 브릿지 컷으로 단일 폴리곤 변환
+  const bridgeCutPoly = (poly: Ring[]): ZonePoint[] => {
+    const removeDup = (pts: ZonePoint[]) => {
+      if (pts.length > 1 && pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y) pts.pop();
+      return pts;
+    };
+    if (poly.length <= 1) return removeDup(poly[0].map(([x, y]) => ({ x, y })));
+    let result = removeDup(poly[0].map(([x, y]) => ({ x, y })));
+    for (let h = 1; h < poly.length; h++) {
+      const hole = removeDup(poly[h].map(([x, y]) => ({ x, y })));
+      if (hole.length < 3) continue;
+      let minDist = Infinity, bestI = 0, bestJ = 0;
+      for (let i = 0; i < result.length; i++) {
+        for (let j = 0; j < hole.length; j++) {
+          const dx = result[i].x - hole[j].x;
+          const dy = result[i].y - hole[j].y;
+          const d = dx * dx + dy * dy;
+          if (d < minDist) { minDist = d; bestI = i; bestJ = j; }
+        }
+      }
+      const holeReordered = [...hole.slice(bestJ), ...hole.slice(0, bestJ)];
+      result = [
+        ...result.slice(0, bestI + 1),
+        ...holeReordered,
+        { ...holeReordered[0] },
+        { ...result[bestI] },
+        ...result.slice(bestI + 1)
+      ];
+    }
+    return result;
+  };
+
+  // polygon-clipping 결과 → ZonePoint[][] (다중 다각형, 홀 포함)
   const fromClipResult = (result: ReturnType<typeof polygonClipping.union>): ZonePoint[][] => {
     return result.map(poly => {
-      const ring = poly[0]; // 외부 링만 사용
-      // 마지막 점 == 첫 점이면 제거
-      const pts = ring.map(([x, y]) => ({ x, y }));
-      if (pts.length > 1 && pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y) {
-        pts.pop();
+      if (poly.length === 1) {
+        const pts = poly[0].map(([x, y]) => ({ x, y }));
+        if (pts.length > 1 && pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y) pts.pop();
+        return pts;
       }
-      return pts;
+      return bridgeCutPoly(poly);
     }).filter(pts => pts.length >= 3);
   };
 
@@ -707,18 +738,18 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
 
       for (let i = 0; i < zonesToFragment.length; i++) {
         // 각 zone에서 나머지 모두를 빼서 고유 영역 추출
-        let remaining = polys[i];
+        let remainingSet: Poly[] = [polys[i]];
         for (let j = 0; j < zonesToFragment.length; j++) {
           if (i === j) continue;
-          const diffResult = polygonClipping.difference(remaining, polys[j]);
-          if (diffResult.length > 0) {
-            remaining = diffResult[0]; // 첫 번째 결과 폴리곤
-          } else {
-            remaining = []; // 완전히 포함됨
-            break;
+          const nextSet: Poly[] = [];
+          for (const rem of remainingSet) {
+            const diffResult = polygonClipping.difference([rem], polys[j]);
+            diffResult.forEach(p => nextSet.push(p));
           }
+          remainingSet = nextSet;
+          if (remainingSet.length === 0) break;
         }
-        const remainPts = remaining.length > 0 ? fromClipResult([remaining]) : [];
+        const remainPts = fromClipResult(remainingSet);
         remainPts.forEach(pts => {
           newZones.push(createZoneFromPoints(
             pts, `${zonesToFragment[i].name} (나머지)`,
@@ -755,6 +786,39 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
       console.error('조각내기 오류:', e);
       alert('조각내기 연산 중 오류가 발생했습니다.');
     }
+  };
+
+  // 복제 (단일/다중)
+  const handleDuplicateZones = (zoneIds: string[]) => {
+    const zonesToDuplicate = currentZones.filter(z => zoneIds.includes(z.id));
+    zonesToDuplicate.forEach(zone => {
+      const newZone: FloorZone = {
+        ...zone,
+        id: `zone-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        name: `${zone.name} (복사)`,
+        type: zone.type === 'FLOOR_BOUNDARY' ? 'PLANNED' : zone.type,
+        linkedUnitId: undefined,
+        labelOffsetX: (zone.labelOffsetX || 0) + 0.02,
+        labelOffsetY: (zone.labelOffsetY || 0) + 0.02,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      onSaveZone(newZone);
+    });
+    setSelectedZoneIds([]);
+    setSelectedZoneId(null);
+  };
+
+  // 다중 삭제
+  const handleBulkDelete = (zoneIds: string[]) => {
+    const hasBoundary = currentZones.some(z => zoneIds.includes(z.id) && z.type === 'FLOOR_BOUNDARY');
+    const msg = hasBoundary
+      ? `${zoneIds.length}개 영역을 삭제합니다. 바닥 영역이 포함되어 있습니다. 계속하시겠습니까?`
+      : `${zoneIds.length}개 영역을 삭제하시겠습니까?`;
+    if (!confirm(msg)) return;
+    zoneIds.forEach(id => onDeleteZone(id));
+    setSelectedZoneIds([]);
+    setSelectedZoneId(null);
   };
 
   // ========================================
@@ -906,8 +970,21 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
 
     const contoursToApply = index !== undefined ? [detectedContours[index]] : detectedContours;
 
+    // 첫 번째 구역을 바닥영역으로 먼저 저장 (이후 구역의 추정면적 계산 기준)
+    // 바닥영역이 아직 없으면 첫 구역이 바닥영역이 됨
+    let boundaryForCalc = floorBoundary;
     contoursToApply.forEach((points, i) => {
-      const isFirst = i === 0 && !floorBoundary;
+      const isFirst = i === 0 && !boundaryForCalc;
+      const normalizedArea = calculatePolygonArea(points);
+      let estArea: number;
+      if (isFirst) {
+        estArea = floorArea;
+      } else if (boundaryForCalc) {
+        const boundaryNormArea = calculatePolygonArea(boundaryForCalc.points);
+        estArea = boundaryNormArea > 0 ? (normalizedArea / boundaryNormArea) * floorArea : 0;
+      } else {
+        estArea = 0;
+      }
       const newZone: FloorZone = {
         id: `zone-${Date.now()}-${i}`,
         floorPlanId: currentPlan.id,
@@ -916,11 +993,12 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
         color: isFirst ? '#9e9e9e' : ZONE_COLORS[i % ZONE_COLORS.length],
         opacity: isFirst ? 0.2 : 0.4,
         points,
-        estimatedArea: isFirst ? floorArea : 0,
+        estimatedArea: Math.round(estArea * 10) / 10,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       onSaveZone(newZone);
+      if (isFirst) boundaryForCalc = newZone;
     });
 
     setDetectedContours([]);
@@ -1064,11 +1142,29 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     const stage = stageRef.current;
     if (!stage) return;
     const dataUrl = stage.toDataURL({ pixelRatio: 2 });
+    const title = `${propertyName} · ${building.name} · ${getFloorLabel(floorNumber)}`;
+    const dateStr = new Date().toLocaleDateString('ko-KR');
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>${propertyName} ${building.name} ${getFloorLabel(floorNumber)} 도면</title>
-      <style>@page { size: A4 landscape; margin: 10mm; } body { margin: 0; display: flex; justify-content: center; align-items: center; } img { max-width: 100%; max-height: 100vh; }</style>
-      </head><body><img src="${dataUrl}" /><script>window.onload = () => { window.print(); window.close(); }</script></body></html>`);
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>${title} 도면</title>
+      <style>
+        @page { size: A4 landscape; margin: 10mm; }
+        body { margin: 0; font-family: 'Noto Sans KR', sans-serif; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px; border-bottom: 2px solid #1a73e8; margin-bottom: 8px; }
+        .header h1 { font-size: 16px; font-weight: 900; color: #202124; margin: 0; }
+        .header .sub { font-size: 11px; color: #5f6368; }
+        .img-wrap { display: flex; justify-content: center; }
+        .img-wrap img { max-width: 100%; max-height: calc(100vh - 60px); }
+      </style>
+      </head><body>
+        <div class="header">
+          <h1>${title}</h1>
+          <span class="sub">${dateStr}</span>
+        </div>
+        <div class="img-wrap"><img src="${dataUrl}" /></div>
+      </body></html>`);
+    printWindow.document.close();
+    setTimeout(() => { printWindow.focus(); printWindow.print(); }, 300);
   };
 
   // 조닝 렌더링
@@ -1086,6 +1182,14 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     // 중심점
     const centerX = zone.points.reduce((sum, p) => sum + p.x, 0) / zone.points.length;
     const centerY = zone.points.reduce((sum, p) => sum + p.y, 0) / zone.points.length;
+    // 레이블 기본 위치: 상단 (최소 Y)
+    const minY = Math.min(...zone.points.map(p => p.y));
+    const defaultLabelX = centerX;
+    const defaultLabelY = minY;
+    // 오프셋 적용
+    const labelNormX = defaultLabelX + (zone.labelOffsetX || 0);
+    const labelNormY = defaultLabelY + (zone.labelOffsetY || 0);
+    const labelPos = toCanvasCoords({ x: labelNormX, y: labelNormY });
     const center = toCanvasCoords({ x: centerX, y: centerY });
 
     // 레이블 크기: 화면상 고정 크기 유지 (줌과 무관)
@@ -1120,11 +1224,26 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
         />
 
         {showLabels && (
-          <Group x={center.x} y={center.y}>
-            {/* 레이블 배경 */}
+          <Group x={labelPos.x} y={labelPos.y - labelHeight / 2 - 4}
+            draggable
+            onDragEnd={(e) => {
+              const stage = e.target.getStage();
+              if (!stage || !image) return;
+              const newCanvasX = e.target.x();
+              const newCanvasY = e.target.y() + labelHeight / 2 + 4;
+              const newNormX = (newCanvasX - panX) / (image.width * zoom);
+              const newNormY = (newCanvasY - panY) / (image.height * zoom);
+              const offsetX = newNormX - defaultLabelX;
+              const offsetY = newNormY - defaultLabelY;
+              onSaveZone({ ...zone, labelOffsetX: offsetX, labelOffsetY: offsetY, updatedAt: new Date().toISOString() });
+              e.target.position({ x: newCanvasX, y: newCanvasY - labelHeight / 2 - 4 });
+            }}
+            onMouseEnter={(e) => { const c = e.target.getStage()?.container(); if (c) c.style.cursor = 'grab'; }}
+            onMouseLeave={(e) => { const c = e.target.getStage()?.container(); if (c) c.style.cursor = 'default'; }}
+          >
             <Rect
               x={-labelWidth / 2}
-              y={-labelHeight / 2}
+              y={0}
               width={labelWidth}
               height={labelHeight}
               fill="white"
@@ -1137,10 +1256,9 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
               shadowOpacity={0.15}
               shadowOffsetY={2}
             />
-            {/* 구역 이름 */}
             <Text
               x={-labelWidth / 2}
-              y={-labelHeight / 2 + 6}
+              y={6}
               width={labelWidth}
               text={zone.name}
               fontSize={fontSize}
@@ -1149,11 +1267,10 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
               align="center"
               verticalAlign="middle"
             />
-            {/* 연결된 호실: 임차인/상태 */}
             {zone.type === 'LINKED' && linkedUnit && (
               <Text
                 x={-labelWidth / 2}
-                y={-labelHeight / 2 + 6 + fontSize + 2}
+                y={6 + fontSize + 2}
                 width={labelWidth}
                 text={tenant ? tenant.name : (linkedUnit.status === 'VACANT' ? '공실' : linkedUnit.usage)}
                 fontSize={subFontSize}
@@ -1162,11 +1279,10 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                 verticalAlign="middle"
               />
             )}
-            {/* 면적 */}
             {areaText && (
               <Text
                 x={-labelWidth / 2}
-                y={labelHeight / 2 - areaFontSize - 6}
+                y={labelHeight - areaFontSize - 6}
                 width={labelWidth}
                 text={areaText}
                 fontSize={areaFontSize}
@@ -1634,7 +1750,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                           {/* 드래그 핸들 */}
                           <GripVertical size={12} className="text-[#9aa0a6] cursor-grab flex-shrink-0" />
                           {/* 다중 선택 체크박스 */}
-                          {currentZones.length >= 2 && zone.type !== 'FLOOR_BOUNDARY' && (
+                          {currentZones.length >= 2 && (
                             <input
                               type="checkbox"
                               checked={isMultiSelected}
@@ -1722,6 +1838,14 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                           조각
                         </button>
                       </div>
+                      <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                        <button onClick={() => handleDuplicateZones(selectedZoneIds)} className="px-2 py-1.5 bg-[#1a73e8] text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-[#1557b0]">
+                          <Copy size={12} /> 복제
+                        </button>
+                        <button onClick={() => handleBulkDelete(selectedZoneIds)} className="px-2 py-1.5 border border-[#ea4335] text-[#ea4335] text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-red-50">
+                          <Trash2 size={12} /> 삭제
+                        </button>
+                      </div>
                     </div>
                   )}
                   {/* 단일 선택 액션 */}
@@ -1768,7 +1892,11 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                           <Layers size={12} /> 바닥 영역 지정
                         </button>
                       )}
-                      {/* 모든 조닝 삭제 가능 (바닥 영역 포함) */}
+                      {/* 복제 */}
+                      <button onClick={() => handleDuplicateZones([selectedZone.id])} className="px-2.5 py-1.5 bg-[#1a73e8] text-white text-[10px] font-bold rounded-lg flex items-center gap-1">
+                        <Copy size={12} /> 복제
+                      </button>
+                      {/* 삭제 */}
                       <button onClick={() => {
                         if (selectedZone.type === 'FLOOR_BOUNDARY') {
                           if (confirm('바닥 영역을 삭제하면 추정 면적 계산이 불가능해집니다. 계속하시겠습니까?')) {
