@@ -333,33 +333,54 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 
 ## 개발 이력
 
-### 2026-02-20: 평면도 뷰어 실행취소/다시실행 및 영역 편집 기능 강화
+### 2026-02-20: 평면도 뷰어 4가지 대폭 개선 (툴바/조각/레이어/실행취소)
 
-**실행취소/다시실행 시스템 (FloorPlanViewer.tsx)**:
-- `zoneHistory` / `historyIndex` 상태로 최대 50단계 히스토리 관리
-- `isUndoRedoRef` ref로 undo/redo 중 중복 히스토리 저장 방지
-- `saveZoneWithHistory()` / `deleteZoneWithHistory()` 래퍼 함수로 자동 히스토리 저장
-- 키보드 단축키: **Ctrl+Z** (실행취소), **Ctrl+Y** 또는 **Ctrl+Shift+Z** (다시실행)
-- 툴바에 Undo2/Redo2 아이콘 버튼 추가
-- 도면 변경 시 히스토리 자동 초기화
+**도구바 레이아웃 개편 (FloorPlanViewer.tsx)**:
+- 기존 왼쪽 세로 사이드바(`w-14`) → **상단 가로 툴바**로 전면 변경
+- FHD 100% 기준 모든 도구가 한 줄에 표시 (아이콘 16px, `p-1.5`)
+- 도구 그룹: 선택/이동 | 그리기(다각형/사각형/삼각형/점편집) | 실행취소/다시실행 | 줌(축소/퍼센트/확대/맞춤) | 표시토글 | 자동감지
+- 그룹 간 세로 구분선(`w-px h-5 bg-[#dadce0]`)으로 시각적 분리
+- 줌 퍼센트를 툴바 중앙에 텍스트로 표시 (기존 캔버스 좌하단 오버레이 제거)
 
-**히스토리 저장 대상 작업**:
-- 영역 그리기 완료 (`finishDrawing`)
-- 점 편집: 이동/추가/삭제 (`handlePointDragEnd`, `handleLineClick`, `handlePointDelete`)
-- 영역 이동/회전 (`handleZoneDragEnd`, `handleRotateZone`)
-- 영역 병합: 합집합/교집합/빼기 (`handleMergeZones`)
-- 자동 감지 적용 (`applyDetectedContours`)
-- 호실 연결/해제 (`handleLinkUnit`, `handleUnlinkUnit`)
-- 이름 수정, 바닥 영역 지정, 영역 삭제
+**다각형 불리언 연산 polygon-clipping 라이브러리 교체**:
+- 기존 수제 알고리즘(Sutherland-Hodgman, 각도정렬) → **polygon-clipping 0.15.7** NPM 패키지
+- `isPointInPolygon`, `getLineIntersection`, `isLeftOfLine`, `computePolygonIntersection`, `computePolygonSubtract`, `computePolygonUnion` 함수 모두 삭제
+- `toClipPoly()`: ZonePoint[] → polygon-clipping 포맷 변환 (닫힌 링 보장)
+- `fromClipResult()`: polygon-clipping 결과 → ZonePoint[][] 변환 (MultiPolygon 지원)
+- `createZoneFromPoints()`: 결과 FloorZone 생성 헬퍼
+- 합집합: `polygonClipping.union()`, 교집합: `polygonClipping.intersection()`, 빼기: `polygonClipping.difference()`
+- MultiPolygon 결과 시 각 조각을 별도 zone으로 생성
+- Convex Hull(외곽선)과 점 유지는 기존 로직 유지
 
-**배치 작업 히스토리 처리**:
-- 병합/자동감지/바닥영역지정 등 복합 작업은 `saveToHistory()` 1회 호출 후 raw 함수 사용
-- undo/redo 함수 내부는 `isUndoRedoRef.current = true` 상태로 히스토리 저장 건너뜀
+**조각내기(Fragment) 기능 추가 (FloorPlanViewer.tsx)**:
+- PPT 도형 병합의 "조각" 연산 구현
+- 2개 선택: A-B(나머지) + A∩B(교차영역) + B-A(나머지) = 최대 3조각
+- 3개+ 선택: 각 zone의 고유 영역(difference) + 쌍별 교차 영역(intersection)
+- 영역 연산 UI 하단에 갈색 "조각" 버튼 추가 (3×3 그리드)
+- 겹치지 않는 영역은 alert로 안내
+
+**레이어 드래그 순서 변경 (FloorPlanViewer.tsx)**:
+- `zoneOrder` state: zone ID 배열로 레이어 순서 관리
+- `currentZoneIds` 기반 useEffect로 zone 추가/삭제 시 자동 동기화
+- HTML5 드래그앤드롭: `handleLayerDragStart/DragOver/Drop/DragEnd`
+- 목록 상단 = 최상위 레이어 (캔버스에서 맨 앞), 하단 = 최하위
+- 캔버스 렌더링: `[...orderedZones].reverse()` (목록 역순으로 렌더 → 상단 레이어가 마지막에 그려짐)
+- `GripVertical` 아이콘 드래그 핸들 추가, `dragOverIdx`로 드롭 위치 시각적 표시
+- 목록 헤더: "조닝 목록" → "레이어", 힌트: "드래그로 순서 변경"
+
+**실행취소/다시실행 ref 기반 재구현 (FloorPlanViewer.tsx)**:
+- 기존: `useState` 기반 → redo 시 같은 상태 복원되는 버그 (수정 후 상태가 히스토리에 저장 안 됨)
+- 변경: `zoneHistoryRef`/`historyIndexRef` **ref 기반** + `useEffect` 자동 히스토리 저장
+- `useEffect`로 `floorZones` 변경 감지 → 자동으로 히스토리에 새 상태 저장 (undo/redo 중에는 건너뜀)
+- `currentZonesRef`로 stale closure 방지 → `handleUndo`/`handleRedo`의 deps 최소화
+- `requestAnimationFrame` 이중 호출로 React 배치 업데이트 완료 후 `isUndoRedoRef` 플래그 해제
+- `saveZoneWithHistory`/`deleteZoneWithHistory` 래퍼 함수 제거 → 직접 `onSaveZone`/`onDeleteZone` 호출
+- `saveToHistory()` 수동 호출 제거 (useEffect가 자동 처리)
+- `canUndo`/`canRedo` derived 값으로 버튼 disabled 상태 관리
 
 **이전 세션 수정 사항 (컨텍스트 압축 전)**:
 - 이미지 업로드 시 캔버스에 즉시 맞춤 (`fitImageToCanvas` DOM 직접 읽기)
 - OpenCV 자동 감지 3가지 모드: threshold/canny/adaptive + 내부 공간 감지 옵션
-- 다각형 불리언 연산: 합집합/교집합/빼기 (Sutherland-Hodgman 알고리즘)
 - 점 편집 렌더링 분리: Zone Group에서 분리하여 좌표 계산 버그 수정
 - `hitStrokeWidth` 18px로 점 선택 영역 확대
 - 바닥 영역 별도 삭제 가능 (도면 삭제 없이)

@@ -4,7 +4,7 @@ import Konva from 'konva';
 import {
   Upload, ZoomIn, ZoomOut, RotateCcw, Move, Pencil, MousePointer, Scissors, Trash2, Link, Unlink,
   X, Printer, Layers, Eye, EyeOff, FileImage, Square, Triangle, RotateCw, Combine, Edit3, Wand2, Loader2, Settings2,
-  Undo2, Redo2
+  Undo2, Redo2, GripVertical
 } from 'lucide-react';
 
 // OpenCV.js 타입 선언
@@ -14,6 +14,7 @@ declare global {
     cvReady: boolean;
   }
 }
+import polygonClipping from 'polygon-clipping';
 import { FloorPlan, FloorZone, ZonePoint, ZoneType, Unit, LeaseContract, Stakeholder, Building } from '../types';
 
 interface FloorPlanViewerProps {
@@ -104,88 +105,90 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
   });
   const [detectedContours, setDetectedContours] = useState<ZonePoint[][]>([]);
 
-  // 실행취소/다시실행 히스토리
-  const [zoneHistory, setZoneHistory] = useState<FloorZone[][]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const isUndoRedoRef = useRef(false); // undo/redo 중인지 추적
+  // 실행취소/다시실행 히스토리 (ref 기반 - redo 정상 동작)
+  const zoneHistoryRef = useRef<FloorZone[][]>([]);
+  const historyIndexRef = useRef(0);
+  const isUndoRedoRef = useRef(false);
   const maxHistoryLength = 50;
+  const [, forceHistoryUpdate] = useState(0);
 
-  // 히스토리에 현재 상태 저장 (undo/redo 중이 아닐 때만)
-  const saveToHistory = useCallback(() => {
-    if (isUndoRedoRef.current) return;
-    const currentState = floorZones.filter(z => z.floorPlanId === currentPlan?.id);
-    setZoneHistory(prev => {
-      const newHistory = prev.slice(0, historyIndex + 1);
-      newHistory.push(JSON.parse(JSON.stringify(currentState)));
-      if (newHistory.length > maxHistoryLength) {
-        newHistory.shift();
-        return newHistory;
-      }
-      return newHistory;
+  // 레이어 순서 (드래그 앤 드롭)
+  const [zoneOrder, setZoneOrder] = useState<string[]>([]);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const dragZoneIdRef = useRef<string | null>(null);
+
+  // 현재 층의 조닝 목록
+  const currentZones = floorZones.filter(z => z.floorPlanId === currentPlan?.id);
+  const currentZonesRef = useRef(currentZones);
+  currentZonesRef.current = currentZones;
+
+  const canUndo = historyIndexRef.current > 0;
+  const canRedo = historyIndexRef.current < zoneHistoryRef.current.length - 1;
+
+  // zoneOrder 동기화 (zone 추가/삭제 시)
+  const currentZoneIds = currentZones.map(z => z.id).join(',');
+  useEffect(() => {
+    const ids = currentZoneIds.split(',').filter(Boolean);
+    setZoneOrder(prev => {
+      const filtered = prev.filter(id => ids.includes(id));
+      const newIds = ids.filter(id => !filtered.includes(id));
+      if (filtered.length === prev.length && newIds.length === 0) return prev;
+      return [...filtered, ...newIds];
     });
-    setHistoryIndex(prev => Math.min(prev + 1, maxHistoryLength - 1));
-  }, [floorZones, currentPlan?.id, historyIndex]);
+  }, [currentZoneIds]);
 
-  // 조닝 저장 래퍼 (히스토리 자동 저장)
-  const saveZoneWithHistory = useCallback((zone: FloorZone) => {
-    if (!isUndoRedoRef.current) {
-      saveToHistory();
-    }
-    onSaveZone(zone);
-  }, [onSaveZone, saveToHistory]);
-
-  // 조닝 삭제 래퍼 (히스토리 자동 저장)
-  const deleteZoneWithHistory = useCallback((zoneId: string) => {
-    if (!isUndoRedoRef.current) {
-      saveToHistory();
-    }
-    onDeleteZone(zoneId);
-  }, [onDeleteZone, saveToHistory]);
+  // 히스토리 자동 저장 (zone 변경 시, undo/redo 중이 아닐 때)
+  useEffect(() => {
+    if (!currentPlan || isUndoRedoRef.current) return;
+    const currentState = floorZones.filter(z => z.floorPlanId === currentPlan.id);
+    const history = zoneHistoryRef.current;
+    const idx = historyIndexRef.current;
+    const latestState = history[idx];
+    if (latestState && JSON.stringify(latestState) === JSON.stringify(currentState)) return;
+    const newHistory = history.slice(0, idx + 1);
+    newHistory.push(JSON.parse(JSON.stringify(currentState)));
+    if (newHistory.length > maxHistoryLength) newHistory.shift();
+    zoneHistoryRef.current = newHistory;
+    historyIndexRef.current = newHistory.length - 1;
+    forceHistoryUpdate(n => n + 1);
+  }, [floorZones, currentPlan?.id]);
 
   // 실행취소
   const handleUndo = useCallback(() => {
-    if (historyIndex <= 0) return;
+    const idx = historyIndexRef.current;
+    if (idx <= 0) return;
     isUndoRedoRef.current = true;
-    const prevIndex = historyIndex - 1;
-    const prevState = zoneHistory[prevIndex];
+    const prevState = zoneHistoryRef.current[idx - 1];
     if (!prevState) { isUndoRedoRef.current = false; return; }
-
-    // 현재 도면의 모든 조닝 삭제
-    currentZones.forEach(z => onDeleteZone(z.id));
-    // 이전 상태 복원
+    currentZonesRef.current.forEach(z => onDeleteZone(z.id));
     prevState.forEach(z => onSaveZone({ ...z }));
-    setHistoryIndex(prevIndex);
-    setTimeout(() => { isUndoRedoRef.current = false; }, 100);
-  }, [historyIndex, zoneHistory, currentZones, onDeleteZone, onSaveZone]);
+    historyIndexRef.current = idx - 1;
+    forceHistoryUpdate(n => n + 1);
+    requestAnimationFrame(() => { requestAnimationFrame(() => { isUndoRedoRef.current = false; }); });
+  }, [onDeleteZone, onSaveZone]);
 
   // 다시실행
   const handleRedo = useCallback(() => {
-    if (historyIndex >= zoneHistory.length - 1) return;
+    const idx = historyIndexRef.current;
+    const history = zoneHistoryRef.current;
+    if (idx >= history.length - 1) return;
     isUndoRedoRef.current = true;
-    const nextIndex = historyIndex + 1;
-    const nextState = zoneHistory[nextIndex];
+    const nextState = history[idx + 1];
     if (!nextState) { isUndoRedoRef.current = false; return; }
-
-    // 현재 도면의 모든 조닝 삭제
-    currentZones.forEach(z => onDeleteZone(z.id));
-    // 다음 상태 복원
+    currentZonesRef.current.forEach(z => onDeleteZone(z.id));
     nextState.forEach(z => onSaveZone({ ...z }));
-    setHistoryIndex(nextIndex);
-    setTimeout(() => { isUndoRedoRef.current = false; }, 100);
-  }, [historyIndex, zoneHistory, currentZones, onDeleteZone, onSaveZone]);
+    historyIndexRef.current = idx + 1;
+    forceHistoryUpdate(n => n + 1);
+    requestAnimationFrame(() => { requestAnimationFrame(() => { isUndoRedoRef.current = false; }); });
+  }, [onDeleteZone, onSaveZone]);
 
   // 키보드 단축키 (Ctrl+Z: 실행취소, Ctrl+Y/Ctrl+Shift+Z: 다시실행)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
       if (e.ctrlKey || e.metaKey) {
-        if (e.key === 'z' && !e.shiftKey) {
-          e.preventDefault();
-          handleUndo();
-        } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
-          e.preventDefault();
-          handleRedo();
-        }
+        if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo(); }
+        else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) { e.preventDefault(); handleRedo(); }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -196,10 +199,12 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
   useEffect(() => {
     if (currentPlan) {
       const initialState = floorZones.filter(z => z.floorPlanId === currentPlan.id);
-      setZoneHistory([JSON.parse(JSON.stringify(initialState))]);
-      setHistoryIndex(0);
+      zoneHistoryRef.current = [JSON.parse(JSON.stringify(initialState))];
+      historyIndexRef.current = 0;
+      forceHistoryUpdate(n => n + 1);
     }
   }, [currentPlan?.id]);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Refs
@@ -209,9 +214,27 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
 
-  // 현재 층의 조닝 목록
-  const currentZones = floorZones.filter(z => z.floorPlanId === currentPlan?.id);
-  const visibleZones = currentZones.filter(z => !hiddenZoneIds.has(z.id));
+  // 레이어 순서 기반 정렬
+  const orderedZones = zoneOrder
+    .map(id => currentZones.find(z => z.id === id))
+    .filter((z): z is FloorZone => !!z);
+  const visibleZones = [...orderedZones].reverse().filter(z => !hiddenZoneIds.has(z.id));
+
+  // 레이어 드래그 앤 드롭 핸들러
+  const handleLayerDragStart = (zoneId: string) => { dragZoneIdRef.current = zoneId; };
+  const handleLayerDragOver = (e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOverIdx(idx); };
+  const handleLayerDrop = (targetIdx: number) => {
+    const dragId = dragZoneIdRef.current;
+    if (!dragId) return;
+    setZoneOrder(prev => {
+      const newOrder = prev.filter(id => id !== dragId);
+      newOrder.splice(targetIdx, 0, dragId);
+      return newOrder;
+    });
+    dragZoneIdRef.current = null;
+    setDragOverIdx(null);
+  };
+  const handleLayerDragEnd = () => { dragZoneIdRef.current = null; setDragOverIdx(null); };
   const floorBoundary = currentZones.find(z => z.type === 'FLOOR_BOUNDARY');
 
   const getFloorLabel = (n: number) => n > 0 ? `${n}F` : `B${Math.abs(n)}`;
@@ -418,7 +441,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    saveZoneWithHistory(newZone);
+    onSaveZone(newZone);
     setDrawingPoints([]);
     setDrawingStart(null);
     setIsDrawing(false);
@@ -445,7 +468,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     newPoints[pointIndex] = newPoint;
     const normalizedArea = calculatePolygonArea(newPoints);
     const estimatedArea = zone.type === 'FLOOR_BOUNDARY' ? floorArea : estimateRealArea(normalizedArea);
-    saveZoneWithHistory({ ...zone, points: newPoints, estimatedArea, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, points: newPoints, estimatedArea, updatedAt: new Date().toISOString() });
   };
 
   // 점 편집: 추가 (선분 클릭)
@@ -461,7 +484,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     const newPoint = toNormalizedCoords(pos.x, pos.y);
     const newPoints = [...zone.points];
     newPoints.splice(segmentIndex + 1, 0, newPoint);
-    saveZoneWithHistory({ ...zone, points: newPoints, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, points: newPoints, updatedAt: new Date().toISOString() });
   };
 
   // 점 편집: 삭제 (더블클릭 또는 우클릭)
@@ -476,7 +499,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     const newPoints = zone.points.filter((_, i) => i !== pointIndex);
     const normalizedArea = calculatePolygonArea(newPoints);
     const estimatedArea = zone.type === 'FLOOR_BOUNDARY' ? floorArea : estimateRealArea(normalizedArea);
-    saveZoneWithHistory({ ...zone, points: newPoints, estimatedArea, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, points: newPoints, estimatedArea, updatedAt: new Date().toISOString() });
   };
 
   // 조닝 선택
@@ -501,7 +524,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     const newPoints = zone.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
     e.target.x(0);
     e.target.y(0);
-    saveZoneWithHistory({ ...zone, points: newPoints, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, points: newPoints, updatedAt: new Date().toISOString() });
   };
 
   // 회전
@@ -519,189 +542,42 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
         y: centerY + dx * Math.sin(angleRad) + dy * Math.cos(angleRad)
       };
     });
-    saveZoneWithHistory({ ...zone, points: newPoints, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, points: newPoints, updatedAt: new Date().toISOString() });
   };
 
   // 병합 방식 선택
   const [showMergeOptions, setShowMergeOptions] = useState(false);
 
-  // 점이 다각형 내부에 있는지 판별 (Ray casting)
-  const isPointInPolygon = (point: ZonePoint, polygon: ZonePoint[]): boolean => {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      const xi = polygon[i].x, yi = polygon[i].y;
-      const xj = polygon[j].x, yj = polygon[j].y;
-      if (((yi > point.y) !== (yj > point.y)) &&
-          (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
-        inside = !inside;
-      }
+  // ========================================
+  // polygon-clipping 기반 다각형 불리언 연산
+  // ========================================
+  type Ring = [number, number][];
+  type Poly = Ring[];
+
+  // ZonePoint[] → polygon-clipping 포맷
+  const toClipPoly = (points: ZonePoint[]): Poly => {
+    const ring: Ring = points.map(p => [p.x, p.y]);
+    // 닫힌 링 보장
+    if (ring.length > 0 && (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1])) {
+      ring.push([...ring[0]] as [number, number]);
     }
-    return inside;
+    return [ring];
   };
 
-  // 두 선분의 교점 계산
-  const getLineIntersection = (p1: ZonePoint, p2: ZonePoint, p3: ZonePoint, p4: ZonePoint): ZonePoint | null => {
-    const d = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
-    if (Math.abs(d) < 1e-10) return null;
-    const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / d;
-    const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / d;
-    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-      return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
-    }
-    return null;
+  // polygon-clipping 결과 → ZonePoint[][] (다중 다각형)
+  const fromClipResult = (result: ReturnType<typeof polygonClipping.union>): ZonePoint[][] => {
+    return result.map(poly => {
+      const ring = poly[0]; // 외부 링만 사용
+      // 마지막 점 == 첫 점이면 제거
+      const pts = ring.map(([x, y]) => ({ x, y }));
+      if (pts.length > 1 && pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y) {
+        pts.pop();
+      }
+      return pts;
+    }).filter(pts => pts.length >= 3);
   };
 
-  // 병합 실행
-  const handleMergeZones = (mergeType: 'CONVEX' | 'UNION' | 'KEEP_ALL' | 'INTERSECTION' | 'SUBTRACT') => {
-    if (selectedZoneIds.length < 2) return;
-    const zonesToMerge = currentZones.filter(z => selectedZoneIds.includes(z.id));
-    if (zonesToMerge.length < 2) return;
-
-    const baseZone = zonesToMerge[0];
-    const secondZone = zonesToMerge[1];
-    let mergedPoints: ZonePoint[];
-    let newName: string;
-
-    if (mergeType === 'CONVEX') {
-      // Convex Hull: 외곽선만 (볼록 다각형)
-      const allPoints = zonesToMerge.flatMap(z => z.points);
-      mergedPoints = computeConvexHull(allPoints);
-      newName = zonesToMerge.map(z => z.name).join(' + ');
-    } else if (mergeType === 'UNION') {
-      // Union: 다각형 합집합
-      mergedPoints = computePolygonUnion(zonesToMerge.map(z => z.points));
-      newName = zonesToMerge.map(z => z.name).join(' + ');
-    } else if (mergeType === 'INTERSECTION') {
-      // Intersection: 교집합 - 두 다각형이 겹치는 영역
-      mergedPoints = computePolygonIntersection(baseZone.points, secondZone.points);
-      newName = `${baseZone.name} ∩ ${secondZone.name}`;
-      if (mergedPoints.length < 3) {
-        alert('두 영역이 겹치지 않습니다.');
-        return;
-      }
-    } else if (mergeType === 'SUBTRACT') {
-      // Subtract: 빼기 - 첫 번째에서 두 번째 제외
-      mergedPoints = computePolygonSubtract(baseZone.points, secondZone.points);
-      newName = `${baseZone.name} - ${secondZone.name}`;
-      if (mergedPoints.length < 3) {
-        alert('빼기 결과가 없습니다.');
-        return;
-      }
-    } else {
-      // Keep All: 모든 점 유지 (수동 편집 필요)
-      mergedPoints = zonesToMerge.flatMap(z => z.points);
-      newName = zonesToMerge.map(z => z.name).join(' + ');
-    }
-
-    const normalizedArea = calculatePolygonArea(mergedPoints);
-    const estimatedArea = estimateRealArea(normalizedArea);
-
-    const mergedZone: FloorZone = {
-      id: `zone-${Date.now()}`,
-      floorPlanId: currentPlan!.id,
-      type: 'PLANNED',
-      name: newName,
-      color: baseZone.color,
-      opacity: baseZone.opacity,
-      points: mergedPoints,
-      estimatedArea,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    // 병합 전 히스토리 저장 (한 번만)
-    saveToHistory();
-    zonesToMerge.forEach(z => onDeleteZone(z.id));
-    onSaveZone(mergedZone);
-    setSelectedZoneIds([]);
-    setSelectedZoneId(mergedZone.id);
-    setShowMergeOptions(false);
-  };
-
-  // 다각형 교집합 계산 (Sutherland-Hodgman 알고리즘 기반)
-  const computePolygonIntersection = (subjectPolygon: ZonePoint[], clipPolygon: ZonePoint[]): ZonePoint[] => {
-    let outputList = [...subjectPolygon];
-
-    for (let i = 0; i < clipPolygon.length; i++) {
-      if (outputList.length === 0) return [];
-      const inputList = [...outputList];
-      outputList = [];
-
-      const edgeStart = clipPolygon[i];
-      const edgeEnd = clipPolygon[(i + 1) % clipPolygon.length];
-
-      for (let j = 0; j < inputList.length; j++) {
-        const current = inputList[j];
-        const previous = inputList[(j + inputList.length - 1) % inputList.length];
-
-        const currentInside = isLeftOfLine(current, edgeStart, edgeEnd);
-        const previousInside = isLeftOfLine(previous, edgeStart, edgeEnd);
-
-        if (currentInside) {
-          if (!previousInside) {
-            const intersection = getLineIntersection(previous, current, edgeStart, edgeEnd);
-            if (intersection) outputList.push(intersection);
-          }
-          outputList.push(current);
-        } else if (previousInside) {
-          const intersection = getLineIntersection(previous, current, edgeStart, edgeEnd);
-          if (intersection) outputList.push(intersection);
-        }
-      }
-    }
-
-    return outputList;
-  };
-
-  // 점이 선분의 왼쪽에 있는지 (내부 판별용)
-  const isLeftOfLine = (point: ZonePoint, lineStart: ZonePoint, lineEnd: ZonePoint): boolean => {
-    return ((lineEnd.x - lineStart.x) * (point.y - lineStart.y) -
-            (lineEnd.y - lineStart.y) * (point.x - lineStart.x)) >= 0;
-  };
-
-  // 다각형 빼기 계산 (간단한 구현: 첫 번째 다각형에서 두 번째와 겹치지 않는 점들)
-  const computePolygonSubtract = (basePolygon: ZonePoint[], subtractPolygon: ZonePoint[]): ZonePoint[] => {
-    // 교차점들을 포함한 새 다각형 생성
-    const result: ZonePoint[] = [];
-
-    // 기본 다각형의 각 점에 대해
-    for (let i = 0; i < basePolygon.length; i++) {
-      const current = basePolygon[i];
-      const next = basePolygon[(i + 1) % basePolygon.length];
-
-      // 현재 점이 빼는 다각형 외부에 있으면 추가
-      if (!isPointInPolygon(current, subtractPolygon)) {
-        result.push(current);
-      }
-
-      // 현재 선분과 빼는 다각형의 교차점 찾기
-      for (let j = 0; j < subtractPolygon.length; j++) {
-        const subCurrent = subtractPolygon[j];
-        const subNext = subtractPolygon[(j + 1) % subtractPolygon.length];
-        const intersection = getLineIntersection(current, next, subCurrent, subNext);
-        if (intersection) {
-          result.push(intersection);
-        }
-      }
-    }
-
-    // 빼는 다각형의 점 중 기본 다각형 내부에 있는 것들의 반대편 추가
-    for (const point of subtractPolygon) {
-      if (isPointInPolygon(point, basePolygon)) {
-        result.push(point);
-      }
-    }
-
-    // 중심점 기준으로 각도 정렬
-    if (result.length < 3) return result;
-    const cx = result.reduce((s, p) => s + p.x, 0) / result.length;
-    const cy = result.reduce((s, p) => s + p.y, 0) / result.length;
-    result.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
-
-    return result;
-  };
-
-  // Convex Hull 계산 (Graham scan)
+  // Convex Hull 계산 (Graham scan) - 외곽선용으로 유지
   const computeConvexHull = (points: ZonePoint[]): ZonePoint[] => {
     if (points.length < 3) return points;
     const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
@@ -723,37 +599,162 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     return [...lower, ...upper];
   };
 
-  // 다각형 합집합 (간단한 구현 - 경계 추적)
-  const computePolygonUnion = (polygons: ZonePoint[][]): ZonePoint[] => {
-    if (polygons.length === 0) return [];
-    if (polygons.length === 1) return polygons[0];
+  // 결과에서 zone 생성 헬퍼
+  const createZoneFromPoints = (points: ZonePoint[], name: string, color: string, opacity: number): FloorZone => ({
+    id: `zone-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+    floorPlanId: currentPlan!.id,
+    type: 'PLANNED',
+    name,
+    color,
+    opacity,
+    points,
+    estimatedArea: estimateRealArea(calculatePolygonArea(points)),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
 
-    // 간단한 구현: 모든 점을 각도순으로 정렬하여 외곽 추적
-    const allPoints = polygons.flatMap(p => p);
+  // 병합 실행 (polygon-clipping 라이브러리 사용)
+  const handleMergeZones = (mergeType: 'CONVEX' | 'UNION' | 'KEEP_ALL' | 'INTERSECTION' | 'SUBTRACT') => {
+    if (selectedZoneIds.length < 2) return;
+    const zonesToMerge = currentZones.filter(z => selectedZoneIds.includes(z.id));
+    if (zonesToMerge.length < 2) return;
 
-    // 중심점 계산
-    const cx = allPoints.reduce((s, p) => s + p.x, 0) / allPoints.length;
-    const cy = allPoints.reduce((s, p) => s + p.y, 0) / allPoints.length;
+    const baseZone = zonesToMerge[0];
+    const secondZone = zonesToMerge[1];
 
-    // 각도 기준 정렬 (시계 방향)
-    const sorted = [...allPoints].sort((a, b) => {
-      const angleA = Math.atan2(a.y - cy, a.x - cx);
-      const angleB = Math.atan2(b.y - cy, b.x - cx);
-      return angleA - angleB;
-    });
-
-    // 중복 제거 (가까운 점)
-    const threshold = 0.005;
-    const filtered: ZonePoint[] = [];
-    for (const p of sorted) {
-      if (filtered.length === 0 ||
-          Math.abs(p.x - filtered[filtered.length - 1].x) > threshold ||
-          Math.abs(p.y - filtered[filtered.length - 1].y) > threshold) {
-        filtered.push(p);
-      }
+    if (mergeType === 'CONVEX') {
+      const allPoints = zonesToMerge.flatMap(z => z.points);
+      const merged = computeConvexHull(allPoints);
+      const zone = createZoneFromPoints(merged, zonesToMerge.map(z => z.name).join(' + '), baseZone.color, baseZone.opacity);
+      zonesToMerge.forEach(z => onDeleteZone(z.id));
+      onSaveZone(zone);
+      setSelectedZoneIds([]);
+      setSelectedZoneId(zone.id);
+      setShowMergeOptions(false);
+      return;
     }
 
-    return filtered.length >= 3 ? filtered : sorted;
+    if (mergeType === 'KEEP_ALL') {
+      const merged = zonesToMerge.flatMap(z => z.points);
+      const zone = createZoneFromPoints(merged, zonesToMerge.map(z => z.name).join(' + '), baseZone.color, baseZone.opacity);
+      zonesToMerge.forEach(z => onDeleteZone(z.id));
+      onSaveZone(zone);
+      setSelectedZoneIds([]);
+      setSelectedZoneId(zone.id);
+      setShowMergeOptions(false);
+      return;
+    }
+
+    try {
+      const polyA = toClipPoly(baseZone.points);
+      const polyB = toClipPoly(secondZone.points);
+      let result: ReturnType<typeof polygonClipping.union>;
+
+      if (mergeType === 'UNION') {
+        // 합집합: 모든 zone을 순차 병합
+        let accumulated = toClipPoly(zonesToMerge[0].points);
+        for (let i = 1; i < zonesToMerge.length; i++) {
+          const next = toClipPoly(zonesToMerge[i].points);
+          accumulated = polygonClipping.union(accumulated, next) as unknown as Poly;
+          if (Array.isArray(accumulated) && accumulated.length > 0 && Array.isArray(accumulated[0]) && Array.isArray(accumulated[0][0]) && Array.isArray(accumulated[0][0][0])) {
+            // MultiPolygon → 첫 번째 폴리곤만 사용
+            accumulated = (accumulated as unknown as Poly[])[0];
+          }
+        }
+        result = polygonClipping.union(accumulated, toClipPoly([]));
+      } else if (mergeType === 'INTERSECTION') {
+        result = polygonClipping.intersection(polyA, polyB);
+      } else {
+        // SUBTRACT
+        result = polygonClipping.difference(polyA, polyB);
+      }
+
+      const resultPolygons = fromClipResult(result);
+      if (resultPolygons.length === 0) {
+        alert(mergeType === 'INTERSECTION' ? '두 영역이 겹치지 않습니다.' : '빼기 결과가 없습니다.');
+        return;
+      }
+
+      const newName = mergeType === 'UNION'
+        ? zonesToMerge.map(z => z.name).join(' + ')
+        : mergeType === 'INTERSECTION'
+          ? `${baseZone.name} ∩ ${secondZone.name}`
+          : `${baseZone.name} - ${secondZone.name}`;
+
+      zonesToMerge.forEach(z => onDeleteZone(z.id));
+      resultPolygons.forEach((pts, i) => {
+        const zone = createZoneFromPoints(pts, resultPolygons.length > 1 ? `${newName} (${i + 1})` : newName, baseZone.color, baseZone.opacity);
+        onSaveZone(zone);
+        if (i === 0) setSelectedZoneId(zone.id);
+      });
+      setSelectedZoneIds([]);
+      setShowMergeOptions(false);
+    } catch (e) {
+      console.error('다각형 연산 오류:', e);
+      alert('다각형 연산 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 조각내기 (Fragment) - polygon-clipping 라이브러리 사용
+  const handleFragmentZones = () => {
+    if (selectedZoneIds.length < 2) return;
+    const zonesToFragment = currentZones.filter(z => selectedZoneIds.includes(z.id));
+    if (zonesToFragment.length < 2) return;
+
+    try {
+      const newZones: FloorZone[] = [];
+      const polys = zonesToFragment.map(z => toClipPoly(z.points));
+
+      for (let i = 0; i < zonesToFragment.length; i++) {
+        // 각 zone에서 나머지 모두를 빼서 고유 영역 추출
+        let remaining = polys[i];
+        for (let j = 0; j < zonesToFragment.length; j++) {
+          if (i === j) continue;
+          const diffResult = polygonClipping.difference(remaining, polys[j]);
+          if (diffResult.length > 0) {
+            remaining = diffResult[0]; // 첫 번째 결과 폴리곤
+          } else {
+            remaining = []; // 완전히 포함됨
+            break;
+          }
+        }
+        const remainPts = remaining.length > 0 ? fromClipResult([remaining]) : [];
+        remainPts.forEach(pts => {
+          newZones.push(createZoneFromPoints(
+            pts, `${zonesToFragment[i].name} (나머지)`,
+            zonesToFragment[i].color, zonesToFragment[i].opacity
+          ));
+        });
+      }
+
+      // 쌍별 교차 영역
+      for (let i = 0; i < zonesToFragment.length; i++) {
+        for (let j = i + 1; j < zonesToFragment.length; j++) {
+          const interResult = polygonClipping.intersection(polys[i], polys[j]);
+          const interPts = fromClipResult(interResult);
+          interPts.forEach(pts => {
+            newZones.push(createZoneFromPoints(
+              pts, `교차 영역`,
+              ZONE_COLORS[(ZONE_COLORS.indexOf(zonesToFragment[i].color) + 5) % ZONE_COLORS.length],
+              Math.max(zonesToFragment[i].opacity, zonesToFragment[j].opacity)
+            ));
+          });
+        }
+      }
+
+      if (newZones.length === 0) {
+        alert('조각낼 수 있는 겹치는 영역이 없습니다.');
+        return;
+      }
+
+      zonesToFragment.forEach(z => onDeleteZone(z.id));
+      newZones.forEach(z => onSaveZone(z));
+      setSelectedZoneIds([]);
+      setSelectedZoneId(null);
+    } catch (e) {
+      console.error('조각내기 오류:', e);
+      alert('조각내기 연산 중 오류가 발생했습니다.');
+    }
   };
 
   // ========================================
@@ -905,8 +906,6 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
 
     const contoursToApply = index !== undefined ? [detectedContours[index]] : detectedContours;
 
-    // 적용 전 히스토리 저장 (한 번만)
-    saveToHistory();
     contoursToApply.forEach((points, i) => {
       const isFirst = i === 0 && !floorBoundary;
       const newZone: FloorZone = {
@@ -940,7 +939,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     const zone = currentZones.find(z => z.id === linkTargetZoneId);
     if (!zone) return;
     const unit = units.find(u => u.id === unitId);
-    saveZoneWithHistory({
+    onSaveZone({
       ...zone,
       type: 'LINKED',
       linkedUnitId: unitId,
@@ -954,7 +953,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
   const handleUnlinkUnit = (zoneId: string) => {
     const zone = currentZones.find(z => z.id === zoneId);
     if (!zone) return;
-    saveZoneWithHistory({ ...zone, type: 'PLANNED', linkedUnitId: undefined, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, type: 'PLANNED', linkedUnitId: undefined, updatedAt: new Date().toISOString() });
   };
 
   // 이름 수정
@@ -962,7 +961,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     if (!selectedZoneId) return;
     const zone = currentZones.find(z => z.id === selectedZoneId);
     if (!zone) return;
-    saveZoneWithHistory({ ...zone, name: editingZoneName, updatedAt: new Date().toISOString() });
+    onSaveZone({ ...zone, name: editingZoneName, updatedAt: new Date().toISOString() });
     setShowEditNameModal(false);
   };
 
@@ -1270,83 +1269,56 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          {/* 좌측: 도구 패널 */}
-          <div className="w-14 bg-[#f8f9fa] border-r border-[#dadce0] flex flex-col items-center py-3 gap-1">
-            <button onClick={() => setActiveTool('SELECT')} className={`p-2.5 rounded-lg transition-colors ${activeTool === 'SELECT' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'}`} title="선택 (드래그로 이동)">
-              <MousePointer size={18} />
-            </button>
-            <button onClick={() => setActiveTool('PAN')} className={`p-2.5 rounded-lg transition-colors ${activeTool === 'PAN' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'}`} title="화면 이동">
-              <Move size={18} />
-            </button>
-            <div className="w-8 border-t border-[#dadce0] my-2" />
-            <button onClick={() => setActiveTool('DRAW_POLYGON')} disabled={!currentPlan} className={`p-2.5 rounded-lg transition-colors ${activeTool === 'DRAW_POLYGON' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="다각형 그리기">
-              <Pencil size={18} />
-            </button>
-            <button onClick={() => setActiveTool('DRAW_RECT')} disabled={!currentPlan} className={`p-2.5 rounded-lg transition-colors ${activeTool === 'DRAW_RECT' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="사각형 그리기">
-              <Square size={18} />
-            </button>
-            <button onClick={() => setActiveTool('DRAW_TRIANGLE')} disabled={!currentPlan} className={`p-2.5 rounded-lg transition-colors ${activeTool === 'DRAW_TRIANGLE' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="삼각형 그리기">
-              <Triangle size={18} />
-            </button>
-            <button onClick={() => setActiveTool('EDIT_POINTS')} disabled={!currentPlan} className={`p-2.5 rounded-lg transition-colors ${activeTool === 'EDIT_POINTS' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="점 편집">
-              <Scissors size={18} />
-            </button>
-            <div className="w-8 border-t border-[#dadce0] my-2" />
-            <button onClick={() => handleZoom(0.2)} className="p-2.5 hover:bg-[#e8eaed] rounded-lg text-[#5f6368]" title="확대"><ZoomIn size={18} /></button>
-            <button onClick={() => handleZoom(-0.2)} className="p-2.5 hover:bg-[#e8eaed] rounded-lg text-[#5f6368]" title="축소"><ZoomOut size={18} /></button>
-            <button onClick={() => {
-              if (image) {
-                const fit = fitImageToCanvas(image.width, image.height);
-                setZoom(fit.zoom);
-                setPanOffset({ x: fit.offsetX, y: fit.offsetY });
-              }
-            }} className="p-2.5 hover:bg-[#e8eaed] rounded-lg text-[#5f6368]" title="화면에 맞추기"><RotateCcw size={18} /></button>
-            <div className="w-8 border-t border-[#dadce0] my-2" />
-            {/* 실행취소/다시실행 */}
-            <button
-              onClick={handleUndo}
-              disabled={historyIndex <= 0}
-              className={`p-2.5 rounded-lg transition-colors ${historyIndex > 0 ? 'hover:bg-[#e8eaed] text-[#5f6368]' : 'text-[#dadce0]'}`}
-              title="실행취소 (Ctrl+Z)"
-            >
-              <Undo2 size={18} />
-            </button>
-            <button
-              onClick={handleRedo}
-              disabled={historyIndex >= zoneHistory.length - 1}
-              className={`p-2.5 rounded-lg transition-colors ${historyIndex < zoneHistory.length - 1 ? 'hover:bg-[#e8eaed] text-[#5f6368]' : 'text-[#dadce0]'}`}
-              title="다시실행 (Ctrl+Y)"
-            >
-              <Redo2 size={18} />
-            </button>
-            <div className="flex-1" />
-            <button onClick={() => setShowZones(!showZones)} className={`p-2.5 rounded-lg transition-colors ${showZones ? 'text-[#1a73e8]' : 'text-[#9aa0a6]'}`} title="조닝 표시/숨김">
-              {showZones ? <Eye size={18} /> : <EyeOff size={18} />}
-            </button>
-            <button onClick={() => setShowLabels(!showLabels)} className={`p-2.5 rounded-lg transition-colors ${showLabels ? 'text-[#1a73e8]' : 'text-[#9aa0a6]'}`} title="레이블 표시/숨김">
-              <Layers size={18} />
-            </button>
-            <div className="w-8 border-t border-[#dadce0] my-2" />
-            {/* OpenCV 자동 감지 버튼 */}
-            <button
-              onClick={detectFloorBoundary}
-              disabled={!currentPlan || isDetecting}
-              className={`p-2.5 rounded-lg transition-colors ${detectedContours.length > 0 ? 'bg-[#34a853] text-white' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`}
-              title="바닥 영역 자동 감지 (OpenCV)"
-            >
-              {isDetecting ? <Loader2 size={18} className="animate-spin" /> : <Wand2 size={18} />}
-            </button>
-            <button
-              onClick={() => setShowDetectSettings(!showDetectSettings)}
-              disabled={!currentPlan}
-              className={`p-2.5 rounded-lg transition-colors ${showDetectSettings ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`}
-              title="자동 감지 설정"
-            >
-              <Settings2 size={18} />
-            </button>
-          </div>
+        {/* 상단 도구바 */}
+        <div className="flex items-center px-2 py-1 border-b border-[#dadce0] bg-[#f8f9fa] gap-0.5">
+          <button onClick={() => setActiveTool('SELECT')} className={`p-1.5 rounded-lg transition-colors ${activeTool === 'SELECT' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'}`} title="선택 (드래그로 이동)">
+            <MousePointer size={16} />
+          </button>
+          <button onClick={() => setActiveTool('PAN')} className={`p-1.5 rounded-lg transition-colors ${activeTool === 'PAN' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'}`} title="화면 이동">
+            <Move size={16} />
+          </button>
+          <div className="w-px h-5 bg-[#dadce0] mx-1" />
+          <button onClick={() => setActiveTool('DRAW_POLYGON')} disabled={!currentPlan} className={`p-1.5 rounded-lg transition-colors ${activeTool === 'DRAW_POLYGON' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="다각형 그리기">
+            <Pencil size={16} />
+          </button>
+          <button onClick={() => setActiveTool('DRAW_RECT')} disabled={!currentPlan} className={`p-1.5 rounded-lg transition-colors ${activeTool === 'DRAW_RECT' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="사각형 그리기">
+            <Square size={16} />
+          </button>
+          <button onClick={() => setActiveTool('DRAW_TRIANGLE')} disabled={!currentPlan} className={`p-1.5 rounded-lg transition-colors ${activeTool === 'DRAW_TRIANGLE' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="삼각형 그리기">
+            <Triangle size={16} />
+          </button>
+          <button onClick={() => setActiveTool('EDIT_POINTS')} disabled={!currentPlan} className={`p-1.5 rounded-lg transition-colors ${activeTool === 'EDIT_POINTS' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="점 편집">
+            <Scissors size={16} />
+          </button>
+          <div className="w-px h-5 bg-[#dadce0] mx-1" />
+          <button onClick={handleUndo} disabled={!canUndo} className={`p-1.5 rounded-lg transition-colors ${canUndo ? 'hover:bg-[#e8eaed] text-[#5f6368]' : 'text-[#dadce0]'}`} title="실행취소 (Ctrl+Z)">
+            <Undo2 size={16} />
+          </button>
+          <button onClick={handleRedo} disabled={!canRedo} className={`p-1.5 rounded-lg transition-colors ${canRedo ? 'hover:bg-[#e8eaed] text-[#5f6368]' : 'text-[#dadce0]'}`} title="다시실행 (Ctrl+Y)">
+            <Redo2 size={16} />
+          </button>
+          <div className="w-px h-5 bg-[#dadce0] mx-1" />
+          <button onClick={() => handleZoom(-0.2)} className="p-1.5 hover:bg-[#e8eaed] rounded-lg text-[#5f6368]" title="축소"><ZoomOut size={16} /></button>
+          <span className="text-[10px] font-bold text-[#5f6368] w-10 text-center select-none">{(zoom * 100).toFixed(0)}%</span>
+          <button onClick={() => handleZoom(0.2)} className="p-1.5 hover:bg-[#e8eaed] rounded-lg text-[#5f6368]" title="확대"><ZoomIn size={16} /></button>
+          <button onClick={() => { if (image) { const fit = fitImageToCanvas(image.width, image.height); setZoom(fit.zoom); setPanOffset({ x: fit.offsetX, y: fit.offsetY }); } }} className="p-1.5 hover:bg-[#e8eaed] rounded-lg text-[#5f6368]" title="화면에 맞추기"><RotateCcw size={16} /></button>
+          <div className="w-px h-5 bg-[#dadce0] mx-1" />
+          <button onClick={() => setShowZones(!showZones)} className={`p-1.5 rounded-lg transition-colors ${showZones ? 'text-[#1a73e8]' : 'text-[#9aa0a6]'}`} title="조닝 표시/숨김">
+            {showZones ? <Eye size={16} /> : <EyeOff size={16} />}
+          </button>
+          <button onClick={() => setShowLabels(!showLabels)} className={`p-1.5 rounded-lg transition-colors ${showLabels ? 'text-[#1a73e8]' : 'text-[#9aa0a6]'}`} title="레이블 표시/숨김">
+            <Layers size={16} />
+          </button>
+          <div className="w-px h-5 bg-[#dadce0] mx-1" />
+          <button onClick={detectFloorBoundary} disabled={!currentPlan || isDetecting} className={`p-1.5 rounded-lg transition-colors ${detectedContours.length > 0 ? 'bg-[#34a853] text-white' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="바닥 영역 자동 감지 (OpenCV)">
+            {isDetecting ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+          </button>
+          <button onClick={() => setShowDetectSettings(!showDetectSettings)} disabled={!currentPlan} className={`p-1.5 rounded-lg transition-colors ${showDetectSettings ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'hover:bg-[#e8eaed] text-[#5f6368]'} disabled:opacity-30`} title="자동 감지 설정">
+            <Settings2 size={16} />
+          </button>
+        </div>
 
+        <div className="flex-1 flex overflow-hidden">
           {/* 중앙: 캔버스 */}
           <div ref={containerRef} className="flex-1 bg-[#e8eaed] overflow-hidden relative">
             {!currentPlan ? (
@@ -1395,7 +1367,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
               </Stage>
             )}
 
-            <div className="absolute bottom-3 left-3 px-2 py-1 bg-black/50 text-white text-[10px] font-mono rounded">{(zoom * 100).toFixed(0)}%</div>
+            {/* 줌 퍼센트는 상단 도구바에 표시 */}
 
             {/* OpenCV 자동 감지 설정 패널 */}
             {showDetectSettings && (
@@ -1628,19 +1600,19 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
               </div>
             </div>
 
-            {/* 조닝 목록 */}
+            {/* 조닝 목록 (레이어 순서 - 드래그로 변경) */}
             <div className="flex-1 overflow-y-auto p-3">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-[11px] font-black text-[#5f6368] uppercase">조닝 목록 ({currentZones.length})</h3>
+                <h3 className="text-[11px] font-black text-[#5f6368] uppercase">레이어 ({currentZones.length})</h3>
                 {currentZones.length >= 2 && (
-                  <span className="text-[9px] text-[#9aa0a6]">체크박스로 다중 선택 → 병합</span>
+                  <span className="text-[9px] text-[#9aa0a6]">드래그로 순서 변경</span>
                 )}
               </div>
-              {currentZones.length === 0 ? (
+              {orderedZones.length === 0 ? (
                 <p className="text-[10px] text-[#9aa0a6] text-center py-4">{currentPlan ? '도형 도구로 영역을 그려주세요' : '도면을 먼저 업로드하세요'}</p>
               ) : (
-                <div className="space-y-1.5">
-                  {currentZones.map(zone => {
+                <div className="space-y-1">
+                  {orderedZones.map((zone, idx) => {
                     const isSelected = selectedZoneId === zone.id;
                     const isMultiSelected = selectedZoneIds.includes(zone.id);
                     const isHidden = hiddenZoneIds.has(zone.id);
@@ -1652,8 +1624,15 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                         : zone.estimatedArea ? `≈${zone.estimatedArea.toFixed(1)}㎡` : '';
                     return (
                       <div key={zone.id}
-                        className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${isSelected || isMultiSelected ? 'border-[#1a73e8] bg-[#e8f0fe]' : 'border-[#dadce0] hover:bg-[#f8f9fa]'} ${isHidden ? 'opacity-50' : ''}`}>
-                        <div className="flex items-center gap-2">
+                        draggable
+                        onDragStart={() => handleLayerDragStart(zone.id)}
+                        onDragOver={(e) => handleLayerDragOver(e, idx)}
+                        onDrop={() => handleLayerDrop(idx)}
+                        onDragEnd={handleLayerDragEnd}
+                        className={`p-2 rounded-lg border cursor-pointer transition-colors ${dragOverIdx === idx ? 'border-t-2 border-t-[#1a73e8]' : ''} ${isSelected || isMultiSelected ? 'border-[#1a73e8] bg-[#e8f0fe]' : 'border-[#dadce0] hover:bg-[#f8f9fa]'} ${isHidden ? 'opacity-50' : ''}`}>
+                        <div className="flex items-center gap-1.5">
+                          {/* 드래그 핸들 */}
+                          <GripVertical size={12} className="text-[#9aa0a6] cursor-grab flex-shrink-0" />
                           {/* 다중 선택 체크박스 */}
                           {currentZones.length >= 2 && zone.type !== 'FLOOR_BOUNDARY' && (
                             <input
@@ -1668,31 +1647,31 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                                   setSelectedZoneId(null);
                                 }
                               }}
-                              className="w-4 h-4 rounded border-[#dadce0] text-[#1a73e8] cursor-pointer"
+                              className="w-3.5 h-3.5 rounded border-[#dadce0] text-[#1a73e8] cursor-pointer flex-shrink-0"
                             />
                           )}
                           <div
-                            className="flex items-center gap-2 flex-1 min-w-0"
+                            className="flex items-center gap-1.5 flex-1 min-w-0"
                             onClick={() => {
                               setSelectedZoneId(prev => prev === zone.id ? null : zone.id);
                               setSelectedZoneIds([]);
                             }}
                           >
-                            <div className="w-4 h-4 rounded flex-shrink-0" style={{ backgroundColor: zone.color }} />
-                            <span className="text-sm font-bold text-[#202124] flex-1 truncate">{zone.name}</span>
-                            {zone.type === 'FLOOR_BOUNDARY' && <span className="text-[9px] px-1.5 py-0.5 bg-[#9e9e9e] text-white rounded flex-shrink-0">기준</span>}
-                            {zone.type === 'LINKED' && <span className="text-[9px] px-1.5 py-0.5 bg-[#34a853] text-white rounded flex-shrink-0">연결</span>}
+                            <div className="w-3.5 h-3.5 rounded flex-shrink-0" style={{ backgroundColor: zone.color }} />
+                            <span className="text-xs font-bold text-[#202124] flex-1 truncate">{zone.name}</span>
+                            {zone.type === 'FLOOR_BOUNDARY' && <span className="text-[8px] px-1 py-0.5 bg-[#9e9e9e] text-white rounded flex-shrink-0">기준</span>}
+                            {zone.type === 'LINKED' && <span className="text-[8px] px-1 py-0.5 bg-[#34a853] text-white rounded flex-shrink-0">연결</span>}
                           </div>
-                          <button onClick={(e) => { e.stopPropagation(); toggleZoneVisibility(zone.id); }} className="p-1 hover:bg-[#dadce0] rounded flex-shrink-0" title={isHidden ? '표시' : '숨기기'}>
-                            {isHidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                          <button onClick={(e) => { e.stopPropagation(); toggleZoneVisibility(zone.id); }} className="p-0.5 hover:bg-[#dadce0] rounded flex-shrink-0" title={isHidden ? '표시' : '숨기기'}>
+                            {isHidden ? <EyeOff size={11} /> : <Eye size={11} />}
                           </button>
                         </div>
                         {areaText && (
-                          <p className={`text-xs mt-1 ${zone.type === 'LINKED' ? 'font-bold text-[#202124]' : 'text-[#5f6368]'} ${currentZones.length >= 2 && zone.type !== 'FLOOR_BOUNDARY' ? 'ml-6' : ''}`}>
-                            {zone.type === 'FLOOR_BOUNDARY' ? '기준 면적' : zone.type === 'LINKED' ? '실제 면적' : '추정 면적'}: {areaText}
+                          <p className={`text-[10px] mt-0.5 ${zone.type === 'LINKED' ? 'font-bold text-[#202124]' : 'text-[#5f6368]'} ml-5`}>
+                            {zone.type === 'FLOOR_BOUNDARY' ? '기준' : zone.type === 'LINKED' ? '실제' : '추정'}: {areaText}
                           </p>
                         )}
-                        {linkedUnit && <p className={`text-[10px] text-[#1a73e8] mt-0.5 ${currentZones.length >= 2 && zone.type !== 'FLOOR_BOUNDARY' ? 'ml-6' : ''}`}>→ {linkedUnit.unitNumber}호 ({linkedUnit.usage})</p>}
+                        {linkedUnit && <p className="text-[9px] text-[#1a73e8] mt-0.5 ml-5">→ {linkedUnit.unitNumber}호</p>}
                       </div>
                     );
                   })}
@@ -1732,12 +1711,15 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                           빼기
                         </button>
                       </div>
-                      <div className="flex gap-1.5">
-                        <button onClick={() => handleMergeZones('CONVEX')} className="flex-1 px-2 py-1.5 bg-[#607d8b] text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-[#546e7a]">
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <button onClick={() => handleMergeZones('CONVEX')} className="px-2 py-1.5 bg-[#607d8b] text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-[#546e7a]">
                           외곽선
                         </button>
-                        <button onClick={() => handleMergeZones('KEEP_ALL')} className="flex-1 px-2 py-1.5 bg-[#9e9e9e] text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-[#757575]">
+                        <button onClick={() => handleMergeZones('KEEP_ALL')} className="px-2 py-1.5 bg-[#9e9e9e] text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-[#757575]">
                           점 유지
+                        </button>
+                        <button onClick={handleFragmentZones} className="px-2 py-1.5 bg-[#795548] text-white text-[10px] font-bold rounded-lg flex items-center justify-center gap-1 hover:bg-[#6d4c41]">
+                          조각
                         </button>
                       </div>
                     </div>
@@ -1767,8 +1749,6 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                       {/* 바닥 영역으로 지정 (FLOOR_BOUNDARY가 아닌 영역만) */}
                       {selectedZone.type !== 'FLOOR_BOUNDARY' && (
                         <button onClick={() => {
-                          // 변경 전 히스토리 저장 (한 번만)
-                          saveToHistory();
                           // 기존 바닥 영역이 있으면 PLANNED로 변경
                           if (floorBoundary) {
                             onSaveZone({ ...floorBoundary, type: 'PLANNED', updatedAt: new Date().toISOString() });
@@ -1792,11 +1772,11 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                       <button onClick={() => {
                         if (selectedZone.type === 'FLOOR_BOUNDARY') {
                           if (confirm('바닥 영역을 삭제하면 추정 면적 계산이 불가능해집니다. 계속하시겠습니까?')) {
-                            deleteZoneWithHistory(selectedZone.id);
+                            onDeleteZone(selectedZone.id);
                             setSelectedZoneId(null);
                           }
                         } else {
-                          deleteZoneWithHistory(selectedZone.id);
+                          onDeleteZone(selectedZone.id);
                           setSelectedZoneId(null);
                         }
                       }} className="px-2.5 py-1.5 border border-[#ea4335] text-[#ea4335] text-[10px] font-bold rounded-lg flex items-center gap-1">
