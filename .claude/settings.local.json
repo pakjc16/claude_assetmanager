@@ -32,7 +32,9 @@
       "Bash(powershell:*)",
       "Bash(pushd:*)",
       "Bash(pwsh:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(git remote add:*)",
+      "Bash(git pull:*)"
     ]
   }
 }

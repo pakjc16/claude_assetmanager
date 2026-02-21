@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, MapPin, Key, Calendar } from 'lucide-react';
+import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, MapPin, Key, Calendar, ParkingSquare } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { PropertyManager } from './components/PropertyManager';
 import { StakeholderManager } from './components/StakeholderManager';
@@ -9,13 +9,14 @@ import { ContractManager } from './components/ContractManager';
 import { FinanceManager } from './components/FinanceManager';
 import { ValuationManager } from './components/ValuationManager';
 import { FacilityManager } from './components/FacilityManager';
+import { ParkingManager } from './components/ParkingManager';
 import {
   Property, Unit, Stakeholder, LeaseContract, MaintenanceContract, UtilityContract,
   PaymentTransaction, DashboardFinancials, Building, Lot, ValuationHistory, MarketComparable,
   MoneyUnit, AreaUnit, Facility, FacilityLog,
   ElevatorInfo, ElevatorInsurance, ElevatorSafetyManager, ElevatorInspection,
   ElevatorMalfunction, ElevatorAccident, ElevatorPartDefect, ElevatorMaintenanceContract,
-  FloorPlan, FloorZone
+  FloorPlan, FloorZone, ParkingSpot
 } from './types';
 
 // ==========================================
@@ -132,6 +133,7 @@ function App() {
   // 도면 및 조닝 상태
   const [floorPlans, setFloorPlans] = useState<FloorPlan[]>(() => loadLocal('rf_floorPlans', []));
   const [floorZones, setFloorZones] = useState<FloorZone[]>(() => loadLocal('rf_floorZones', []));
+  const [parkingSpots, setParkingSpots] = useState<ParkingSpot[]>(() => loadLocal('rf_parkingSpots', []));
 
   // 승강기 + 도면/조닝 데이터 localStorage 자동 저장
   useEffect(() => { try { localStorage.setItem('rf_elvInsurances', JSON.stringify(elevatorInsurances)); } catch {} }, [elevatorInsurances]);
@@ -143,6 +145,7 @@ function App() {
   useEffect(() => { try { localStorage.setItem('rf_elvMaintContracts', JSON.stringify(elevatorMaintenanceContracts)); } catch {} }, [elevatorMaintenanceContracts]);
   useEffect(() => { try { localStorage.setItem('rf_floorPlans', JSON.stringify(floorPlans)); } catch {} }, [floorPlans]);
   useEffect(() => { try { localStorage.setItem('rf_floorZones', JSON.stringify(floorZones)); } catch {} }, [floorZones]);
+  useEffect(() => { try { localStorage.setItem('rf_parkingSpots', JSON.stringify(parkingSpots)); } catch {} }, [parkingSpots]);
 
   // Formatting Logic
   // 금액 포맷: 원/만원은 소수점 없음, 억원은 소수점 2자리까지
@@ -214,6 +217,7 @@ function App() {
     { id: 'STAKEHOLDER', label: '인물/업체', shortLabel: '인물', icon: <Users size={18}/> },
     { id: 'FINANCE', label: '납입/청구', shortLabel: '청구', icon: <Wallet size={18}/> },
     { id: 'VALUATION', label: '가치 평가', shortLabel: '평가', icon: <TrendingUp size={18}/> },
+    { id: 'PARKING', label: '주차 관리', shortLabel: '주차', icon: <ParkingSquare size={18}/> },
   ];
 
   return (
@@ -431,6 +435,17 @@ function App() {
                {activeTab === 'VALUATION' && (
                  /* Fixed duplicate attributes error by renaming repeated parseNumberInput to parseMoneyInput */
                  <ValuationManager properties={properties} valuations={valuations} comparables={comparables} onAddValuation={v => setValuations(prev => [...prev, v])} onUpdateValuation={v => setValuations(prev => prev.map(va => va.id === v.id ? v : va))} onDeleteValuation={id => setValuations(prev => prev.filter(v => v.id !== id))} onAddComparable={c => setComparables(prev => [...prev, c])} formatMoney={formatMoney} formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'} areaUnit={areaUnit} />
+               )}
+               {activeTab === 'PARKING' && (
+                 <ParkingManager
+                   properties={properties}
+                   floorPlans={floorPlans}
+                   floorZones={floorZones}
+                   parkingSpots={parkingSpots}
+                   stakeholders={stakeholders}
+                   onSaveParkingSpot={spot => setParkingSpots(prev => [...prev.filter(s => s.id !== spot.id), spot])}
+                   onDeleteParkingSpot={id => setParkingSpots(prev => prev.filter(s => s.id !== id))}
+                 />
                )}
             </div>
          </div>

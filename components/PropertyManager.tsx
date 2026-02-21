@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder } from '../types';
 import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check } from 'lucide-react';
@@ -14,6 +14,16 @@ interface LandInfo {
   mnnmSlno: string;      // 지번
   lndcgrCodeNm: string;  // 지목명
   lndpclAr: number;      // 면적(㎡)
+}
+
+// 토지이용계획속성조회 API 결과
+interface LandUseAttr {
+  prposAreaDstrcCode: string;    // 용도지역구코드
+  prposAreaDstrcCodeNm: string;  // 용도지역구명
+  cnflcAt: string;               // 저촉여부코드
+  cnflcAtNm: string;             // 저촉여부 (포함/저촉/접합)
+  registDt: string;              // 등록일자
+  lastUpdtDt: string;            // 데이터기준일자
 }
 
 // PNU를 건축물대장 API 파라미터로 변환
@@ -214,6 +224,29 @@ const fetchLandInfo = async (pnu: string, apiKey: string): Promise<LandInfo | nu
   } catch (error) {
     console.error('토지정보 조회 오류:', error);
     return null;
+  }
+};
+
+// 토지이용계획속성조회 API
+const fetchLandUseAttr = async (pnu: string, apiKey: string): Promise<LandUseAttr[]> => {
+  try {
+    const url = `/api/land/getLandUseAttr?pnu=${pnu}&cnflcAt=1&format=xml&numOfRows=100&pageNo=1&key=${apiKey}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'application/xml');
+    const fields = doc.querySelectorAll('field');
+    return Array.from(fields).map(f => ({
+      prposAreaDstrcCode: f.querySelector('prposAreaDstrcCode')?.textContent?.trim() || '',
+      prposAreaDstrcCodeNm: f.querySelector('prposAreaDstrcCodeNm')?.textContent?.trim() || '',
+      cnflcAt: f.querySelector('cnflcAt')?.textContent?.trim() || '',
+      cnflcAtNm: f.querySelector('cnflcAtNm')?.textContent?.trim() || '',
+      registDt: f.querySelector('registDt')?.textContent?.trim() || '',
+      lastUpdtDt: f.querySelector('lastUpdtDt')?.textContent?.trim() || '',
+    }));
+  } catch (err) {
+    console.error('토지이용계획 조회 오류:', err);
+    return [];
   }
 };
 
@@ -433,6 +466,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   });
   const [lotDisplayAddress, setLotDisplayAddress] = useState('');
   const [isLoadingLandInfo, setIsLoadingLandInfo] = useState(false);
+  const [lotUseAttrMap, setLotUseAttrMap] = useState<Record<string, LandUseAttr[]>>({});
 
   const selectedProperty = properties.find(p => p.id === selectedPropId);
   const propertyUnits = units.filter(u => u.propertyId === selectedPropId);
@@ -635,6 +669,18 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     const totalArea = updatedLots.reduce((sum, l) => sum + (l.area || 0), 0);
     onUpdateProperty({ ...selectedProperty, lots: updatedLots, totalLandArea: totalArea });
   };
+
+  // 토지 탭 진입 시 PNU 있는 필지 자동 조회
+  useEffect(() => {
+    if (activeTab !== 'LAND' || !selectedProperty || !appSettings.vworldApiKey) return;
+    selectedProperty.lots.forEach(lot => {
+      if (lot.pnu && lotUseAttrMap[lot.pnu] === undefined) {
+        fetchLandUseAttr(lot.pnu, appSettings.vworldApiKey).then(attrs => {
+          setLotUseAttrMap(prev => ({ ...prev, [lot.pnu!]: attrs }));
+        });
+      }
+    });
+  }, [activeTab, selectedProperty?.id]);
 
   // 토지 수정 모달 열기
   const openEditLotModal = (lot: Lot) => {
@@ -1111,6 +1157,21 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                                     <span className="font-bold text-[11px] md:text-sm text-gray-800 tracking-tight">{getFullAddress(lot.address)}</span>
                                                 </div>
                                                 {lot.pnu && <p className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 md:mt-1 hidden md:block">PNU: {lot.pnu}</p>}
+                                                {lot.pnu && (
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {lotUseAttrMap[lot.pnu] === undefined ? (
+                                                            appSettings.vworldApiKey
+                                                                ? <span className="text-[8px] text-gray-300 flex items-center gap-0.5"><Loader2 size={8} className="animate-spin"/>조회중</span>
+                                                                : null
+                                                        ) : lotUseAttrMap[lot.pnu].filter((attr, i, arr) => arr.findIndex(a => a.prposAreaDstrcCodeNm === attr.prposAreaDstrcCodeNm) === i).map((attr, i) => (
+                                                            <span key={i} className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] md:text-[9px] font-bold whitespace-nowrap ${
+                                                                attr.cnflcAtNm === '포함' ? 'bg-[#e8f0fe] text-[#1a73e8]' :
+                                                                attr.cnflcAtNm === '저촉' ? 'bg-red-50 text-red-600' :
+                                                                'bg-yellow-50 text-yellow-700'
+                                                            }`}>{attr.prposAreaDstrcCodeNm}</span>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </td>
                                             <td className="p-2 md:p-5"><span className="px-2 md:px-3 py-0.5 md:py-1 bg-gray-100 rounded-full text-[10px] md:text-xs font-black text-gray-600">{lot.jimok}</span></td>
                                             <td className="p-2 md:p-5 text-right font-black text-[11px] md:text-sm text-[#1a73e8] whitespace-nowrap">{formatArea(lot.area)}</td>
@@ -1999,13 +2060,31 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                 </div>
                                 <div>
                                   <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">정관리자</label>
-                                  <input type="text" value={zoningDetailForm.managerPrimary || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, managerPrimary: e.target.value })}
-                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm"/>
+                                  <select value={zoningDetailForm.managerPrimaryId || ''} onChange={e => {
+                                    const sh = stakeholders.find(s => s.id === e.target.value);
+                                    setZoningDetailForm({ ...zoningDetailForm, managerPrimaryId: e.target.value || undefined, managerPrimary: sh?.name || zoningDetailForm.managerPrimary });
+                                  }} className="w-full border border-[#dadce0] p-2 rounded-lg text-sm bg-white">
+                                    <option value="">-- 미등록 / 직접입력 --</option>
+                                    {stakeholders.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                  </select>
+                                  {!zoningDetailForm.managerPrimaryId && (
+                                    <input type="text" value={zoningDetailForm.managerPrimary || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, managerPrimary: e.target.value })}
+                                      className="w-full border border-[#dadce0] p-2 rounded-lg text-sm mt-1" placeholder="직접 입력"/>
+                                  )}
                                 </div>
                                 <div>
                                   <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">부관리자</label>
-                                  <input type="text" value={zoningDetailForm.managerSecondary || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, managerSecondary: e.target.value })}
-                                    className="w-full border border-[#dadce0] p-2 rounded-lg text-sm"/>
+                                  <select value={zoningDetailForm.managerSecondaryId || ''} onChange={e => {
+                                    const sh = stakeholders.find(s => s.id === e.target.value);
+                                    setZoningDetailForm({ ...zoningDetailForm, managerSecondaryId: e.target.value || undefined, managerSecondary: sh?.name || zoningDetailForm.managerSecondary });
+                                  }} className="w-full border border-[#dadce0] p-2 rounded-lg text-sm bg-white">
+                                    <option value="">-- 미등록 / 직접입력 --</option>
+                                    {stakeholders.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                  </select>
+                                  {!zoningDetailForm.managerSecondaryId && (
+                                    <input type="text" value={zoningDetailForm.managerSecondary || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, managerSecondary: e.target.value })}
+                                      className="w-full border border-[#dadce0] p-2 rounded-lg text-sm mt-1" placeholder="직접 입력"/>
+                                  )}
                                 </div>
                               </div>
                             )}
@@ -2020,8 +2099,17 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                   </div>
                                   <div>
                                     <label className="text-[10px] font-bold text-[#5f6368] mb-1 block">배정대상</label>
-                                    <input type="text" value={zoningDetailForm.parkingAssignee || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, parkingAssignee: e.target.value })}
-                                      className="w-full border border-[#dadce0] p-2 rounded-lg text-sm" placeholder="예: 대표이사"/>
+                                    <select value={zoningDetailForm.parkingAssigneeId || ''} onChange={e => {
+                                      const sh = stakeholders.find(s => s.id === e.target.value);
+                                      setZoningDetailForm({ ...zoningDetailForm, parkingAssigneeId: e.target.value || undefined, parkingAssignee: sh?.name || zoningDetailForm.parkingAssignee });
+                                    }} className="w-full border border-[#dadce0] p-2 rounded-lg text-sm bg-white">
+                                      <option value="">-- 미등록 / 직접입력 --</option>
+                                      {stakeholders.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                    </select>
+                                    {!zoningDetailForm.parkingAssigneeId && (
+                                      <input type="text" value={zoningDetailForm.parkingAssignee || ''} onChange={e => setZoningDetailForm({ ...zoningDetailForm, parkingAssignee: e.target.value })}
+                                        className="w-full border border-[#dadce0] p-2 rounded-lg text-sm mt-1" placeholder="예: 대표이사 (직접 입력)"/>
+                                    )}
                                   </div>
                                 </div>
                                 <div>

@@ -544,11 +544,14 @@ export interface ZoneDetail {
   // 창고/샘플실
   storageDepartment?: string;
   managerPrimary?: string;
+  managerPrimaryId?: string;    // Stakeholder ID 참조
   managerSecondary?: string;
+  managerSecondaryId?: string;  // Stakeholder ID 참조
   // 주차장
   parkingSpaces?: number;
   assignedVehicles?: string[];
   parkingAssignee?: string;
+  parkingAssigneeId?: string;   // Stakeholder ID 참조
   // 화장실
   toiletCount?: number;
   urinalCount?: number;
@@ -573,6 +576,36 @@ export interface FloorZone {
   excludeFromGFA?: boolean; // 연면적 산입 제외
   labelOffsetX?: number;  // 레이블 X 오프셋 (정규화 좌표, 중심 대비)
   labelOffsetY?: number;  // 레이블 Y 오프셋 (정규화 좌표, 중심 대비)
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ========================================
+// 주차관리
+// ========================================
+
+export type VehicleType = 'SEDAN' | 'SUV' | 'VAN' | 'EV' | 'TRUCK' | 'OTHER';
+export type ParkingStatus = 'IDLE' | 'OCCUPIED' | 'UNDER_REPAIR';
+
+export interface ParkingSpot {
+  id: string;
+  propertyId: string;
+  buildingId: string;
+  floorNumber: number;
+  zoneId: string;               // 연결된 FloorZone ID (PARKING 용도)
+  spotNumber: string;           // 주차면 번호 (예: A-001)
+  isDesignated: boolean;        // 지정주차 여부
+  designatedPlate?: string;     // 지정 차량번호
+  designatedPhoto?: string;     // 차량 사진 (base64)
+  vehicleType?: VehicleType;    // 차량유형
+  vehicleBrand?: string;        // 차종 브랜드
+  vehicleModel?: string;        // 차종 모델명
+  capacity: number;             // 주차대수 (기본 1, 탠덤주차 등)
+  assigneeId?: string;          // 배정대상 Stakeholder ID 참조
+  status: ParkingStatus;        // 주차상태
+  assignmentStartDate?: string; // 배정 시작일
+  assignmentEndDate?: string;   // 배정 유효기간
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }

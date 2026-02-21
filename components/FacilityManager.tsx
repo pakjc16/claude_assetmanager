@@ -6,7 +6,7 @@ import {
   ElevatorInfo, ElevatorInsurance, ElevatorSafetyManager, ElevatorInspection,
   ElevatorMalfunction, ElevatorAccident, ElevatorPartDefect, ElevatorMaintenanceContract, Building
 } from '../types';
-import { Wrench, Plus, AlertCircle, CheckCircle, X, History, Edit2, MapPin, ShieldAlert, Calendar, ClipboardCheck, DollarSign, Zap, Search, Loader2, ChevronLeft, ChevronRight, Printer, Layers } from 'lucide-react';
+import { Wrench, Plus, AlertCircle, CheckCircle, X, History, Edit2, MapPin, ShieldAlert, Calendar, ClipboardCheck, DollarSign, Zap, Search, Loader2, ChevronLeft, ChevronRight, Printer, Layers, RefreshCw, LayoutGrid, ArrowUpDown, TrendingUp, Flame, Thermometer, Wind, Droplets, Filter, Car, ParkingCircle, Gauge, BatteryCharging, Package, Camera, Settings } from 'lucide-react';
 
 const Modal = ({ children, onClose, disableOverlayClick = false }: { children?: React.ReactNode, onClose: () => void, disableOverlayClick?: boolean }) => {
   if (typeof document === 'undefined') return null;
@@ -367,11 +367,48 @@ const CATEGORY_LABELS: Record<FacilityCategory, string> = {
   OTHER: '기타설비'
 };
 
+const CATEGORY_ICONS: Record<string, any> = {
+  ALL: LayoutGrid,
+  ELEVATOR: ArrowUpDown,
+  ESCALATOR: TrendingUp,
+  ELECTRICAL: Zap,
+  FIRE_SAFETY: Flame,
+  BOILER: Thermometer,
+  GAS: Wind,
+  PLUMBING: Droplets,
+  SEPTIC_TANK: Filter,
+  PARKING_MECHANICAL: Car,
+  PARKING_BARRIER: ParkingCircle,
+  HVAC: Gauge,
+  EV_CHARGER: BatteryCharging,
+  HOIST: Package,
+  SECURITY: Camera,
+  OTHER: Settings,
+};
+
+const CATEGORY_SHORT_LABELS: Record<string, string> = {
+  ELEVATOR: '승강기',
+  ESCALATOR: '에스컬',
+  ELECTRICAL: '전기',
+  FIRE_SAFETY: '소방',
+  BOILER: '보일러',
+  GAS: '가스',
+  PLUMBING: '급배수',
+  SEPTIC_TANK: '정화조',
+  PARKING_MECHANICAL: '기계주차',
+  PARKING_BARRIER: '차단기',
+  HVAC: '냉난방',
+  EV_CHARGER: 'EV충전',
+  HOIST: '호이스트',
+  SECURITY: '보안',
+  OTHER: '기타',
+};
+
 const STATUS_LABELS: Record<FacilityStatus, {label: string, color: string, icon: any}> = {
-  OPERATIONAL: { label: '정상 가동', color: 'bg-[#e6f4ea] text-[#137333] border-[#ceead6]', icon: CheckCircle },
-  UNDER_REPAIR: { label: '수리 중', color: 'bg-[#fef7e0] text-[#b06000] border-[#feefc3]', icon: Wrench },
-  INSPECTION_DUE: { label: '점검 요망', color: 'bg-[#fce8e6] text-[#c5221f] border-[#fad2cf]', icon: AlertCircle },
-  MALFUNCTION: { label: '고장/장애', color: 'bg-gray-100 text-gray-500 border-gray-200', icon: ShieldAlert }
+  OPERATIONAL: { label: '정상', color: 'bg-[#e6f4ea] text-[#137333] border-[#ceead6]', icon: CheckCircle },
+  UNDER_REPAIR: { label: '수리중', color: 'bg-[#fef7e0] text-[#b06000] border-[#feefc3]', icon: Wrench },
+  INSPECTION_DUE: { label: '점검요망', color: 'bg-[#fce8e6] text-[#c5221f] border-[#fad2cf]', icon: AlertCircle },
+  MALFUNCTION: { label: '고장', color: 'bg-gray-100 text-gray-500 border-gray-200', icon: ShieldAlert }
 };
 
 // 카테고리별 사양 필드 정의
@@ -479,6 +516,7 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
   const [tempPartDefects, setTempPartDefects] = useState<Partial<ElevatorPartDefect>[]>([]);
   const [tempMaintenanceContracts, setTempMaintenanceContracts] = useState<Partial<ElevatorMaintenanceContract>[]>([]);
   const [inspectionPage, setInspectionPage] = useState(1);
+  const [safetyManagerPage, setSafetyManagerPage] = useState(1);
   const [tempSelfCheckSummaries, setTempSelfCheckSummaries] = useState<SelfCheckMonthlySummary[]>([]);
   const [selfCheckReportMonth, setSelfCheckReportMonth] = useState<string | null>(null);
   const [selfCheckReportData, setSelfCheckReportData] = useState<SelfCheckReportData | null>(null);
@@ -503,6 +541,8 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
     setTempPartDefects([]);
     setTempMaintenanceContracts([]);
     setTempSelfCheckSummaries([]);
+    setInspectionPage(1);
+    setSafetyManagerPage(1);
     setIsModalOpen(true);
     setActiveTab('basic');
   };
@@ -606,12 +646,15 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
       const data = await fetchElevatorFullData(no, apiKey, referenceDate);
 
       // 기본정보 자동입력 + 조회 기준일자 기록
-      setElevatorInfo(prev => ({ ...prev, ...data.elevatorInfo, lastFetchedAt: new Date().toISOString() } as any));
+      const newElevatorInfo = { ...elevatorInfo, ...data.elevatorInfo, lastFetchedAt: new Date().toISOString() } as any;
+      setElevatorInfo(newElevatorInfo);
 
       // 설비명칭 자동입력 (비어있을 때만)
+      let newName = facilityForm.name;
       if (!facilityForm.name && data.elevatorInfo.buldNm) {
         const kindLabel = data.elevatorInfo.elvtrDivNm || '승강기';
-        setFacilityForm(prev => ({ ...prev, name: `${data.elevatorInfo.buldNm} ${kindLabel} (${no})` }));
+        newName = `${data.elevatorInfo.buldNm} ${kindLabel} (${no})`;
+        setFacilityForm(prev => ({ ...prev, name: newName }));
       }
 
       // 안전관리자 자동입력
@@ -635,6 +678,20 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
       // 자체점검 월별 요약 저장
       if (data.selfCheckSummaries) {
         setTempSelfCheckSummaries(data.selfCheckSummaries);
+      }
+
+      // 기존 시설이면 조회 즉시 자동 저장
+      if (selectedFacilityId) {
+        const fac: Facility = {
+          ...facilityForm as Facility,
+          id: selectedFacilityId,
+          spec: newElevatorInfo,
+          lastInspectionDate: newElevatorInfo.lastInspctDe || facilityForm.lastInspectionDate || new Date().toISOString().split('T')[0],
+          nextInspectionDate: newElevatorInfo.applcEnDt || facilityForm.nextInspectionDate || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          installationDate: newElevatorInfo.installationDe || facilityForm.installationDate || new Date().toISOString().split('T')[0],
+          ...(newName ? { name: newName } : {}),
+        };
+        onUpdateFacility(fac);
       }
     } catch (err: any) {
       setElevatorApiError(err.message || '승강기 정보 조회에 실패했습니다.');
@@ -721,6 +778,8 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
     setTempPartDefects([]);
     setTempMaintenanceContracts([]);
     setTempSelfCheckSummaries([]);
+    setInspectionPage(1);
+    setSafetyManagerPage(1);
   };
 
   const handleOpenSelfCheckReport = async (yyyymm: string) => {
@@ -864,60 +923,80 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
               </button>
             </div>
 
-            {/* 카테고리 탭 */}
-            <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-2 md:px-4 overflow-x-auto">
-              <button onClick={() => setActiveCategoryTab('ALL')}
-                className={`px-3 md:px-6 py-2.5 md:py-4 text-[10px] md:text-xs font-bold uppercase tracking-wide md:tracking-widest transition-all flex items-center gap-1.5 md:gap-3 whitespace-nowrap ${activeCategoryTab === 'ALL' ? 'border-b-2 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
-                전체 ({propertyFacilities.length})
-              </button>
-              {availableCategories.map(cat => (
-                <button key={cat.id} onClick={() => setActiveCategoryTab(cat.id)}
-                  className={`px-3 md:px-6 py-2.5 md:py-4 text-[10px] md:text-xs font-bold uppercase tracking-wide md:tracking-widest transition-all flex items-center gap-1.5 md:gap-3 whitespace-nowrap ${activeCategoryTab === cat.id ? 'border-b-2 border-[#1a73e8] text-[#1a73e8] bg-white' : 'text-[#5f6368] hover:text-[#202124]'}`}>
-                  {cat.label} ({cat.count})
-                </button>
-              ))}
-            </div>
+            {/* 세로 카테고리 탭 + 카드 영역 */}
+            <div className="flex flex-row min-h-[300px]">
 
-            {/* 카드 목록 */}
-            <div className="p-3 md:p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-6">
-                {filteredFacilities.map(fac => {
-                  const status = STATUS_LABELS[fac.status];
-
+              {/* 세로 카테고리 탭 */}
+              <div className="w-[52px] md:w-16 flex-shrink-0 bg-[#f8f9fa] border-r border-[#dadce0] flex flex-col overflow-y-auto">
+                {/* 전체 탭 */}
+                {(() => {
+                  const isAll = activeCategoryTab === 'ALL';
                   return (
-                    <div key={fac.id} className="bg-white rounded-xl md:rounded-2xl border border-[#dadce0] p-3 md:p-6 hover:shadow-2xl transition-all relative group flex flex-col border-b-4 border-b-gray-100 hover:border-b-[#1a73e8] cursor-pointer" onClick={() => handleOpenView(fac)}>
-                      <div className="flex justify-between items-start mb-3 md:mb-5 gap-2">
-                        <div className="min-w-0 flex-1">
-                          <span className="text-[8px] md:text-[10px] font-black text-[#5f6368] uppercase tracking-wide md:tracking-widest bg-gray-50 px-1.5 md:px-2 py-0.5 rounded-md border border-gray-100">{CATEGORY_LABELS[fac.category]}</span>
-                          <h3 className="text-sm md:text-lg font-black text-[#202124] mt-1.5 md:mt-2 group-hover:text-[#1a73e8] transition-colors truncate">{fac.name}</h3>
-                        </div>
-                        <span className={`flex-shrink-0 px-1.5 md:px-2.5 py-0.5 md:py-1 rounded-full text-[8px] md:text-[10px] font-black border flex items-center gap-1 md:gap-1.5 shadow-sm whitespace-nowrap ${status.color}`}>
-                          <status.icon size={10} className="md:w-3 md:h-3"/>
-                          <span className="hidden md:inline">{status.label}</span>
-                        </span>
-                      </div>
-
-                      <div className="space-y-2 md:space-y-3 mt-2 md:mt-4 text-[10px] md:text-xs font-bold flex-1">
-                        <div className="flex justify-between items-center bg-[#f8f9fa] p-2 md:p-3 rounded-lg md:rounded-xl border border-gray-100">
-                          <span className="text-[#5f6368] flex items-center gap-1 md:gap-2"><Calendar size={12} className="md:w-3.5 md:h-3.5 text-gray-400"/> 점검일</span>
-                          <span className={`font-black ${fac.status === 'INSPECTION_DUE' ? 'text-red-600 bg-red-50 px-1.5 md:px-2 rounded' : 'text-gray-700'}`}>{fac.nextInspectionDate}</span>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 md:mt-6 flex gap-2 md:gap-3 pt-3 md:pt-5 border-t border-[#f1f3f4]">
-                        <button onClick={(e) => { e.stopPropagation(); handleOpenHistory(fac); }} className="flex-1 py-2 md:py-3 bg-[#e8f0fe] hover:bg-[#d2e3fc] text-[#1a73e8] rounded-lg md:rounded-xl text-[9px] md:text-[11px] font-black transition-all flex items-center justify-center gap-1 md:gap-2 active:scale-95 shadow-sm">
-                          <History size={14} className="md:w-4 md:h-4"/> 이력
-                        </button>
-                      </div>
-                    </div>
+                    <button onClick={() => setActiveCategoryTab('ALL')}
+                      className={`relative flex flex-col items-center justify-center py-2.5 gap-0.5 transition-all border-b border-gray-200 ${isAll ? 'bg-[#1a73e8] text-white' : 'text-[#5f6368] hover:bg-gray-200 hover:text-[#202124]'}`}>
+                      {isAll && <span className="absolute left-0 inset-y-0 w-0.5 bg-white rounded-r"/>}
+                      <LayoutGrid size={15}/>
+                      <span className="text-[8px] font-black leading-tight">전체</span>
+                      <span className={`text-[7px] font-black px-1 rounded-full leading-tight ${isAll ? 'bg-white/25 text-white' : 'bg-gray-200 text-gray-600'}`}>{propertyFacilities.length}</span>
+                    </button>
+                  );
+                })()}
+                {/* 카테고리별 탭 */}
+                {availableCategories.map(cat => {
+                  const Icon = CATEGORY_ICONS[cat.id] || Settings;
+                  const shortLabel = CATEGORY_SHORT_LABELS[cat.id] || cat.label;
+                  const isActive = activeCategoryTab === cat.id;
+                  return (
+                    <button key={cat.id} onClick={() => setActiveCategoryTab(cat.id)}
+                      className={`relative flex flex-col items-center justify-center py-2.5 gap-0.5 transition-all border-b border-gray-200 ${isActive ? 'bg-[#1a73e8] text-white' : 'text-[#5f6368] hover:bg-gray-200 hover:text-[#202124]'}`}>
+                      {isActive && <span className="absolute left-0 inset-y-0 w-0.5 bg-white rounded-r"/>}
+                      <Icon size={15}/>
+                      <span className="text-[7px] font-black leading-tight text-center px-0.5 break-words w-full">{shortLabel}</span>
+                      <span className={`text-[7px] font-black px-1 rounded-full leading-tight ${isActive ? 'bg-white/25 text-white' : 'bg-gray-200 text-gray-600'}`}>{cat.count}</span>
+                    </button>
                   );
                 })}
-                {filteredFacilities.length === 0 && (
-                  <div className="col-span-full py-16 md:py-32 text-center text-gray-400 font-bold text-xs md:text-sm bg-[#f8f9fa] rounded-xl md:rounded-2xl border-2 border-dashed border-gray-200">
-                    {propertyFacilities.length === 0 ? '등록된 설비가 존재하지 않습니다.' : '해당 카테고리에 설비가 없습니다.'}
-                  </div>
-                )}
               </div>
+
+              {/* 카드 목록 */}
+              <div className="flex-1 min-w-0 p-2 md:p-3 overflow-auto">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
+                  {filteredFacilities.map(fac => {
+                    const status = STATUS_LABELS[fac.status];
+                    return (
+                      <div key={fac.id} className="bg-white rounded-lg border border-[#dadce0] p-2 md:p-3 hover:shadow-md transition-all relative group flex flex-col border-b-2 border-b-gray-100 hover:border-b-[#1a73e8] cursor-pointer" onClick={() => handleOpenView(fac)}>
+                        <div className="flex justify-between items-start mb-1.5 gap-1">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[8px] font-black text-[#5f6368] uppercase tracking-wide bg-gray-50 px-1 py-0.5 rounded border border-gray-100">{CATEGORY_LABELS[fac.category]}</span>
+                            <h3 className="text-xs md:text-sm font-black text-[#202124] mt-1 group-hover:text-[#1a73e8] transition-colors truncate">{fac.name}</h3>
+                          </div>
+                          <span className={`flex-shrink-0 px-1.5 py-0.5 rounded-full text-[8px] font-black border flex items-center gap-1 whitespace-nowrap ${status.color}`}>
+                            <status.icon size={9}/>
+                            <span>{status.label}</span>
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[10px] font-bold flex-1">
+                          <div className="flex justify-between items-center bg-[#f8f9fa] px-2 py-1 rounded border border-gray-100">
+                            <span className="text-[#5f6368] flex items-center gap-1"><Calendar size={10} className="text-gray-400"/> 점검일</span>
+                            <span className={`font-black ${fac.status === 'INSPECTION_DUE' ? 'text-red-600' : 'text-gray-700'}`}>{fac.nextInspectionDate || '-'}</span>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex gap-1.5 pt-2 border-t border-[#f1f3f4]">
+                          <button onClick={(e) => { e.stopPropagation(); handleOpenHistory(fac); }} className="flex-1 py-1 bg-[#e8f0fe] hover:bg-[#d2e3fc] text-[#1a73e8] rounded text-[9px] font-black transition-all flex items-center justify-center gap-1 active:scale-95">
+                            <History size={11}/> 이력
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {filteredFacilities.length === 0 && (
+                    <div className="col-span-full py-12 text-center text-gray-400 font-bold text-xs bg-[#f8f9fa] rounded-xl border-2 border-dashed border-gray-200">
+                      {propertyFacilities.length === 0 ? '등록된 설비가 없습니다.' : '해당 카테고리에 설비가 없습니다.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+
             </div>
           </div>
         ) : (
@@ -1093,11 +1172,13 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
                               className={`px-4 py-2 rounded font-bold text-sm flex items-center gap-1.5 transition-all active:scale-95 ${
                                  isElevatorLoading
                                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                    : 'bg-[#1a73e8] text-white hover:bg-[#1557b0] shadow-md'
+                                    : (elevatorInfo as any).lastFetchedAt
+                                      ? 'bg-[#34a853] text-white hover:bg-[#2d9045] shadow-md'
+                                      : 'bg-[#1a73e8] text-white hover:bg-[#1557b0] shadow-md'
                               }`}
                            >
-                              {isElevatorLoading ? <Loader2 size={14} className="animate-spin"/> : <Search size={14}/>}
-                              {isElevatorLoading ? '조회 중...' : '조회'}
+                              {isElevatorLoading ? <Loader2 size={14} className="animate-spin"/> : (elevatorInfo as any).lastFetchedAt ? <RefreshCw size={14}/> : <Search size={14}/>}
+                              {isElevatorLoading ? '조회 중...' : (elevatorInfo as any).lastFetchedAt ? '새로고침' : '조회'}
                            </button>
                            {elevatorApiError && (
                               <span className="text-xs text-[#ea4335] font-bold flex items-center gap-1">
@@ -1202,9 +1283,16 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
                      </div>
 
                      {/* ② 안전관리자 정보 */}
+                     {(() => {
+                        const SM_PAGE_SIZE = 4;
+                        const smTotalPages = Math.max(1, Math.ceil(tempSafetyManagers.length / SM_PAGE_SIZE));
+                        const smCurrentPage = Math.min(safetyManagerPage, smTotalPages);
+                        const pagedSafetyManagers = tempSafetyManagers.slice((smCurrentPage - 1) * SM_PAGE_SIZE, smCurrentPage * SM_PAGE_SIZE);
+                        return (
                      <div className="bg-[#f8f9fa] p-4 md:p-6 rounded-xl border border-gray-200">
                         <h4 className="font-black text-sm md:text-base text-[#1a73e8] flex items-center gap-2 border-b border-[#1a73e8] pb-2 mb-4">
                            <ShieldAlert size={16}/> 안전관리자 정보
+                           {tempSafetyManagers.length > 0 && <span className="text-xs font-normal text-gray-500 ml-auto">총 {tempSafetyManagers.length}건</span>}
                         </h4>
                         <div className="bg-white rounded-lg overflow-x-auto border border-gray-200">
                            <table className="w-full text-xs md:text-sm min-w-[500px]">
@@ -1217,7 +1305,7 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
                                  </tr>
                               </thead>
                               <tbody>
-                                 {tempSafetyManagers.length > 0 ? tempSafetyManagers.map((mgr, i) => (
+                                 {pagedSafetyManagers.length > 0 ? pagedSafetyManagers.map((mgr, i) => (
                                     <tr key={i} className="border-t border-gray-100 text-center">
                                        <td className="p-2 md:p-3 font-bold">{mgr.managerName}</td>
                                        <td className="p-2 md:p-3">{mgr.appointmentDate}</td>
@@ -1230,7 +1318,23 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
                               </tbody>
                            </table>
                         </div>
+                        {smTotalPages > 1 && (
+                           <div className="flex items-center justify-center gap-1 mt-3">
+                              <button onClick={() => setSafetyManagerPage(p => Math.max(1, p - 1))} disabled={smCurrentPage === 1}
+                                 className="px-2 py-1 text-xs rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100">◀</button>
+                              {Array.from({ length: smTotalPages }, (_, idx) => idx + 1).map(pg => (
+                                 <button key={pg} onClick={() => setSafetyManagerPage(pg)}
+                                    className={`px-2.5 py-1 text-xs rounded border ${smCurrentPage === pg ? 'bg-[#1a73e8] text-white border-[#1a73e8]' : 'border-gray-300 hover:bg-gray-100'}`}>
+                                    {pg}
+                                 </button>
+                              ))}
+                              <button onClick={() => setSafetyManagerPage(p => Math.min(smTotalPages, p + 1))} disabled={smCurrentPage === smTotalPages}
+                                 className="px-2 py-1 text-xs rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100">▶</button>
+                           </div>
+                        )}
                      </div>
+                        );
+                     })()}
 
                      {/* ③ 검사이력 */}
                      {(() => {
