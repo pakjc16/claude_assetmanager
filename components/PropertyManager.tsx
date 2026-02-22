@@ -1753,20 +1753,18 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
                    return (
                    <div className="space-y-3">
-                      {/* 상단: 대표사진/로드뷰(왼쪽) + 위치지도(오른쪽) */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 h-[200px] md:h-[240px]">
+                      {/* 상단: 대표사진/로드뷰(왼쪽) + 위치지도(오른쪽) — 반응형 높이 */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
                          {/* 대표 사진 or 로드뷰 */}
-                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col bg-white">
+                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col bg-white h-[55vw] md:h-[35vh] lg:h-[38vh] md:max-h-[440px]">
                             <div className="flex-1 min-h-0 relative">
                                {mainPhoto ? (
-                                 /* 대표 사진 표시 */
                                  <img
                                    src={mainPhoto.url}
                                    alt={mainPhoto.name || '대표 사진'}
                                    className="w-full h-full object-cover"
                                  />
                                ) : (
-                                 /* 사진 없으면 로드뷰 (미니맵 없음, 캡처 없음) */
                                  <KakaoRoadview
                                    address={propAddress}
                                    apiKey={appSettings.kakaoMapApiKey || ''}
@@ -1774,7 +1772,6 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                    showMinimap={false}
                                  />
                                )}
-                               {/* 전체화면 버튼 (우상단) */}
                                <button
                                  onClick={() => { setGalleryViewPhotoId(null); setIsPhotoModalOpen(true); }}
                                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 z-20 transition-colors"
@@ -1782,7 +1779,6 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                  <Maximize2 size={11}/> 전체화면
                                  {photos.length > 0 && <span className="ml-0.5 text-[#60a5fa]">· {photos.length}장</span>}
                                </button>
-                               {/* 대표 사진 표시 배지 */}
                                {mainPhoto && (
                                  <div className="absolute top-2 left-2 bg-amber-400/90 text-white text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 pointer-events-none">
                                    <Star size={9} fill="white"/> 대표
@@ -1791,8 +1787,8 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                             </div>
                          </div>
 
-                         {/* 위치 지도 (항상 표시) */}
-                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden">
+                         {/* 위치 지도 */}
+                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden h-[55vw] md:h-[35vh] lg:h-[38vh] md:max-h-[440px]">
                             <KakaoMapPin
                                address={propAddress}
                                apiKey={appSettings.kakaoMapApiKey || ''}
