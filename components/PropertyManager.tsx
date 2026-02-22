@@ -897,6 +897,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   // 사진 캐러셀 상태
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
+  const [galleryViewPhotoId, setGalleryViewPhotoId] = useState<string | null>(null); // null = 로드뷰
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   // 사진 파일 선택 핸들러 (모달 열기)
@@ -1775,7 +1776,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                )}
                                {/* 전체화면 버튼 (우상단) */}
                                <button
-                                 onClick={() => setIsPhotoModalOpen(true)}
+                                 onClick={() => { setGalleryViewPhotoId(null); setIsPhotoModalOpen(true); }}
                                  className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 z-20 transition-colors"
                                >
                                  <Maximize2 size={11}/> 전체화면
@@ -3984,10 +3985,11 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           </Modal>
       )}
 
-      {/* 로드뷰 갤러리 모달 — 풀스크린 로드뷰 + 하단 사진 스트립 */}
+      {/* 갤러리 모달 — 풀스크린 로드뷰/사진 뷰어 + 하단 썸네일 스트립 */}
       {isPhotoModalOpen && selectedProperty && (() => {
         const propAddr = selectedProperty.roadAddress || [selectedProperty.masterAddress.sido, selectedProperty.masterAddress.sigungu, selectedProperty.masterAddress.eupMyeonDong, selectedProperty.masterAddress.li, selectedProperty.masterAddress.bonbun].filter(Boolean).join(' ');
         const photos = selectedProperty.photos || [];
+        const viewingPhoto = galleryViewPhotoId ? photos.find(p => p.id === galleryViewPhotoId) ?? null : null;
         return (
           <div className="fixed inset-0 z-[200] bg-black flex flex-col">
             {/* 헤더 */}
@@ -3995,7 +3997,9 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
               <div className="flex items-center gap-2">
                 <MapPin size={13} className="text-[#1a73e8]"/>
                 <span className="text-white font-bold text-sm truncate max-w-[200px] md:max-w-none">{selectedProperty.name}</span>
-                <span className="text-white/40 text-xs hidden md:inline">로드뷰 탐색</span>
+                <span className="text-white/40 text-xs hidden md:inline">
+                  {viewingPhoto ? (viewingPhoto.name || '사진') : '로드뷰 탐색'}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <input ref={photoInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoUpload}/>
@@ -4014,54 +4018,100 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
               </div>
             </div>
 
-            {/* 메인: 풀스크린 로드뷰 */}
-            <div className="flex-1 min-h-0 relative">
-              <KakaoRoadview
-                address={propAddr}
-                apiKey={appSettings.kakaoMapApiKey || ''}
-                className="absolute inset-0"
-                onCapture={(photo) => handleRoadviewCapture(photo)}
-              />
-            </div>
-
-            {/* 하단: 저장된 사진 스트립 (항상 표시, 사진 없으면 안내) */}
-            <div className="flex-shrink-0 bg-black/90 border-t border-white/10 px-3 py-2">
-              {photos.length === 0 ? (
-                <div className="flex items-center justify-center h-10 text-white/40 text-xs">
-                  저장된 사진 없음 — 스크린샷 저장 또는 파일 추가로 등록하세요
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-                  {photos.map((photo, idx) => (
-                    <div key={photo.id} className="relative flex-shrink-0 group cursor-pointer"
-                      onClick={() => handleSetMainPhoto(photo.id)}
-                      title="클릭하여 대표 사진으로 설정"
-                    >
-                      <img
-                        src={photo.url}
-                        alt=""
-                        className={`h-16 w-24 object-cover rounded-lg transition-all ${photo.isMain ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black' : 'opacity-70 hover:opacity-100'}`}
-                      />
-                      {/* 대표 사진 별표 */}
-                      {photo.isMain && (
-                        <div className="absolute top-1 left-1 bg-amber-400 rounded-full w-4 h-4 flex items-center justify-center pointer-events-none">
-                          <Star size={9} fill="white" className="text-white"/>
-                        </div>
-                      )}
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[8px] text-white/80 px-1 py-0.5 rounded-b-lg truncate pointer-events-none text-center">
-                        {photo.name || `사진 ${idx + 1}`}
-                      </div>
-                      {/* 삭제 버튼 */}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handlePhotoDelete(photo.id); }}
-                        className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <X size={8}/>
-                      </button>
-                    </div>
-                  ))}
+            {/* 메인: 로드뷰 or 사진 */}
+            <div className="flex-1 min-h-0 relative bg-black">
+              {/* 로드뷰 — 항상 DOM 유지 (언마운트 방지), 사진 볼 때는 뒤에 숨김 */}
+              <div className={`absolute inset-0 ${viewingPhoto ? 'invisible' : 'visible'}`}>
+                <KakaoRoadview
+                  address={propAddr}
+                  apiKey={appSettings.kakaoMapApiKey || ''}
+                  className="absolute inset-0"
+                  onCapture={(photo) => handleRoadviewCapture(photo)}
+                />
+              </div>
+              {/* 선택된 사진 */}
+              {viewingPhoto && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <img
+                    src={viewingPhoto.url}
+                    alt={viewingPhoto.name || ''}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                  {/* 대표 설정 버튼 */}
+                  <button
+                    onClick={() => handleSetMainPhoto(viewingPhoto.id)}
+                    className={`absolute top-3 left-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors shadow-lg ${
+                      viewingPhoto.isMain
+                        ? 'bg-amber-400 text-white'
+                        : 'bg-black/50 hover:bg-amber-400 text-white'
+                    }`}
+                  >
+                    <Star size={11} fill={viewingPhoto.isMain ? 'white' : 'none'}/>
+                    {viewingPhoto.isMain ? '대표 사진' : '대표로 설정'}
+                  </button>
                 </div>
               )}
+            </div>
+
+            {/* 하단: 썸네일 스트립 */}
+            <div className="flex-shrink-0 bg-black/95 border-t border-white/10 px-3 py-2.5">
+              <div className="flex items-end gap-2.5 overflow-x-auto pb-0.5">
+                {/* 로드뷰 썸네일 */}
+                <div
+                  className={`relative flex-shrink-0 cursor-pointer rounded-xl overflow-hidden transition-all ${
+                    !viewingPhoto ? 'ring-2 ring-[#1a73e8] ring-offset-1 ring-offset-black' : 'opacity-60 hover:opacity-100'
+                  }`}
+                  style={{ width: 120, height: 80 }}
+                  onClick={() => setGalleryViewPhotoId(null)}
+                >
+                  <div className="w-full h-full bg-[#1a2a3a] flex flex-col items-center justify-center gap-1">
+                    <MapPin size={18} className="text-[#1a73e8]"/>
+                    <span className="text-white text-[10px] font-bold">로드뷰</span>
+                  </div>
+                  {!viewingPhoto && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#1a73e8]"/>
+                  )}
+                </div>
+
+                {/* 사진 썸네일들 */}
+                {photos.map((photo, idx) => (
+                  <div
+                    key={photo.id}
+                    className={`relative flex-shrink-0 group cursor-pointer rounded-xl overflow-hidden transition-all ${
+                      galleryViewPhotoId === photo.id
+                        ? 'ring-2 ring-white ring-offset-1 ring-offset-black'
+                        : 'opacity-60 hover:opacity-100'
+                    }`}
+                    style={{ width: 120, height: 80 }}
+                    onClick={() => setGalleryViewPhotoId(photo.id)}
+                  >
+                    <img
+                      src={photo.url}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                    {/* 대표 사진 별표 */}
+                    {photo.isMain && (
+                      <div className="absolute top-1 left-1 bg-amber-400 rounded-full w-4 h-4 flex items-center justify-center pointer-events-none">
+                        <Star size={9} fill="white" className="text-white"/>
+                      </div>
+                    )}
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-white/90 px-1.5 py-0.5 truncate pointer-events-none text-center font-medium">
+                      {photo.name || `사진 ${idx + 1}`}
+                    </div>
+                    {/* 삭제 버튼 */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handlePhotoDelete(photo.id); }}
+                      className="absolute top-1 right-1 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X size={9}/>
+                    </button>
+                    {galleryViewPhotoId === photo.id && (
+                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white"/>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         );
