@@ -1756,7 +1756,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                       {/* 상단: 대표사진/로드뷰(왼쪽) + 위치지도(오른쪽) — 반응형 높이 */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-3">
                          {/* 대표 사진 or 로드뷰 */}
-                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col bg-white h-[55vw] md:h-[35vh] lg:h-[38vh] md:max-h-[440px]">
+                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col bg-white h-[44vw] md:h-[28vh] lg:h-[30vh] md:max-h-[352px]">
                             <div className="flex-1 min-h-0 relative">
                                {mainPhoto ? (
                                  <img
@@ -1788,7 +1788,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                          </div>
 
                          {/* 위치 지도 */}
-                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden h-[55vw] md:h-[35vh] lg:h-[38vh] md:max-h-[440px]">
+                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden h-[44vw] md:h-[28vh] lg:h-[30vh] md:max-h-[352px]">
                             <KakaoMapPin
                                address={propAddress}
                                apiKey={appSettings.kakaoMapApiKey || ''}
