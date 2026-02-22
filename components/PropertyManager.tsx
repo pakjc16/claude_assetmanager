@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder } from '../types';
-import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check } from 'lucide-react';
+import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder, RegistryGabEntry, RegistryEulEntry, PropertyRegistry } from '../types';
+import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check, ChevronDown, ChevronUp, Camera, Maximize2, Star, Crop } from 'lucide-react';
 import { AddressSearch } from './AddressSearch';
 import { AppSettings } from '../App';
 import FloorPlanViewer from './FloorPlanViewer';
@@ -320,6 +320,461 @@ const ZONE_USAGE_LABELS: Record<ZoneUsage, string> = {
 };
 const ZONE_USAGE_OPTIONS: ZoneUsage[] = ['STORE', 'COMMON', 'OFFICE', 'MEETING_ROOM', 'RESTAURANT', 'AUDITORIUM', 'STORAGE', 'SAMPLE_ROOM', 'CANTEEN', 'PARKING', 'LIVING_ROOM', 'MASTER_BEDROOM', 'BEDROOM', 'BATHROOM', 'CORRIDOR', 'VOID', 'LANDSCAPE'];
 
+// ── 카카오맵 SDK 싱글톤 로더 (모듈 레벨 - 컴포넌트 인스턴스 간 공유) ──
+// React 렌더링 타이밍과 무관하게 스크립트가 딱 한 번만 로드되도록 보장
+let _kakaoState: 'none' | 'loading' | 'ready' | 'error' = 'none';
+const _kakaoQueue: Array<() => void> = [];
+
+function ensureKakaoMaps(apiKey: string, callback: () => void): void {
+  // 이미 준비됨
+  if (_kakaoState === 'ready' && (window as any).kakao?.maps?.services?.Geocoder) {
+    callback();
+    return;
+  }
+  // 에러 상태
+  if (_kakaoState === 'error') return;
+
+  // 콜백 대기열에 추가
+  _kakaoQueue.push(callback);
+
+  // 이미 로딩 중 → 대기열에만 추가하고 리턴
+  if (_kakaoState === 'loading') return;
+
+  // 처음 로드 시작
+  _kakaoState = 'loading';
+  const script = document.createElement('script');
+  script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${apiKey}&libraries=services&autoload=false`;
+  script.onload = () => {
+    (window as any).kakao.maps.load(() => {
+      _kakaoState = 'ready';
+      const cbs = _kakaoQueue.splice(0);
+      cbs.forEach(cb => cb());
+    });
+  };
+  script.onerror = () => {
+    _kakaoState = 'error';
+    _kakaoQueue.length = 0;
+  };
+  document.head.appendChild(script);
+}
+
+// ── 카카오맵 로드뷰 컴포넌트 (미니맵 + 저장 버튼) ──
+const KakaoRoadview: React.FC<{
+  address: string;
+  apiKey: string;
+  className?: string;
+  showMinimap?: boolean;
+  onCapture?: (photo: { url: string; name: string }) => void;
+}> = ({ address, apiKey, className = '', showMinimap = true, onCapture }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const minimapRef = useRef<HTMLDivElement>(null);
+  const roadviewRef = useRef<any>(null);
+  const minimapMapRef = useRef<any>(null);
+  const minimapMarkerRef = useRef<any>(null);
+  const coordsRef = useRef<any>(null);
+  const [status, setStatus] = useState<'loading' | 'ok' | 'no-roadview' | 'error' | 'no-key'>('loading');
+  const [pan, setPan] = useState(0);
+  const [isCapturing, setIsCapturing] = useState(false);
+  // 영역 지정 crop state
+  const capturedBitmapRef = useRef<ImageBitmap | null>(null);
+  const cropScaleRef = useRef({ x: 1, y: 1 });
+  const [cropBgUrl, setCropBgUrl] = useState<string | null>(null);
+  const [cropStart, setCropStart] = useState<{ x: number; y: number } | null>(null);
+  const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    if (!apiKey) { setStatus('no-key'); return; }
+    if (!address.trim()) { setStatus('error'); return; }
+    setStatus('loading');
+    let mounted = true;
+
+    // WebGL preserveDrawingBuffer 영구 패치 — SDK가 비동기로 getContext 호출해도 적용됨
+    // try/finally 복원 안 함: Kakao SDK가 constructor 이후 비동기로 getContext 호출하기 때문
+    if (!(window as any).__webglPBPatched) {
+      const _orig = (HTMLCanvasElement.prototype as any).getContext;
+      (HTMLCanvasElement.prototype as any).getContext = function(this: HTMLCanvasElement, t: string, a?: any) {
+        if (t === 'webgl' || t === 'webgl2') a = { ...(a ?? {}), preserveDrawingBuffer: true };
+        return _orig.call(this, t, a);
+      };
+      (window as any).__webglPBPatched = true;
+    }
+
+    const initRoadview = () => {
+      if (!mounted || !containerRef.current) return;
+      const kakao = (window as any).kakao;
+      const geocoder = new kakao.maps.services.Geocoder();
+      geocoder.addressSearch(address, (result: any[], st: string) => {
+        if (!mounted) return;
+        if (st !== kakao.maps.services.Status.OK || !result.length) { setStatus('error'); return; }
+        const coords = new kakao.maps.LatLng(parseFloat(result[0].y), parseFloat(result[0].x));
+        coordsRef.current = coords;
+        const rvClient = new kakao.maps.RoadviewClient();
+        rvClient.getNearestPanoId(coords, 50, (panoId: number | null) => {
+          if (!mounted || !containerRef.current) return;
+          if (panoId === null) { setStatus('no-roadview'); return; }
+          if (!roadviewRef.current) {
+            roadviewRef.current = new kakao.maps.Roadview(containerRef.current);
+          }
+          roadviewRef.current.setPanoId(panoId, coords);
+          setStatus('ok');
+          // relayout: DOM paint 후 SDK가 컨테이너 크기를 재계산하게 강제
+          setTimeout(() => { if (mounted && roadviewRef.current) { try { roadviewRef.current.relayout(); } catch (_) {} } }, 200);
+          // 미니맵 초기화 (렌더링 완료 후)
+          setTimeout(() => {
+            if (!mounted || !minimapRef.current) return;
+            const miniMap = new kakao.maps.Map(minimapRef.current, {
+              center: coords, level: 3,
+              draggable: false, scrollwheel: false,
+              disableDoubleClick: true, disableDoubleClickZoom: true,
+            });
+            minimapMapRef.current = miniMap;
+            minimapMarkerRef.current = new kakao.maps.Marker({ position: coords, map: miniMap });
+            // 시점 변경 리스너
+            kakao.maps.event.addListener(roadviewRef.current, 'viewpoint_changed', () => {
+              if (!roadviewRef.current) return;
+              try {
+                const vp = roadviewRef.current.getViewpoint();
+                if (vp && typeof vp.pan === 'number') setPan(vp.pan);
+                const pos = roadviewRef.current.getPosition();
+                if (pos) {
+                  miniMap.setCenter(pos);
+                  minimapMarkerRef.current?.setPosition(pos);
+                  coordsRef.current = pos;
+                }
+              } catch (_) { /* API 초기화 중 발생 가능한 오류 무시 */ }
+            });
+          }, 600);
+        });
+      });
+    };
+
+    ensureKakaoMaps(apiKey, initRoadview);
+    return () => { mounted = false; };
+  }, [address, apiKey]);
+
+  // 저장 버튼 핸들러 — getDisplayMedia 캡처 후 사각형 영역 지정 UI
+  const handleCapture = async () => {
+    if (!onCapture || !containerRef.current) return;
+
+    // 오버레이(미니맵·라벨·버튼) 숨김 → React 리렌더 대기
+    setIsCapturing(true);
+    await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        // @ts-ignore — Chrome/Edge: 현재 탭 미리 선택 힌트
+        preferCurrentTab: true,
+      } as any);
+
+      const [track] = stream.getVideoTracks();
+
+      // 프레임 획득
+      let bitmap: ImageBitmap;
+      if ((window as any).ImageCapture) {
+        const ic = new (window as any).ImageCapture(track);
+        bitmap = await ic.grabFrame();
+      } else {
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.muted = true;
+        await new Promise<void>(resolve => { video.oncanplay = () => resolve(); video.play(); });
+        await new Promise(r => setTimeout(r, 100));
+        bitmap = await createImageBitmap(video);
+        video.pause();
+      }
+
+      // 캡처된 이미지를 프리뷰용 data URL로 변환
+      const previewCanvas = document.createElement('canvas');
+      previewCanvas.width = bitmap.width;
+      previewCanvas.height = bitmap.height;
+      previewCanvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+      const previewUrl = previewCanvas.toDataURL('image/jpeg', 0.85);
+
+      // 비율 저장 (캡처 물리px → CSS viewport px)
+      capturedBitmapRef.current = bitmap;
+      cropScaleRef.current = { x: bitmap.width / window.innerWidth, y: bitmap.height / window.innerHeight };
+
+      // crop UI 진입
+      setCropBgUrl(previewUrl);
+      setCropStart(null);
+      setCropRect(null);
+
+    } catch (e: any) {
+      if (e?.name !== 'NotAllowedError') console.warn('스크린샷 실패:', e);
+    } finally {
+      stream?.getTracks().forEach(t => t.stop());
+      setIsCapturing(false);
+    }
+  };
+
+  // 영역 지정 후 저장
+  const handleCropSave = async () => {
+    if (!onCapture || !capturedBitmapRef.current || !cropRect) return;
+    const bitmap = capturedBitmapRef.current;
+    const sx = cropScaleRef.current;
+    const cropX = Math.max(0, Math.round(cropRect.x * sx.x));
+    const cropY = Math.max(0, Math.round(cropRect.y * sx.y));
+    const cropW = Math.min(Math.round(cropRect.w * sx.x), bitmap.width - cropX);
+    const cropH = Math.min(Math.round(cropRect.h * sx.y), bitmap.height - cropY);
+    if (cropW < 4 || cropH < 4) return;
+
+    const off = document.createElement('canvas');
+    off.width = cropW;
+    off.height = cropH;
+    off.getContext('2d')!.drawImage(bitmap, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+    const dateStr = new Date().toLocaleDateString('ko-KR');
+    const url = off.toDataURL('image/jpeg', 0.92);
+
+    // 클립보드 복사 (지원 시)
+    try {
+      const blob = await new Promise<Blob>(res => off.toBlob(b => res(b!), 'image/png'));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    } catch (_) { /* 클립보드 권한 없음 */ }
+
+    onCapture({ url, name: `로드뷰_${dateStr}` });
+    handleCropCancel();
+  };
+
+  const handleCropCancel = () => {
+    setCropBgUrl(null);
+    setCropStart(null);
+    setCropRect(null);
+    capturedBitmapRef.current?.close?.();
+    capturedBitmapRef.current = null;
+  };
+
+  const handleCropMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setCropStart({ x: e.clientX, y: e.clientY });
+    setCropRect(null);
+  };
+
+  const handleCropMouseMove = (e: React.MouseEvent) => {
+    if (!cropStart) return;
+    const x = Math.min(cropStart.x, e.clientX);
+    const y = Math.min(cropStart.y, e.clientY);
+    const w = Math.abs(e.clientX - cropStart.x);
+    const h = Math.abs(e.clientY - cropStart.y);
+    setCropRect({ x, y, w, h });
+  };
+
+  const handleCropMouseUp = () => {
+    if (cropRect && cropRect.w > 8 && cropRect.h > 8) {
+      // 선택 완료 — 사용자가 저장 버튼 클릭 대기
+    } else {
+      setCropStart(null);
+      setCropRect(null);
+    }
+  };
+
+  // position 클래스가 이미 있으면 relative 추가 안 함 (CSS 충돌 방지)
+  // absolute/fixed 는 그 자체로 positioned element → 자식의 absolute 포지셔닝 컨텍스트 제공
+  const hasPos = /\b(absolute|fixed|sticky)\b/.test(className);
+  const outerCls = hasPos ? className : `relative ${className}`;
+
+  return (
+    <div className={outerCls}>
+      {/* SDK 컨테이너: positioned element 자식으로 absolute inset-0 → 항상 부모 전체 채움 */}
+      <div ref={containerRef} className="absolute inset-0" />
+
+      {status === 'loading' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#f0f4f8]">
+          <div className="w-5 h-5 border-2 border-[#1a73e8] border-t-transparent rounded-full animate-spin mb-1.5"/>
+          <p className="text-[10px] text-[#5f6368]">로드뷰 불러오는 중...</p>
+        </div>
+      )}
+      {status === 'no-roadview' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#f8f9fa]">
+          <MapPin size={22} className="text-[#c5c8cc] mb-1"/>
+          <p className="text-[10px] text-[#9aa0a6]">로드뷰 정보 없음</p>
+          <p className="text-[9px] text-[#c5c8cc] mt-0.5 px-2 text-center">{address}</p>
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#f8f9fa]">
+          <MapPin size={22} className="text-[#c5c8cc] mb-1"/>
+          <p className="text-[10px] text-[#9aa0a6]">주소를 찾을 수 없음</p>
+        </div>
+      )}
+      {status === 'no-key' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#f8f9fa]">
+          <MapPin size={22} className="text-[#c5c8cc] mb-1"/>
+          <p className="text-[10px] text-[#9aa0a6]">로드뷰 API 키 미설정</p>
+          <p className="text-[9px] text-[#c5c8cc] mt-0.5">환경설정 → API 설정</p>
+        </div>
+      )}
+      {status === 'ok' && (
+        <>
+          {/* 미니맵 오버레이 (우하단) — showMinimap=false면 숨김, Kakao SDK ref 보존을 위해 항상 DOM 유지 */}
+          <div
+            className="absolute bottom-2 right-2 w-[150px] h-[110px] rounded-lg overflow-hidden border-2 border-white shadow-lg z-10"
+            style={{ visibility: (showMinimap && !isCapturing) ? 'visible' : 'hidden' }}
+          >
+            <div ref={minimapRef} className="w-full h-full" />
+            <div
+              className="absolute inset-0 flex items-center justify-center pointer-events-none"
+              style={{ transform: `rotate(${pan}deg)` }}
+            >
+              <div style={{
+                width: 0, height: 0, marginBottom: '6px',
+                borderLeft: '7px solid transparent',
+                borderRight: '7px solid transparent',
+                borderBottom: '14px solid rgba(26,115,232,0.85)',
+              }} />
+            </div>
+          </div>
+          {/* 로드뷰 라벨 — 캡처 중 숨김 */}
+          <div
+            className="absolute top-2 left-2 bg-black/40 text-white text-[9px] px-1.5 py-0.5 rounded pointer-events-none z-10"
+            style={{ visibility: isCapturing ? 'hidden' : 'visible' }}
+          >
+            로드뷰
+          </div>
+          {/* 스크린샷 저장 버튼 (하단 중앙) */}
+          {onCapture && (
+            <button
+              onClick={handleCapture}
+              disabled={isCapturing}
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 hover:bg-white text-[#202124] text-sm px-5 py-2 rounded-full shadow-xl font-bold flex items-center gap-2 transition-colors z-20 disabled:opacity-0"
+              style={{ visibility: isCapturing ? 'hidden' : 'visible' }}
+            >
+              <Camera size={15}/> 스크린샷 저장
+            </button>
+          )}
+          {/* 캡처 중 안내 */}
+          {isCapturing && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-4 py-2 rounded-full flex items-center gap-2 z-20 pointer-events-none">
+              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"/>
+              화면 공유 선택 중...
+            </div>
+          )}
+        </>
+      )}
+
+      {/* 영역 지정 crop overlay — portal로 full-screen 렌더 */}
+      {cropBgUrl && createPortal(
+        <div
+          className="fixed inset-0 z-[1000] overflow-hidden select-none"
+          style={{ cursor: cropStart ? 'crosshair' : 'crosshair' }}
+          onMouseDown={handleCropMouseDown}
+          onMouseMove={handleCropMouseMove}
+          onMouseUp={handleCropMouseUp}
+        >
+          {/* 캡처된 화면 배경 */}
+          <img src={cropBgUrl} className="absolute inset-0 w-full h-full object-cover pointer-events-none" draggable={false}/>
+          {/* 전체 반투명 어두운 오버레이 */}
+          <div className="absolute inset-0 bg-black/40 pointer-events-none"/>
+          {/* 선택 영역 — box-shadow로 바깥만 어둡게 */}
+          {cropRect && cropRect.w > 2 && cropRect.h > 2 && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: cropRect.x,
+                top: cropRect.y,
+                width: cropRect.w,
+                height: cropRect.h,
+                boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
+                border: '2px solid rgba(255,255,255,0.9)',
+                outline: '1px solid rgba(26,115,232,0.8)',
+              }}
+            >
+              {/* 크기 표시 */}
+              <div className="absolute -bottom-6 left-0 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap pointer-events-none">
+                {Math.round(cropRect.w)} × {Math.round(cropRect.h)}
+              </div>
+            </div>
+          )}
+          {/* 상단 안내 + 버튼 */}
+          <div
+            className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3 pointer-events-auto"
+            onMouseDown={e => e.stopPropagation()}
+          >
+            <div className="bg-black/70 text-white text-sm px-4 py-2 rounded-full flex items-center gap-2">
+              <Crop size={14}/> 저장할 영역을 드래그하세요
+            </div>
+            {cropRect && cropRect.w > 8 && cropRect.h > 8 && (
+              <button
+                onClick={handleCropSave}
+                className="bg-[#1a73e8] hover:bg-[#1557b0] text-white text-sm font-bold px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 transition-colors"
+              >
+                <Camera size={14}/> 저장
+              </button>
+            )}
+            <button
+              onClick={handleCropCancel}
+              className="bg-white/20 hover:bg-white/30 text-white text-sm px-4 py-2 rounded-full transition-colors"
+            >
+              취소
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
+
+// ── 카카오맵 위치핀 컴포넌트 ──
+const KakaoMapPin: React.FC<{ address: string; apiKey: string; className?: string }> = ({ address, apiKey, className = '' }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const [status, setStatus] = useState<'loading' | 'ok' | 'error' | 'no-key'>('loading');
+
+  useEffect(() => {
+    if (!apiKey) { setStatus('no-key'); return; }
+    if (!address.trim()) { setStatus('error'); return; }
+    setStatus('loading');
+    let mounted = true;
+
+    const initMap = () => {
+      if (!mounted || !containerRef.current) return;
+      const kakao = (window as any).kakao;
+      const geocoder = new kakao.maps.services.Geocoder();
+      geocoder.addressSearch(address, (result: any[], st: string) => {
+        if (!mounted || !containerRef.current) return;
+        if (st !== kakao.maps.services.Status.OK || !result.length) { setStatus('error'); return; }
+        const coords = new kakao.maps.LatLng(parseFloat(result[0].y), parseFloat(result[0].x));
+        if (!mapRef.current) {
+          mapRef.current = new kakao.maps.Map(containerRef.current, { center: coords, level: 3 });
+        } else {
+          mapRef.current.setCenter(coords);
+        }
+        new kakao.maps.Marker({ position: coords, map: mapRef.current });
+        setStatus('ok');
+      });
+    };
+
+    ensureKakaoMaps(apiKey, initMap);
+    return () => { mounted = false; };
+  }, [address, apiKey]);
+
+  return (
+    <div className={`relative ${className}`}>
+      <div ref={containerRef} className="w-full h-full" />
+      {status === 'loading' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#f0f4f8]">
+          <div className="w-5 h-5 border-2 border-[#1a73e8] border-t-transparent rounded-full animate-spin mb-1.5"/>
+          <p className="text-[10px] text-[#5f6368]">지도 불러오는 중...</p>
+        </div>
+      )}
+      {(status === 'error' || status === 'no-key') && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#f8f9fa]">
+          <MapPin size={22} className="text-[#c5c8cc] mb-1"/>
+          <p className="text-[10px] text-[#9aa0a6]">{status === 'no-key' ? 'API 키 미설정' : '주소를 찾을 수 없음'}</p>
+        </div>
+      )}
+      {status === 'ok' && (
+        <div className="absolute top-1.5 left-1.5 bg-white/80 text-[#202124] text-[9px] px-1.5 py-0.5 rounded shadow-sm font-medium pointer-events-none">
+          위치 지도
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const PropertyManager: React.FC<PropertyManagerProps> = ({
   properties, units, onAddProperty, onUpdateProperty, onDeleteProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, parseMoneyInput, moneyLabel, appSettings,
   leaseContracts, stakeholders, floorPlans, floorZones, onSaveFloorPlan, onDeleteFloorPlan, onSaveZone, onDeleteZone
@@ -377,6 +832,14 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   const [zoningFloorNum, setZoningFloorNum] = useState<number | null>(null);
   const [zoningEditZone, setZoningEditZone] = useState<FloorZone | null>(null);
   const [zoningDetailForm, setZoningDetailForm] = useState<Partial<ZoneDetail>>({});
+
+  // 등기부 관련 상태
+  const [expandedLotId, setExpandedLotId] = useState<string | null>(null);
+  const [registryTabs, setRegistryTabs] = useState<Record<string, '갑구' | '을구'>>({});
+  const GAB_INIT = { rankNo: '', purpose: '', receiptDate: '', receiptNo: '', rightHolderText: '' };
+  const EUL_INIT = { rankNo: '', purpose: '', receiptDate: '', receiptNo: '', rightHolderText: '', claimAmount: '' };
+  const [newGabForms, setNewGabForms] = useState<Record<string, typeof GAB_INIT>>({});
+  const [newEulForms, setNewEulForms] = useState<Record<string, typeof EUL_INIT>>({});
 
   // 사진 업로드 모달 상태
   const [isPhotoUploadModalOpen, setIsPhotoUploadModalOpen] = useState(false);
@@ -453,6 +916,27 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     if (currentPhotoIndex >= updatedPhotos.length) {
       setCurrentPhotoIndex(Math.max(0, updatedPhotos.length - 1));
     }
+  };
+
+  // 로드뷰 스냅샷 저장 핸들러
+  const handleRoadviewCapture = (photo: { url: string; name: string }) => {
+    if (!selectedProperty) return;
+    const newPhoto: PropertyPhoto = {
+      id: `rv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      url: photo.url,
+      name: photo.name,
+      caption: '로드뷰 스냅샷',
+      uploadedAt: new Date().toISOString(),
+      linkedType: 'PROPERTY'
+    };
+    onUpdateProperty({ ...selectedProperty, photos: [...(selectedProperty.photos || []), newPhoto] });
+  };
+
+  // 대표 사진 설정 핸들러
+  const handleSetMainPhoto = (photoId: string) => {
+    if (!selectedProperty) return;
+    const updated = (selectedProperty.photos || []).map(p => ({ ...p, isMain: p.id === photoId }));
+    onUpdateProperty({ ...selectedProperty, photos: updated });
   };
 
   // 토지(필지) 추가/수정 관련 상태
@@ -849,6 +1333,300 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     return titles.map(title => convertApiToBuilding(title, floors, propertyId));
   };
 
+  // ── 등기부 핸들러 ────────────────────────────
+  const getGabForm = (id: string) => newGabForms[id] ?? { ...GAB_INIT };
+  const getEulForm = (id: string) => newEulForms[id] ?? { ...EUL_INIT };
+  const setGabForm = (id: string, patch: Partial<typeof GAB_INIT>) =>
+    setNewGabForms(prev => ({ ...prev, [id]: { ...getGabForm(id), ...patch } }));
+  const setEulForm = (id: string, patch: Partial<typeof EUL_INIT>) =>
+    setNewEulForms(prev => ({ ...prev, [id]: { ...getEulForm(id), ...patch } }));
+
+  const emptyRegistry = (): PropertyRegistry => ({ gabEntries: [], eulEntries: [] });
+
+  const addGabEntry = (itemType: 'lot' | 'building', targetId: string) => {
+    if (!selectedProperty) return;
+    const form = getGabForm(targetId);
+    if (!form.rankNo || !form.purpose) return;
+    const matchSh = stakeholders.find(s => s.name === form.rightHolderText);
+    const entry: RegistryGabEntry = {
+      id: Date.now().toString(),
+      rankNo: form.rankNo,
+      purpose: form.purpose,
+      receiptDate: form.receiptDate,
+      receiptNo: form.receiptNo,
+      rightHolderText: form.rightHolderText,
+      rightHolderId: matchSh?.id || undefined,
+    };
+    const updated = { ...selectedProperty };
+    const merge = (reg?: PropertyRegistry): PropertyRegistry => ({
+      ...(reg ?? emptyRegistry()),
+      gabEntries: [...(reg?.gabEntries ?? []), entry],
+    });
+    if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: merge(l.registry) } : l);
+    else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: merge(b.registry) } : b);
+    onUpdateProperty(updated);
+    setNewGabForms(prev => ({ ...prev, [targetId]: { ...GAB_INIT } }));
+  };
+
+  const addEulEntry = (itemType: 'lot' | 'building', targetId: string) => {
+    if (!selectedProperty) return;
+    const form = getEulForm(targetId);
+    if (!form.rankNo || !form.purpose) return;
+    const matchSh = stakeholders.find(s => s.name === form.rightHolderText);
+    const entry: RegistryEulEntry = {
+      id: Date.now().toString(),
+      rankNo: form.rankNo,
+      purpose: form.purpose,
+      receiptDate: form.receiptDate,
+      receiptNo: form.receiptNo,
+      rightHolderText: form.rightHolderText,
+      rightHolderId: matchSh?.id || undefined,
+      claimAmount: form.claimAmount ? Number(form.claimAmount.replace(/,/g, '')) || undefined : undefined,
+      acquisition: '말소',
+    };
+    const updated = { ...selectedProperty };
+    const merge = (reg?: PropertyRegistry): PropertyRegistry => ({
+      ...(reg ?? emptyRegistry()),
+      eulEntries: [...(reg?.eulEntries ?? []), entry],
+    });
+    if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: merge(l.registry) } : l);
+    else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: merge(b.registry) } : b);
+    onUpdateProperty(updated);
+    setNewEulForms(prev => ({ ...prev, [targetId]: { ...EUL_INIT } }));
+  };
+
+  const deleteGabEntry = (itemType: 'lot' | 'building', targetId: string, entryId: string) => {
+    if (!selectedProperty) return;
+    const updated = { ...selectedProperty };
+    const filter = (reg?: PropertyRegistry): PropertyRegistry => ({
+      ...(reg ?? emptyRegistry()),
+      gabEntries: (reg?.gabEntries ?? []).filter(e => e.id !== entryId),
+    });
+    if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: filter(l.registry) } : l);
+    else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: filter(b.registry) } : b);
+    onUpdateProperty(updated);
+  };
+
+  const deleteEulEntry = (itemType: 'lot' | 'building', targetId: string, entryId: string) => {
+    if (!selectedProperty) return;
+    const updated = { ...selectedProperty };
+    const filter = (reg?: PropertyRegistry): PropertyRegistry => ({
+      ...(reg ?? emptyRegistry()),
+      eulEntries: (reg?.eulEntries ?? []).filter(e => e.id !== entryId),
+    });
+    if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: filter(l.registry) } : l);
+    else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: filter(b.registry) } : b);
+    onUpdateProperty(updated);
+  };
+
+  const updateRegistryMeta = (itemType: 'lot' | 'building', targetId: string, meta: Partial<PropertyRegistry>) => {
+    if (!selectedProperty) return;
+    const updated = { ...selectedProperty };
+    if (itemType === 'lot') {
+      updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: { ...(l.registry ?? emptyRegistry()), ...meta } } : l);
+    } else {
+      updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: { ...(b.registry ?? emptyRegistry()), ...meta } } : b);
+    }
+    onUpdateProperty(updated);
+  };
+
+  // 등기부 섹션 렌더러
+  const GAB_PURPOSES = ['소유권보존', '소유권이전', '소유권경정', '소유권말소', '소유권이전청구권가등기', '공유물분할', '기타'];
+  const EUL_PURPOSES = ['근저당권설정', '근저당권이전', '근저당권말소', '저당권설정', '전세권설정', '전세권이전', '전세권말소', '지상권설정', '지역권설정', '임차권설정', '가압류', '가처분', '압류', '임의경매개시결정', '강제경매개시결정', '기타'];
+
+  const renderRegistrySection = (
+    title: string,
+    itemType: 'lot' | 'building',
+    targetId: string,
+    registry: PropertyRegistry | undefined,
+  ): React.ReactNode => {
+    const gabEntries = registry?.gabEntries ?? [];
+    const eulEntries = registry?.eulEntries ?? [];
+    const totalClaim = eulEntries.reduce((sum, e) => sum + (e.claimAmount ?? 0), 0);
+    const activeTab = registryTabs[targetId] ?? '갑구';
+    const gabForm = getGabForm(targetId);
+    const eulForm = getEulForm(targetId);
+    const shListId = `sh-list-${targetId}`;
+
+    return (
+      <div className="mt-3 border border-[#dadce0] rounded-xl overflow-hidden">
+        {/* datalist for 권리자 자동완성 */}
+        <datalist id={shListId}>
+          {stakeholders.map(s => <option key={s.id} value={s.name}/>)}
+        </datalist>
+
+        {/* 헤더: 갑구/을구 탭 + 열람일자 */}
+        <div className="flex items-center justify-between px-3 md:px-4 bg-[#f8f9fa] border-b border-[#dadce0]">
+          <div className="flex items-center">
+            <h4 className="font-black text-xs md:text-sm text-[#202124] mr-3">{title}</h4>
+            {(['갑구', '을구'] as const).map(tab => (
+              <button key={tab} onClick={() => setRegistryTabs(prev => ({ ...prev, [targetId]: tab }))}
+                className={`px-3 py-2 text-xs font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === tab ? 'border-[#1a73e8] text-[#1a73e8]' : 'border-transparent text-[#5f6368] hover:text-[#202124]'}`}>
+                {tab} <span className="text-[10px] font-normal">({tab === '갑구' ? gabEntries.length : eulEntries.length})</span>
+              </button>
+            ))}
+          </div>
+          <input type="date" value={registry?.reviewDate ?? ''}
+            onChange={e => updateRegistryMeta(itemType, targetId, { reviewDate: e.target.value })}
+            className="text-xs border border-[#dadce0] rounded px-1.5 py-1 focus:outline-none focus:border-[#1a73e8]"
+            title="열람일자"/>
+        </div>
+
+        {/* 을구 채권액 합계 */}
+        {activeTab === '을구' && totalClaim > 0 && (
+          <div className="px-3 md:px-4 py-1.5 bg-[#e8f0fe] border-b border-[#dadce0] flex items-center gap-2">
+            <span className="text-[10px] md:text-xs text-[#5f6368]">채권액 합계</span>
+            <span className="text-xs md:text-sm font-black text-[#1a73e8]">{totalClaim.toLocaleString('ko-KR')}원</span>
+          </div>
+        )}
+
+        {/* ── 갑구: 순위번호 | 등기목적 | 접수 | 권리자 ── */}
+        {activeTab === '갑구' && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs md:text-sm min-w-[480px]">
+                <thead className="bg-[#f8f9fa] border-b border-[#dadce0]">
+                  <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+                    <th className="p-1.5 md:p-3 text-center w-12">순위</th>
+                    <th className="p-1.5 md:p-3 text-left">등기목적</th>
+                    <th className="p-1.5 md:p-3 text-left whitespace-nowrap">접수</th>
+                    <th className="p-1.5 md:p-3 text-left">권리자 및 기타사항</th>
+                    <th className="p-1.5 md:p-3 w-7"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f1f3f4]">
+                  {gabEntries.map(entry => {
+                    const sh = entry.rightHolderId ? stakeholders.find(s => s.id === entry.rightHolderId) : null;
+                    return (
+                      <tr key={entry.id} className="hover:bg-[#f8f9fa]">
+                        <td className="p-1.5 md:p-3 text-center font-bold text-[#202124]">{entry.rankNo}</td>
+                        <td className="p-1.5 md:p-3 font-medium text-[#202124]">{entry.purpose}</td>
+                        <td className="p-1.5 md:p-3 text-[#5f6368] whitespace-nowrap">
+                          <div>{entry.receiptDate}</div>
+                          {entry.receiptNo && <div className="text-[10px]">제{entry.receiptNo}호</div>}
+                        </td>
+                        <td className="p-1.5 md:p-3 text-[#202124]">
+                          {sh && <span className="text-[10px] bg-[#e8f0fe] text-[#1a73e8] px-1.5 py-0.5 rounded font-bold mr-1">{sh.name}</span>}
+                          <span className="whitespace-pre-wrap">{entry.rightHolderText}</span>
+                        </td>
+                        <td className="p-1.5 md:p-3">
+                          <button onClick={() => deleteGabEntry(itemType, targetId, entry.id)}
+                            className="p-0.5 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500 transition-colors"><X size={12}/></button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {gabEntries.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-xs text-[#9aa0a6]">갑구 항목이 없습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {/* 갑구 입력: 순위번호 | 등기목적 | 접수일자 | 접수번호 | 권리자 */}
+            <div className="border-t border-[#dadce0] bg-[#f8f9fa] px-2 md:px-3 py-2">
+              <div className="flex flex-wrap gap-1.5 items-center">
+                <input type="text" value={gabForm.rankNo} placeholder="순위"
+                  onChange={e => setGabForm(targetId, { rankNo: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-14"/>
+                <input type="text" list={`gab-purpose-${targetId}`} value={gabForm.purpose} placeholder="등기목적"
+                  onChange={e => setGabForm(targetId, { purpose: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[100px]"/>
+                <datalist id={`gab-purpose-${targetId}`}>{GAB_PURPOSES.map(p => <option key={p} value={p}/>)}</datalist>
+                <input type="date" value={gabForm.receiptDate} onChange={e => setGabForm(targetId, { receiptDate: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-32" title="접수일자"/>
+                <input type="text" value={gabForm.receiptNo} placeholder="접수번호"
+                  onChange={e => setGabForm(targetId, { receiptNo: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-24"/>
+                <input type="text" list={shListId} value={gabForm.rightHolderText} placeholder="권리자 (입력하면 저장된 이름 제안)"
+                  onChange={e => setGabForm(targetId, { rightHolderText: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[120px]"/>
+                <button onClick={() => addGabEntry(itemType, targetId)}
+                  disabled={!gabForm.rankNo || !gabForm.purpose}
+                  className="bg-[#1a73e8] text-white px-2 md:px-3 py-1 rounded text-xs font-bold disabled:opacity-40 hover:bg-[#1557b0] flex items-center gap-1 whitespace-nowrap">
+                  <Plus size={12}/> 추가
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── 을구: 순위번호 | 등기목적 | 접수 | 권리자 | 채권액 ── */}
+        {activeTab === '을구' && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs md:text-sm min-w-[520px]">
+                <thead className="bg-[#f8f9fa] border-b border-[#dadce0]">
+                  <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
+                    <th className="p-1.5 md:p-3 text-center w-12">순위</th>
+                    <th className="p-1.5 md:p-3 text-left">등기목적</th>
+                    <th className="p-1.5 md:p-3 text-left whitespace-nowrap">접수</th>
+                    <th className="p-1.5 md:p-3 text-left">권리자</th>
+                    <th className="p-1.5 md:p-3 text-right whitespace-nowrap">채권액</th>
+                    <th className="p-1.5 md:p-3 w-7"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#f1f3f4]">
+                  {eulEntries.map(entry => {
+                    const sh = entry.rightHolderId ? stakeholders.find(s => s.id === entry.rightHolderId) : null;
+                    const hasDebt = !!entry.claimAmount;
+                    return (
+                      <tr key={entry.id} className="hover:bg-[#f8f9fa]">
+                        <td className="p-1.5 md:p-3 text-center font-bold text-[#202124]">{entry.rankNo}</td>
+                        <td className={`p-1.5 md:p-3 font-medium ${hasDebt ? 'text-red-600' : 'text-[#202124]'}`}>{entry.purpose}</td>
+                        <td className="p-1.5 md:p-3 text-[#5f6368] whitespace-nowrap">
+                          <div>{entry.receiptDate}</div>
+                          {entry.receiptNo && <div className="text-[10px]">제{entry.receiptNo}호</div>}
+                        </td>
+                        <td className={`p-1.5 md:p-3 ${hasDebt ? 'text-red-600' : 'text-[#202124]'}`}>
+                          {sh && <span className="text-[10px] bg-[#e8f0fe] text-[#1a73e8] px-1.5 py-0.5 rounded font-bold mr-1">{sh.name}</span>}
+                          {entry.rightHolderText}
+                        </td>
+                        <td className={`p-1.5 md:p-3 text-right whitespace-nowrap font-medium ${hasDebt ? 'text-red-600' : 'text-[#9aa0a6]'}`}>
+                          {entry.claimAmount ? `${entry.claimAmount.toLocaleString('ko-KR')}원` : '-'}
+                        </td>
+                        <td className="p-1.5 md:p-3">
+                          <button onClick={() => deleteEulEntry(itemType, targetId, entry.id)}
+                            className="p-0.5 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500 transition-colors"><X size={12}/></button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {eulEntries.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-xs text-[#9aa0a6]">을구 항목이 없습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {/* 을구 입력: 순위번호 | 등기목적 | 접수일자 | 접수번호 | 권리자 | 채권액 */}
+            <div className="border-t border-[#dadce0] bg-[#f8f9fa] px-2 md:px-3 py-2">
+              <div className="flex flex-wrap gap-1.5 items-center">
+                <input type="text" value={eulForm.rankNo} placeholder="순위"
+                  onChange={e => setEulForm(targetId, { rankNo: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-14"/>
+                <input type="text" list={`eul-purpose-${targetId}`} value={eulForm.purpose} placeholder="등기목적"
+                  onChange={e => setEulForm(targetId, { purpose: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[110px]"/>
+                <datalist id={`eul-purpose-${targetId}`}>{EUL_PURPOSES.map(p => <option key={p} value={p}/>)}</datalist>
+                <input type="date" value={eulForm.receiptDate} onChange={e => setEulForm(targetId, { receiptDate: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-32" title="접수일자"/>
+                <input type="text" value={eulForm.receiptNo} placeholder="접수번호"
+                  onChange={e => setEulForm(targetId, { receiptNo: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-24"/>
+                <input type="text" list={shListId} value={eulForm.rightHolderText} placeholder="권리자"
+                  onChange={e => setEulForm(targetId, { rightHolderText: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[100px]"/>
+                <input type="text" value={eulForm.claimAmount} placeholder="채권액(원)"
+                  onChange={e => setEulForm(targetId, { claimAmount: e.target.value })}
+                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-28 text-right"/>
+                <button onClick={() => addEulEntry(itemType, targetId)}
+                  disabled={!eulForm.rankNo || !eulForm.purpose}
+                  className="bg-[#1a73e8] text-white px-2 md:px-3 py-1 rounded text-xs font-bold disabled:opacity-40 hover:bg-[#1557b0] flex items-center gap-1 whitespace-nowrap">
+                  <Plus size={12}/> 추가
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   // 토지 추가 모달 열기 (대표지번 주소체계에 맞춤)
   const openLotModal = () => {
     if (!selectedProperty) return;
@@ -872,14 +1650,14 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4">
+    <div className="flex flex-col lg:flex-row gap-4 min-h-[calc(100vh-160px)] lg:min-h-[calc(100vh-120px)]">
       {/* 물건 목록 사이드바 */}
-      <div className="w-full lg:w-72 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 shadow-sm overflow-hidden">
-        <div className="p-3 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa]">
+      <div className="w-full lg:w-72 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 shadow-sm overflow-hidden flex flex-col">
+        <div className="p-3 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa] flex-shrink-0">
           <h2 className="font-bold text-sm text-[#3c4043] flex items-center gap-2"><Layers size={16} className="text-[#1a73e8]"/> 물건 목록</h2>
           <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: '' }); setDisplayAddress(''); setPropPnu(''); setPropLandInfo(null); setIsPropertyModalOpen(true); }} className="p-1.5 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-lg transition-colors"><Plus size={18}/></button>
         </div>
-        <div className="p-2 space-y-1.5 bg-[#f8f9fa] max-h-[300px] lg:max-h-[calc(100vh-200px)] overflow-y-auto">
+        <div className="p-2 space-y-1.5 bg-[#f8f9fa] flex-1 overflow-y-auto">
           {properties.map(prop => (
             <button key={prop.id} onClick={() => { setSelectedPropId(prop.id); setActiveTab('OVERVIEW'); }} className={`w-full text-left p-3 rounded-lg transition-all border ${selectedPropId === prop.id ? 'bg-white border-[#1a73e8] shadow-sm' : 'bg-white hover:bg-[#f1f3f4] border-transparent'}`}>
               <h3 className={`font-bold text-sm truncate ${selectedPropId === prop.id ? 'text-[#1a73e8]' : 'text-[#202124]'}`}>{prop.name}</h3>
@@ -896,10 +1674,10 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
       </div>
 
       {/* 상세 정보 패널 */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex flex-col">
         {selectedProperty ? (
-          <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden">
-             <div className="p-3 md:p-6 border-b border-[#f1f3f4] bg-white flex flex-col sm:flex-row justify-between items-start gap-2 md:gap-3">
+          <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex-1 flex flex-col">
+             <div className="p-3 md:p-6 border-b border-[#f1f3f4] bg-white flex flex-col sm:flex-row justify-between items-start gap-2 md:gap-3 flex-shrink-0">
                  <div className="min-w-0 flex-1">
                     <h1 className="text-lg md:text-2xl font-bold text-[#202124] mb-1 md:mb-2 truncate">{selectedProperty.name}</h1>
                     <p className="text-[#5f6368] flex items-center text-[11px] md:text-sm font-medium"><MapPin size={14} className="mr-1 text-[#1a73e8] flex-shrink-0 md:w-4 md:h-4" /><span className="truncate">{getFullAddress(selectedProperty.masterAddress)}</span></p>
@@ -910,7 +1688,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                  </div>
              </div>
 
-             <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-2 md:px-4 overflow-x-auto">
+             <div className="flex border-b border-[#dadce0] bg-[#f8f9fa] px-2 md:px-4 overflow-x-auto flex-shrink-0">
                {[
                  { id: 'OVERVIEW', label: '개요', icon: <Home size={12} className="md:w-3.5 md:h-3.5"/> },
                  { id: 'LAND', label: '토지', icon: <MapPin size={12} className="md:w-3.5 md:h-3.5"/> },
@@ -934,85 +1712,81 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                    const vlRat = selectedProperty.totalLandArea > 0 ? (totalGrossFloorArea / selectedProperty.totalLandArea * 100) : 0;
                    const photos = selectedProperty.photos || [];
 
+                   const propAddress = selectedProperty.roadAddress || [selectedProperty.masterAddress.sido, selectedProperty.masterAddress.sigungu, selectedProperty.masterAddress.eupMyeonDong, selectedProperty.masterAddress.li, selectedProperty.masterAddress.bonbun].filter(Boolean).join(' ');
+
+                   const mainPhoto = photos.find(p => p.isMain) || (photos.length > 0 ? photos[0] : null);
+
                    return (
                    <div className="space-y-3">
-                      {/* 주요 지표 + 대표 사진 */}
-                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 lg:items-stretch">
-                         {/* 대표 사진 + 썸네일 (클릭시 갤러리) */}
-                         <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col">
-                            <div
-                               onClick={() => setIsPhotoModalOpen(true)}
-                               className="cursor-pointer hover:opacity-90 transition-opacity flex-1 min-h-0"
-                            >
-                               {photos.length > 0 ? (
-                                  <div className="relative h-full min-h-[120px]">
-                                     <img
-                                        src={photos[0]?.url}
-                                        alt="대표 사진"
-                                        className="absolute inset-0 w-full h-full object-cover"
-                                     />
-                                     <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"/>
-                                     <div className="absolute bottom-1.5 left-2 right-2 flex items-center justify-between">
-                                        <span className="text-white text-[10px] font-medium drop-shadow">{photos[0]?.name || '대표 사진'}</span>
-                                        {photos.length > 1 && (
-                                           <span className="bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                                              +{photos.length - 1}
-                                           </span>
-                                        )}
-                                     </div>
-                                  </div>
+                      {/* 상단: 대표사진/로드뷰(왼쪽) + 위치지도(오른쪽) */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 h-[200px] md:h-[240px]">
+                         {/* 대표 사진 or 로드뷰 */}
+                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex flex-col bg-white">
+                            <div className="flex-1 min-h-0 relative">
+                               {mainPhoto ? (
+                                 /* 대표 사진 표시 */
+                                 <img
+                                   src={mainPhoto.url}
+                                   alt={mainPhoto.name || '대표 사진'}
+                                   className="w-full h-full object-cover"
+                                 />
                                ) : (
-                                  <div className="h-full min-h-[120px] flex flex-col items-center justify-center bg-[#f8f9fa] hover:bg-[#e8f0fe] transition-colors">
-                                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-300 mb-1">
-                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                                     </svg>
-                                     <p className="text-[10px] text-gray-400">클릭하여 사진 추가</p>
-                                  </div>
+                                 /* 사진 없으면 로드뷰 (미니맵 없음, 캡처 없음) */
+                                 <KakaoRoadview
+                                   address={propAddress}
+                                   apiKey={appSettings.kakaoMapApiKey || ''}
+                                   className="h-full"
+                                   showMinimap={false}
+                                 />
+                               )}
+                               {/* 전체화면 버튼 (우상단) */}
+                               <button
+                                 onClick={() => setIsPhotoModalOpen(true)}
+                                 className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white text-[10px] px-2 py-1 rounded flex items-center gap-1 z-20 transition-colors"
+                               >
+                                 <Maximize2 size={11}/> 전체화면
+                                 {photos.length > 0 && <span className="ml-0.5 text-[#60a5fa]">· {photos.length}장</span>}
+                               </button>
+                               {/* 대표 사진 표시 배지 */}
+                               {mainPhoto && (
+                                 <div className="absolute top-2 left-2 bg-amber-400/90 text-white text-[9px] px-1.5 py-0.5 rounded flex items-center gap-0.5 pointer-events-none">
+                                   <Star size={9} fill="white"/> 대표
+                                 </div>
                                )}
                             </div>
-                            {/* 썸네일 그리드 */}
-                            {photos.length > 1 && (
-                               <div className="grid grid-cols-4 gap-0.5 p-1 bg-[#f8f9fa] flex-shrink-0">
-                                  {photos.slice(1, 5).map((photo, idx) => (
-                                     <div
-                                        key={photo.id}
-                                        onClick={() => { setCurrentPhotoIndex(idx + 1); setIsPhotoModalOpen(true); }}
-                                        className="aspect-square rounded overflow-hidden cursor-pointer hover:opacity-80 transition-opacity relative"
-                                     >
-                                        <img src={photo.url} alt="" className="w-full h-full object-cover"/>
-                                        {idx === 3 && photos.length > 5 && (
-                                           <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                                              <span className="text-white text-xs font-bold">+{photos.length - 5}</span>
-                                           </div>
-                                        )}
-                                     </div>
-                                  ))}
-                               </div>
-                            )}
                          </div>
 
-                         {/* 주요 지표 카드 2x2 */}
-                         <div className="lg:col-span-2 grid grid-cols-2 gap-1.5 md:gap-2 h-full">
-                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
-                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 대지면적</p>
-                               <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(selectedProperty.totalLandArea)}</p>
-                               <p className="text-[8px] md:text-[10px] text-[#5f6368]">{selectedProperty.lots.length}개 필지</p>
-                            </div>
-                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
-                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 건축면적</p>
-                               <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(totalBuildingArea)}</p>
-                               <p className="text-[8px] md:text-[10px] text-[#1a73e8] font-bold whitespace-nowrap">건폐율 {bcRat.toFixed(1)}%</p>
-                            </div>
-                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
-                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 연면적</p>
-                               <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(totalGrossFloorArea)}</p>
-                               <p className="text-[8px] md:text-[10px] text-[#1a73e8] font-bold whitespace-nowrap">용적률 {vlRat.toFixed(1)}%</p>
-                            </div>
-                            <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
-                               <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">월 임대수입</p>
-                               <p className="text-sm md:text-xl font-black text-[#1a73e8] whitespace-nowrap tracking-tight">{formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.monthlyRent || 0), 0))}</p>
-                               <p className="text-[8px] md:text-[10px] text-[#5f6368] whitespace-nowrap">보증금 {formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.deposit || 0), 0))}</p>
-                            </div>
+                         {/* 위치 지도 (항상 표시) */}
+                         <div className="rounded-xl border border-[#dadce0] shadow-sm overflow-hidden">
+                            <KakaoMapPin
+                               address={propAddress}
+                               apiKey={appSettings.kakaoMapApiKey || ''}
+                               className="h-full"
+                            />
+                         </div>
+                      </div>
+
+                      {/* 4개 지표 카드 */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 md:gap-2">
+                         <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                            <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 대지면적</p>
+                            <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(selectedProperty.totalLandArea)}</p>
+                            <p className="text-[8px] md:text-[10px] text-[#5f6368]">{selectedProperty.lots.length}개 필지</p>
+                         </div>
+                         <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                            <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 건축면적</p>
+                            <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(totalBuildingArea)}</p>
+                            <p className="text-[8px] md:text-[10px] text-[#1a73e8] font-bold whitespace-nowrap">건폐율 {bcRat.toFixed(1)}%</p>
+                         </div>
+                         <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                            <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">총 연면적</p>
+                            <p className="text-sm md:text-xl font-black text-[#202124] whitespace-nowrap tracking-tight">{formatArea(totalGrossFloorArea)}</p>
+                            <p className="text-[8px] md:text-[10px] text-[#1a73e8] font-bold whitespace-nowrap">용적률 {vlRat.toFixed(1)}%</p>
+                         </div>
+                         <div className="bg-white p-2 md:p-3 rounded-xl border border-[#dadce0] shadow-sm flex flex-col justify-center">
+                            <p className="text-[8px] md:text-[10px] text-[#5f6368] font-medium whitespace-nowrap">월 임대수입</p>
+                            <p className="text-sm md:text-xl font-black text-[#1a73e8] whitespace-nowrap tracking-tight">{formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.monthlyRent || 0), 0))}</p>
+                            <p className="text-[8px] md:text-[10px] text-[#5f6368] whitespace-nowrap">보증금 {formatMoneyInput(propertyUnits.filter(u => u.status === 'OCCUPIED').reduce((sum, u) => sum + (u.deposit || 0), 0))}</p>
                          </div>
                       </div>
 
@@ -1149,12 +1923,20 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-[#f1f3f4]">
-                                    {selectedProperty.lots.map((lot, index) => (
-                                        <tr key={lot.id} className="hover:bg-gray-50 transition-colors group">
+                                    {selectedProperty.lots.map((lot, index) => {
+                                        const isLotExpanded = expandedLotId === lot.id;
+                                        return (
+                                        <React.Fragment key={lot.id}>
+                                        <tr className="hover:bg-gray-50 transition-colors group cursor-pointer" onClick={() => setExpandedLotId(isLotExpanded ? null : lot.id)}>
                                             <td className="p-2 md:p-5">
                                                 <div className="flex items-center gap-1 md:gap-2 flex-wrap md:flex-nowrap">
                                                     {index === 0 && <span className="px-1.5 md:px-2 py-0.5 bg-[#e8f0fe] text-[#1a73e8] text-[8px] md:text-[10px] font-black rounded flex-shrink-0">대표</span>}
                                                     <span className="font-bold text-[11px] md:text-sm text-gray-800 tracking-tight">{getFullAddress(lot.address)}</span>
+                                                    {((lot.registry?.gabEntries?.length ?? 0) + (lot.registry?.eulEntries?.length ?? 0)) > 0 && (
+                                                        <span className="text-[8px] font-bold px-1.5 py-0.5 bg-orange-50 text-orange-600 border border-orange-200 rounded-full whitespace-nowrap">
+                                                            등기부 {(lot.registry!.gabEntries?.length ?? 0) + (lot.registry!.eulEntries?.length ?? 0)}건
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 {lot.pnu && <p className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 md:mt-1 hidden md:block">PNU: {lot.pnu}</p>}
                                                 {lot.pnu && (
@@ -1176,17 +1958,29 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                             <td className="p-2 md:p-5"><span className="px-2 md:px-3 py-0.5 md:py-1 bg-gray-100 rounded-full text-[10px] md:text-xs font-black text-gray-600">{lot.jimok}</span></td>
                                             <td className="p-2 md:p-5 text-right font-black text-[11px] md:text-sm text-[#1a73e8] whitespace-nowrap">{formatArea(lot.area)}</td>
                                             <td className="p-2 md:p-5 text-center">
-                                                <div className="flex items-center justify-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={() => openEditLotModal(lot)} className="p-1 md:p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors" title="수정">
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <button onClick={e => { e.stopPropagation(); openEditLotModal(lot); }} className="p-1 md:p-1.5 hover:bg-[#e8f0fe] rounded-lg transition-colors md:opacity-0 md:group-hover:opacity-100" title="수정">
                                                         <Edit2 size={12} className="md:w-3.5 md:h-3.5 text-[#1a73e8]" />
                                                     </button>
-                                                    <button onClick={() => handleDeleteLot(lot.id)} className="p-1 md:p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="삭제">
+                                                    <button onClick={e => { e.stopPropagation(); handleDeleteLot(lot.id); }} className="p-1 md:p-1.5 hover:bg-red-50 rounded-lg transition-colors md:opacity-0 md:group-hover:opacity-100" title="삭제">
                                                         <Trash2 size={12} className="md:w-3.5 md:h-3.5 text-red-500" />
+                                                    </button>
+                                                    <button onClick={e => { e.stopPropagation(); setExpandedLotId(isLotExpanded ? null : lot.id); }} className="p-1 md:p-1.5 hover:bg-gray-100 rounded-lg transition-colors" title="등기부">
+                                                        {isLotExpanded ? <ChevronUp size={12} className="text-[#1a73e8]"/> : <ChevronDown size={12} className="text-[#5f6368]"/>}
                                                     </button>
                                                 </div>
                                             </td>
                                         </tr>
-                                    ))}
+                                        {isLotExpanded && (
+                                            <tr>
+                                                <td colSpan={4} className="px-2 md:px-5 pb-3 bg-[#fafafa]">
+                                                    {renderRegistrySection('토지등기부', 'lot', lot.id, lot.registry)}
+                                                </td>
+                                            </tr>
+                                        )}
+                                        </React.Fragment>
+                                        );
+                                    })}
                                     {selectedProperty.lots.length === 0 && <tr><td colSpan={4} className="p-10 md:p-20 text-center text-gray-400 italic text-xs md:text-sm">등록된 필지 데이터가 존재하지 않습니다.</td></tr>}
                                 </tbody>
                             </table>
@@ -1563,6 +2357,11 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                                         </div>
                                                     </div>
                                                 )}
+
+                                                {/* 건물등기부 */}
+                                                <div className="px-3 md:px-6 pb-3 md:pb-6 border-b border-[#dadce0]">
+                                                    {renderRegistrySection('건물등기부', 'building', b.id, b.registry)}
+                                                </div>
 
                                                 {/* 수정/삭제 버튼 */}
                                                 <div className="p-2 md:p-4 flex justify-end gap-1 md:gap-2">
@@ -3151,125 +3950,88 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           </Modal>
       )}
 
-      {/* 사진 갤러리 모달 */}
-      {isPhotoModalOpen && selectedProperty && (
-        <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col" onClick={() => setIsPhotoModalOpen(false)}>
-          {/* 헤더 */}
-          <div className="flex items-center justify-between p-4 border-b border-white/10" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-white font-bold">사진 갤러리</h3>
-            <div className="flex items-center gap-2">
-              <input ref={photoInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoUpload}/>
-              <button
-                onClick={() => photoInputRef.current?.click()}
-                className="flex items-center gap-2 px-3 py-1.5 bg-[#1a73e8] hover:bg-[#1557b0] text-white text-sm rounded-lg transition-colors"
-              >
-                <Plus size={16}/> 사진 추가
-              </button>
-              <button
-                onClick={() => setIsPhotoModalOpen(false)}
-                className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white transition-colors"
-              >
-                <X size={20}/>
-              </button>
+      {/* 로드뷰 갤러리 모달 — 풀스크린 로드뷰 + 하단 사진 스트립 */}
+      {isPhotoModalOpen && selectedProperty && (() => {
+        const propAddr = selectedProperty.roadAddress || [selectedProperty.masterAddress.sido, selectedProperty.masterAddress.sigungu, selectedProperty.masterAddress.eupMyeonDong, selectedProperty.masterAddress.li, selectedProperty.masterAddress.bonbun].filter(Boolean).join(' ');
+        const photos = selectedProperty.photos || [];
+        return (
+          <div className="fixed inset-0 z-[200] bg-black flex flex-col">
+            {/* 헤더 */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <MapPin size={13} className="text-[#1a73e8]"/>
+                <span className="text-white font-bold text-sm truncate max-w-[200px] md:max-w-none">{selectedProperty.name}</span>
+                <span className="text-white/40 text-xs hidden md:inline">로드뷰 탐색</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input ref={photoInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoUpload}/>
+                <button
+                  onClick={() => photoInputRef.current?.click()}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs rounded-lg transition-colors"
+                >
+                  <Plus size={12}/> 파일 추가
+                </button>
+                <button
+                  onClick={() => setIsPhotoModalOpen(false)}
+                  className="w-8 h-8 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white transition-colors"
+                >
+                  <X size={18}/>
+                </button>
+              </div>
+            </div>
+
+            {/* 메인: 풀스크린 로드뷰 */}
+            <div className="flex-1 min-h-0 relative">
+              <KakaoRoadview
+                address={propAddr}
+                apiKey={appSettings.kakaoMapApiKey || ''}
+                className="absolute inset-0"
+                onCapture={(photo) => handleRoadviewCapture(photo)}
+              />
+            </div>
+
+            {/* 하단: 저장된 사진 스트립 (항상 표시, 사진 없으면 안내) */}
+            <div className="flex-shrink-0 bg-black/90 border-t border-white/10 px-3 py-2">
+              {photos.length === 0 ? (
+                <div className="flex items-center justify-center h-10 text-white/40 text-xs">
+                  저장된 사진 없음 — 스크린샷 저장 또는 파일 추가로 등록하세요
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+                  {photos.map((photo, idx) => (
+                    <div key={photo.id} className="relative flex-shrink-0 group cursor-pointer"
+                      onClick={() => handleSetMainPhoto(photo.id)}
+                      title="클릭하여 대표 사진으로 설정"
+                    >
+                      <img
+                        src={photo.url}
+                        alt=""
+                        className={`h-16 w-24 object-cover rounded-lg transition-all ${photo.isMain ? 'ring-2 ring-amber-400 ring-offset-1 ring-offset-black' : 'opacity-70 hover:opacity-100'}`}
+                      />
+                      {/* 대표 사진 별표 */}
+                      {photo.isMain && (
+                        <div className="absolute top-1 left-1 bg-amber-400 rounded-full w-4 h-4 flex items-center justify-center pointer-events-none">
+                          <Star size={9} fill="white" className="text-white"/>
+                        </div>
+                      )}
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[8px] text-white/80 px-1 py-0.5 rounded-b-lg truncate pointer-events-none text-center">
+                        {photo.name || `사진 ${idx + 1}`}
+                      </div>
+                      {/* 삭제 버튼 */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handlePhotoDelete(photo.id); }}
+                        className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X size={8}/>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-
-          {/* 메인 콘텐츠 */}
-          <div className="flex-1 flex overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            {selectedProperty.photos && selectedProperty.photos.length > 0 ? (
-              <>
-                {/* 선택된 사진 (큰 이미지) */}
-                <div className="flex-1 flex items-center justify-center p-4 relative">
-                  <img
-                    src={selectedProperty.photos[currentPhotoIndex]?.url}
-                    alt=""
-                    className="max-w-full max-h-full object-contain"
-                  />
-                  {/* 이전/다음 버튼 */}
-                  {selectedProperty.photos.length > 1 && (
-                    <>
-                      <button
-                        onClick={() => setCurrentPhotoIndex(prev => prev === 0 ? (selectedProperty.photos?.length || 1) - 1 : prev - 1)}
-                        className="absolute left-4 w-10 h-10 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors"
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
-                      </button>
-                      <button
-                        onClick={() => setCurrentPhotoIndex(prev => prev === (selectedProperty.photos?.length || 1) - 1 ? 0 : prev + 1)}
-                        className="absolute right-[200px] w-10 h-10 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors"
-                      >
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {/* 썸네일 사이드바 */}
-                <div className="w-[180px] bg-black/50 border-l border-white/10 overflow-y-auto p-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    {selectedProperty.photos.map((photo, idx) => (
-                      <div key={photo.id} className="relative group">
-                        <button
-                          onClick={() => setCurrentPhotoIndex(idx)}
-                          className={`w-full aspect-square rounded-lg overflow-hidden border-2 transition-all ${idx === currentPhotoIndex ? 'border-[#1a73e8]' : 'border-transparent hover:border-white/30'}`}
-                        >
-                          <img src={photo.url} alt="" className="w-full h-full object-cover"/>
-                        </button>
-                        <button
-                          onClick={() => handlePhotoDelete(photo.id)}
-                          className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          <X size={12}/>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            ) : (
-              /* 사진 없을 때 */
-              <div className="flex-1 flex flex-col items-center justify-center text-white/60">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="mb-4">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
-                </svg>
-                <p className="text-lg mb-2">등록된 사진이 없습니다</p>
-                <p className="text-sm mb-4">상단의 "사진 추가" 버튼을 클릭하여 사진을 등록하세요</p>
-              </div>
-            )}
-          </div>
-
-          {/* 하단 정보 */}
-          {selectedProperty.photos && selectedProperty.photos.length > 0 && (() => {
-            const currentPhoto = selectedProperty.photos[currentPhotoIndex];
-            const linkedInfo = [];
-            if (currentPhoto?.linkedType === 'LOT' && currentPhoto.linkedLotId) {
-              const lot = selectedProperty.lots.find(l => l.id === currentPhoto.linkedLotId);
-              if (lot) linkedInfo.push(`토지: ${lot.address.eupMyeonDong} ${lot.address.bonbun}`);
-            }
-            if (currentPhoto?.linkedType === 'BUILDING' && currentPhoto.linkedBuildingId) {
-              const building = selectedProperty.buildings.find(b => b.id === currentPhoto.linkedBuildingId);
-              if (building) linkedInfo.push(`건물: ${building.name}`);
-            }
-            if (currentPhoto?.linkedType === 'FLOOR' && currentPhoto.linkedBuildingId) {
-              const building = selectedProperty.buildings.find(b => b.id === currentPhoto.linkedBuildingId);
-              if (building) linkedInfo.push(`${building.name} ${currentPhoto.linkedFloor}층`);
-            }
-            if (currentPhoto?.linkedType === 'UNIT' && currentPhoto.linkedUnitId) {
-              const unit = propertyUnits.find(u => u.id === currentPhoto.linkedUnitId);
-              if (unit) linkedInfo.push(`호실: ${unit.unitNumber}호`);
-            }
-            return (
-              <div className="p-2 border-t border-white/10 flex items-center justify-between text-white/60 text-xs" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center gap-3">
-                  <span>{currentPhoto?.name || '사진 ' + (currentPhotoIndex + 1)}</span>
-                  {linkedInfo.length > 0 && <span className="text-[#1a73e8]">{linkedInfo.join(' · ')}</span>}
-                </div>
-                <span>{currentPhotoIndex + 1} / {selectedProperty.photos.length}</span>
-              </div>
-            );
-          })()}
-        </div>
-      )}
+        );
+      })()}
 
       {/* 사진 업로드 모달 */}
       {isPhotoUploadModalOpen && selectedProperty && (

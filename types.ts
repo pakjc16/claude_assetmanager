@@ -37,6 +37,7 @@ export interface Stakeholder {
     email: string;
     address?: string;
     addressDetail?: string;
+    postalCode?: string;      // 우편번호 (5자리)
   };
   additionalContacts?: { label: string; phone: string }[];
   note?: string;
@@ -121,6 +122,44 @@ export interface BuildingSpec {
   earthquakeDesign?: boolean; // 내진설계 적용여부
 }
 
+// ── 등기부 ────────────────────────────────────────────────────────────────────
+
+// 갑구: 소유권에 관한 사항
+export interface RegistryGabEntry {
+  id: string;
+  rankNo: string;            // 순위번호 (1, 2, 2-1 등)
+  purpose: string;           // 등기목적 (소유권보존, 소유권이전 등)
+  receiptDate: string;       // 접수일자 (YYYY-MM-DD)
+  receiptNo: string;         // 접수번호 (제XXXXX호)
+  causeDate?: string;        // 등기원인 날짜
+  cause?: string;            // 등기원인 (매매, 증여, 상속 등)
+  rightHolderText: string;   // 권리자 및 기타사항 (자유 텍스트)
+  rightHolderId?: string;    // 인물/업체 참조 ID (선택)
+  isDeleted?: boolean;       // 말소 여부 (취소선 표시)
+}
+
+// 을구: 소유권 외 기타 권리에 관한 사항
+export interface RegistryEulEntry {
+  id: string;
+  rankNo: string;            // 순위번호
+  purpose: string;           // 등기목적 (근저당권설정, 전세권설정 등)
+  receiptDate: string;       // 접수일자 (YYYY-MM-DD)
+  receiptNo: string;         // 접수번호
+  causeDate?: string;        // 등기원인 날짜
+  cause?: string;            // 등기원인
+  rightHolderText: string;   // 권리자 (텍스트)
+  rightHolderId?: string;    // 인물/업체 참조 ID (선택)
+  claimAmount?: number;      // 채권액 (원)
+  acquisition: '말소' | '인수'; // 인수 여부
+  details?: string;          // 기타사항
+}
+
+export interface PropertyRegistry {
+  reviewDate?: string;           // 열람일자
+  gabEntries: RegistryGabEntry[]; // 갑구 (소유권에 관한 사항)
+  eulEntries: RegistryEulEntry[]; // 을구 (소유권 외 기타 권리)
+}
+
 export interface Building {
   id: string;
   propertyId: string;
@@ -128,6 +167,7 @@ export interface Building {
   mgmBldrgstPk?: string;     // 관리건축물대장PK (API 연동용)
   spec: BuildingSpec;
   ownerId?: string;          // 소유자 ID (Stakeholder)
+  registry?: PropertyRegistry; // 건물등기부
 }
 
 export type PropertyType = 'AGGREGATE' | 'LAND_AND_BUILDING' | 'LAND';
@@ -139,6 +179,7 @@ export interface Lot {
   area: number;
   pnu?: string;  // VWorld PNU 코드 (토지정보 조회용)
   ownerId?: string;  // 소유자 ID (Stakeholder)
+  registry?: PropertyRegistry; // 토지등기부
 }
 
 export interface PropertyPhoto {
@@ -147,6 +188,7 @@ export interface PropertyPhoto {
   name?: string;           // 사진 이름
   caption?: string;
   uploadedAt: string;
+  isMain?: boolean;        // 대표 사진 여부
   // 연계 정보
   linkedType?: 'PROPERTY' | 'LOT' | 'BUILDING' | 'FLOOR' | 'UNIT';
   linkedLotId?: string;    // 토지 연계
@@ -619,4 +661,40 @@ export interface FloorPlanViewerState {
   isDrawing: boolean;
   drawingPoints: ZonePoint[];
   tool: 'SELECT' | 'DRAW_POLYGON' | 'DRAW_LINE' | 'EDIT_POINTS' | 'PAN';
+}
+
+// ========================================
+// 사용자 관리
+// ========================================
+export type UserRole = 'ADMIN' | 'MANAGER' | 'VIEWER';
+
+export interface AppUser {
+  id: string;
+  username: string;         // 로그인 아이디
+  name: string;             // 표시 이름
+  email?: string;
+  passwordHash: string;     // btoa() 인코딩 (데모용)
+  role: UserRole;
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+  avatarColor?: string;     // 아바타 배경색 (HEX)
+}
+
+// ========================================
+// 회사 기본정보
+// ========================================
+export interface CompanyInfo {
+  name: string;
+  businessRegNumber?: string;   // 사업자등록번호
+  corporateRegNumber?: string;  // 법인등록번호
+  representative?: string;      // 대표자명
+  address?: string;
+  addressDetail?: string;
+  postalCode?: string;
+  phone?: string;
+  faxNumber?: string;
+  email?: string;
+  website?: string;
+  logoBase64?: string;          // 로고 이미지 (base64)
 }
