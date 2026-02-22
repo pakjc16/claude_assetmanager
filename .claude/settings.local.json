@@ -34,7 +34,10 @@
       "Bash(pwsh:*)",
       "Bash(npm install:*)",
       "Bash(git remote add:*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(/tmp/parse_transcript2.js:*)",
+      "Bash(node:*)",
+      "WebFetch(domain:apis.map.kakao.com)"
     ]
   }
 }

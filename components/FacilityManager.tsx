@@ -879,15 +879,15 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
     : propertyFacilities.filter(f => f.category === activeCategoryTab);
 
   return (
-    <div className="flex flex-col lg:flex-row gap-4">
+    <div className="flex flex-col lg:flex-row gap-4 min-h-[calc(100vh-160px)] lg:min-h-[calc(100vh-120px)]">
       {/* 왼쪽: 물건 목록 */}
-      <div className="w-full lg:w-72 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 shadow-sm overflow-hidden">
-        <div className="p-3 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa]">
+      <div className="w-full lg:w-72 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 shadow-sm overflow-hidden flex flex-col">
+        <div className="p-3 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa] flex-shrink-0">
           <h2 className="font-bold text-sm text-[#3c4043] flex items-center gap-2">
             <Layers size={16} className="text-[#1a73e8]"/> 물건 목록
           </h2>
         </div>
-        <div className="p-2 space-y-1.5 bg-[#f8f9fa] max-h-[300px] lg:max-h-[calc(100vh-200px)] overflow-y-auto">
+        <div className="p-2 space-y-1.5 bg-[#f8f9fa] flex-1 overflow-y-auto">
           {properties.map(prop => (
             <button key={prop.id}
               onClick={() => { setSelectedPropId(prop.id); setActiveCategoryTab('ALL'); }}
@@ -906,11 +906,11 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
       </div>
 
       {/* 오른쪽: 선택된 물건의 시설 */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex flex-col">
         {selectedProperty ? (
-          <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden">
+          <div className="bg-white rounded-xl border border-[#dadce0] shadow-sm overflow-hidden flex-1 flex flex-col">
             {/* 헤더 */}
-            <div className="p-3 md:p-6 border-b border-[#f1f3f4] bg-white flex flex-col sm:flex-row justify-between items-start gap-2 md:gap-3">
+            <div className="p-3 md:p-6 border-b border-[#f1f3f4] bg-white flex flex-col sm:flex-row justify-between items-start gap-2 md:gap-3 flex-shrink-0">
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg md:text-2xl font-bold text-[#202124] mb-1 md:mb-2 truncate">{selectedProperty.name}</h1>
                 <p className="text-[#5f6368] flex items-center text-[11px] md:text-sm font-medium">
@@ -924,7 +924,7 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
             </div>
 
             {/* 세로 카테고리 탭 + 카드 영역 */}
-            <div className="flex flex-row min-h-[300px]">
+            <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
 
               {/* 세로 카테고리 탭 */}
               <div className="w-[52px] md:w-16 flex-shrink-0 bg-[#f8f9fa] border-r border-[#dadce0] flex flex-col overflow-y-auto">

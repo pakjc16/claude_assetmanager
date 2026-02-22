@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Stakeholder, StakeholderRole, StakeholderType, LeaseContract, MaintenanceContract, Property, Unit, RelatedPerson, Department } from '../types';
-import { User, Phone, Mail, Building, Briefcase, Plus, Search, X, FileText, AlertCircle, Upload, Paperclip, Lock, Key, Users, Edit2, Trash2, GitBranch, Download, DollarSign, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { User, Phone, Mail, Building, Briefcase, Plus, Search, X, FileText, AlertCircle, Upload, Paperclip, Lock, Key, Users, Edit2, Trash2, GitBranch, Download, DollarSign, ZoomIn, ZoomOut, Maximize2, Printer } from 'lucide-react';
 
 interface StakeholderManagerProps {
   stakeholders: Stakeholder[];
@@ -54,6 +54,73 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const orgChartContainerRef = useRef<HTMLDivElement>(null);
+
+  // 우편라벨 인쇄 함수
+  const handlePrintPostalLabels = () => {
+    const targets = stakeholders.filter(s => checkedIds.has(s.id) && s.contact?.address);
+    if (targets.length === 0) {
+      alert('주소가 등록된 항목을 선택하세요.');
+      return;
+    }
+    const printWindow = window.open('', '_blank', 'width=900,height=700');
+    if (!printWindow) { alert('팝업이 차단되었습니다.'); return; }
+
+    // 우편번호 5자리를 개별 박스로 렌더링
+    const postalBoxes = (code: string) => {
+      const digits = (code || '     ').padEnd(5, ' ').split('');
+      return `<div class="postal-row">
+        ${digits.map(d => `<div class="postal-box">${d.trim()}</div>`).join('')}
+      </div>`;
+    };
+
+    // 라벨 1개 HTML (105mm × 48mm, A4 2열 5행 = 10개)
+    // 한국 우편 표준: 이름 먼저, 주소, 우편번호 박스 맨 아래
+    const labelHtml = (s: typeof targets[0]) => `
+      <div class="label">
+        <div class="label-inner">
+          <div class="to-tag">받　는　분</div>
+          <div class="name">${s.name} <span class="kijoong">귀 중</span></div>
+          <div class="addr">${s.contact.address || ''}${s.contact.addressDetail ? ' ' + s.contact.addressDetail : ''}</div>
+          ${s.contact.phone ? `<div class="phone">☎ ${s.contact.phone}</div>` : ''}
+          <div class="postal-area">
+            ${postalBoxes(s.contact.postalCode || '')}
+            <div class="postal-label">우편번호</div>
+          </div>
+        </div>
+      </div>`;
+
+    printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>우편 라벨</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; background: #fff; }
+      .page { width: 210mm; margin: 0 auto; padding: 8mm; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }
+      .label { width: 100%; height: 48mm; border: 1px solid #555; page-break-inside: avoid; }
+      .label-inner { padding: 3mm 5mm; height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
+      .to-tag { font-size: 7pt; color: #888; border-bottom: 1px dotted #ccc; padding-bottom: 1mm; margin-bottom: 1.5mm; }
+      .name { font-size: 15pt; font-weight: 900; letter-spacing: 1px; line-height: 1.2; }
+      .kijoong { font-size: 10pt; font-weight: normal; margin-left: 3mm; }
+      .addr { font-size: 9pt; line-height: 1.6; color: #222; word-break: keep-all; margin-top: 1mm; flex: 1; }
+      .phone { font-size: 8pt; color: #555; margin-top: 1mm; }
+      .postal-area { display: flex; align-items: center; gap: 3mm; margin-top: 2mm; border-top: 1px dotted #ccc; padding-top: 1.5mm; }
+      .postal-row { display: flex; gap: 1mm; }
+      .postal-box { width: 6mm; height: 6mm; border: 1.5px solid #c00; display: flex; align-items: center; justify-content: center; font-size: 10pt; font-weight: bold; font-family: monospace; color: #c00; }
+      .postal-label { font-size: 7pt; color: #888; }
+      @media print {
+        body { margin: 0; }
+        .page { padding: 6mm; }
+        .label { border: 1px solid #333; }
+        .postal-box { border-color: #c00; }
+      }
+    </style></head><body>
+    <div class="page"><div class="grid">
+    ${targets.map(s => labelHtml(s)).join('')}
+    </div></div>
+    <script>window.onload=function(){ window.print(); window.onafterprint=function(){ window.close(); }; };<\/script>
+    </body></html>`);
+    printWindow.document.close();
+  };
 
   // 조직도 인쇄 함수
   const handlePrintOrgChart = () => {
@@ -1033,7 +1100,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          new (window as any).daum.Postcode({
                            oncomplete: (data: any) => {
                              const fullAddr = data.roadAddress || data.jibunAddress;
-                             setFormData(prev => ({...prev, contact: {...prev.contact!, phone: prev.contact?.phone || '', email: prev.contact?.email || '', address: fullAddr, addressDetail: ''}}));
+                             setFormData(prev => ({...prev, contact: {...prev.contact!, phone: prev.contact?.phone || '', email: prev.contact?.email || '', address: fullAddr, addressDetail: '', postalCode: data.zonecode || ''}}));
                            }
                          }).open();
                        };
@@ -1052,13 +1119,21 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    </button>
                  </div>
                  {formData.contact?.address && (
-                   <input
-                     className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none mt-2"
-                     value={formData.contact?.addressDetail || ''}
-                     onChange={e => setFormData({...formData, contact: {...formData.contact!, addressDetail: e.target.value}})}
-                     placeholder="상세주소 입력 (동/호수 등)"
-                     autoFocus
-                   />
+                   <div className="mt-2 space-y-2">
+                     {formData.contact?.postalCode && (
+                       <div className="flex items-center gap-2">
+                         <span className="text-xs text-gray-400 font-bold whitespace-nowrap">우편번호</span>
+                         <span className="text-sm font-bold text-[#1a73e8] tracking-widest">{formData.contact.postalCode}</span>
+                       </div>
+                     )}
+                     <input
+                       className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
+                       value={formData.contact?.addressDetail || ''}
+                       onChange={e => setFormData({...formData, contact: {...formData.contact!, addressDetail: e.target.value}})}
+                       placeholder="상세주소 입력 (동/호수 등)"
+                       autoFocus
+                     />
+                   </div>
                  )}
                </div>
 
@@ -1647,7 +1722,10 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                     {vp.contact.address && (
                       <div className="flex items-start gap-2 text-sm">
                         <Building size={14} className="text-gray-300 flex-shrink-0 mt-0.5"/>
-                        <span className="text-gray-600">{vp.contact.address}{vp.contact.addressDetail ? ` ${vp.contact.addressDetail}` : ''}</span>
+                        <div>
+                          {vp.contact.postalCode && <span className="text-[10px] font-bold text-[#1a73e8] mr-1">({vp.contact.postalCode})</span>}
+                          <span className="text-gray-600">{vp.contact.address}{vp.contact.addressDetail ? ` ${vp.contact.addressDetail}` : ''}</span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1758,7 +1836,10 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         <div className="flex items-center gap-3 bg-[#e8f0fe] border border-[#dadce0] rounded-lg p-2 md:p-3">
           <input type="checkbox" checked={checkedIds.size === filtered.length} onChange={handleSelectAll} className="w-4 h-4 text-[#1a73e8] rounded" />
           <span className="text-xs md:text-sm font-bold text-[#1a73e8]">{checkedIds.size}건 선택됨</span>
-          <div className="flex gap-2 ml-auto">
+          <div className="flex gap-2 ml-auto flex-wrap">
+            <button onClick={handlePrintPostalLabels} className="px-3 py-1.5 text-[10px] md:text-xs font-bold bg-white border border-[#1a73e8] text-[#1a73e8] rounded-lg hover:bg-[#e8f0fe] transition-all flex items-center gap-1">
+              <Printer size={12}/> 우편라벨
+            </button>
             <button onClick={() => { const first = stakeholders.find(s => checkedIds.has(s.id)); if (first) handleOpenEdit(first); }} className="px-3 py-1.5 text-[10px] md:text-xs font-bold bg-white border border-[#dadce0] text-[#1a73e8] rounded-lg hover:bg-[#f1f3f4] transition-all flex items-center gap-1">
               <Edit2 size={12}/> 수정
             </button>

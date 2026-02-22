@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, MapPin, Key, Calendar, ParkingSquare } from 'lucide-react';
+import { LayoutDashboard, Building2, Menu, Bell, Users, FileText, Wallet, Settings, ChevronDown, TrendingUp, Wrench, ArrowRight, X, Ruler, Coins, MapPin, Key, Calendar, ParkingSquare, LogOut, Plus, Edit2, UserCheck, UserX, Shield, Eye, EyeOff, Upload, Trash2 } from 'lucide-react';
 import { Dashboard } from './components/Dashboard';
 import { PropertyManager } from './components/PropertyManager';
 import { StakeholderManager } from './components/StakeholderManager';
@@ -10,13 +10,14 @@ import { FinanceManager } from './components/FinanceManager';
 import { ValuationManager } from './components/ValuationManager';
 import { FacilityManager } from './components/FacilityManager';
 import { ParkingManager } from './components/ParkingManager';
+import { LoginPage } from './components/LoginPage';
 import {
   Property, Unit, Stakeholder, LeaseContract, MaintenanceContract, UtilityContract,
   PaymentTransaction, DashboardFinancials, Building, Lot, ValuationHistory, MarketComparable,
   MoneyUnit, AreaUnit, Facility, FacilityLog,
   ElevatorInfo, ElevatorInsurance, ElevatorSafetyManager, ElevatorInspection,
   ElevatorMalfunction, ElevatorAccident, ElevatorPartDefect, ElevatorMaintenanceContract,
-  FloorPlan, FloorZone, ParkingSpot
+  FloorPlan, FloorZone, ParkingSpot, AppUser, CompanyInfo, UserRole
 } from './types';
 
 // ==========================================
@@ -54,12 +55,14 @@ export interface AppSettings {
   addressApi: AddressApiType;
   vworldApiKey: string;
   dataGoKrApiKey: string;  // 공공데이터포털 API 키 (건축물대장 등)
+  kakaoMapApiKey: string;  // 카카오맵 JavaScript API 키 (로드뷰)
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   addressApi: 'VWORLD',
   vworldApiKey: '',
-  dataGoKrApiKey: ''  // 공공데이터포털 API 키
+  dataGoKrApiKey: '',
+  kakaoMapApiKey: '',
 };
 
 // localStorage에서 설정 불러오기
@@ -99,12 +102,134 @@ function App() {
   const [areaUnit, setAreaUnit] = useState<AreaUnit>('M2');
   const [referenceDate, setReferenceDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'api' | 'company' | 'users'>('api');
   const [appSettings, setAppSettings] = useState<AppSettings>(loadSettings);
 
   // 설정 변경 시 localStorage에 저장
   useEffect(() => {
     saveSettings(appSettings);
   }, [appSettings]);
+
+  // ── 사용자 / 회사 정보 ──
+  const [users, setUsers] = useState<AppUser[]>(() => {
+    try { const s = localStorage.getItem('rf_users'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const [companyInfo, setCompanyInfo] = useState<CompanyInfo>(() => {
+    try { const s = localStorage.getItem('rf_companyInfo'); return s ? JSON.parse(s) : { name: '' }; } catch { return { name: '' }; }
+  });
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(() => {
+    try {
+      const uid = localStorage.getItem('rf_currentUserId');
+      if (!uid) return null;
+      const us: AppUser[] = JSON.parse(localStorage.getItem('rf_users') || '[]');
+      return us.find(u => u.id === uid && u.isActive) || null;
+    } catch { return null; }
+  });
+
+  // 사용자 관리 UI 상태 (설정 모달 내)
+  const [showAddUserForm, setShowAddUserForm] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [newUserForm, setNewUserForm] = useState({ username: '', name: '', email: '', password: '', confirmPw: '', role: 'MANAGER' as UserRole });
+  const [editUserForm, setEditUserForm] = useState({ name: '', email: '', role: 'MANAGER' as UserRole });
+  const [showNewUserPw, setShowNewUserPw] = useState(false);
+  const [userFormError, setUserFormError] = useState('');
+
+  // 회사정보 편집 폼
+  const [editCompany, setEditCompany] = useState<CompanyInfo>(companyInfo);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  // ── 사용자/회사 localStorage 동기화 ──
+  useEffect(() => { try { localStorage.setItem('rf_users', JSON.stringify(users)); } catch {} }, [users]);
+  useEffect(() => { try { localStorage.setItem('rf_companyInfo', JSON.stringify(companyInfo)); } catch {} }, [companyInfo]);
+
+  // ── 인증 핸들러 ──
+  const handleLogin = (user: AppUser) => {
+    const updated = { ...user, lastLoginAt: new Date().toISOString() };
+    setUsers(prev => prev.map(u => u.id === user.id ? updated : u));
+    setCurrentUser(updated);
+    localStorage.setItem('rf_currentUserId', user.id);
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('rf_currentUserId');
+  };
+
+  const handleSetup = (company: CompanyInfo, adminUser: AppUser) => {
+    setCompanyInfo(company);
+    setUsers([adminUser]);
+    handleLogin(adminUser);
+  };
+
+  // 설정 모달 열 때 회사정보 폼 동기화
+  const openSettings = (tab: 'api' | 'company' | 'users' = 'api') => {
+    setEditCompany(companyInfo);
+    setSettingsTab(tab);
+    setShowAddUserForm(false);
+    setEditingUserId(null);
+    setUserFormError('');
+    setIsSettingsOpen(true);
+  };
+
+  // ── 사용자 관리 핸들러 ──
+  const AVATAR_COLORS = ['#1a73e8', '#34a853', '#ea4335', '#fbbc05', '#9c27b0', '#ff6f00', '#00acc1'];
+
+  const handleAddUser = () => {
+    setUserFormError('');
+    if (!newUserForm.username.trim() || !newUserForm.name.trim()) {
+      setUserFormError('아이디와 표시 이름을 입력하세요.'); return;
+    }
+    if (users.some(u => u.username === newUserForm.username.trim())) {
+      setUserFormError('이미 사용 중인 아이디입니다.'); return;
+    }
+    if (newUserForm.password.length < 4) {
+      setUserFormError('비밀번호는 최소 4자 이상이어야 합니다.'); return;
+    }
+    if (newUserForm.password !== newUserForm.confirmPw) {
+      setUserFormError('비밀번호가 일치하지 않습니다.'); return;
+    }
+    const newUser: AppUser = {
+      id: Date.now().toString(),
+      username: newUserForm.username.trim(),
+      name: newUserForm.name.trim(),
+      email: newUserForm.email.trim() || undefined,
+      passwordHash: btoa(newUserForm.password),
+      role: newUserForm.role,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      avatarColor: AVATAR_COLORS[users.length % AVATAR_COLORS.length],
+    };
+    setUsers(prev => [...prev, newUser]);
+    setNewUserForm({ username: '', name: '', email: '', password: '', confirmPw: '', role: 'MANAGER' });
+    setShowAddUserForm(false);
+    setUserFormError('');
+  };
+
+  const handleSaveEditUser = () => {
+    setUserFormError('');
+    if (!editUserForm.name.trim()) { setUserFormError('표시 이름을 입력하세요.'); return; }
+    setUsers(prev => prev.map(u => u.id === editingUserId ? { ...u, name: editUserForm.name.trim(), email: editUserForm.email.trim() || undefined, role: editUserForm.role } : u));
+    setEditingUserId(null);
+  };
+
+  const handleToggleUserActive = (userId: string) => {
+    if (userId === currentUser?.id) { alert('현재 로그인된 계정은 비활성화할 수 없습니다.'); return; }
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, isActive: !u.isActive } : u));
+  };
+
+  const handleResetPassword = (userId: string) => {
+    if (!confirm('비밀번호를 "1234"로 초기화하시겠습니까?')) return;
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, passwordHash: btoa('1234') } : u));
+    alert('비밀번호가 1234로 초기화되었습니다.');
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setEditCompany(p => ({ ...p, logoBase64: ev.target?.result as string }));
+    reader.readAsDataURL(file);
+  };
 
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>(INIT_STAKEHOLDERS);
   const [properties, setProperties] = useState<Property[]>(INIT_PROPERTIES);
@@ -220,6 +345,11 @@ function App() {
     { id: 'PARKING', label: '주차 관리', shortLabel: '주차', icon: <ParkingSquare size={18}/> },
   ];
 
+  // 로그인 안 된 경우 LoginPage 표시
+  if (!currentUser) {
+    return <LoginPage users={users} companyInfo={companyInfo} onLogin={handleLogin} onSetup={handleSetup} />;
+  }
+
   return (
     <div className="flex h-screen bg-white overflow-hidden">
       {/* PC 사이드바 */}
@@ -238,15 +368,20 @@ function App() {
              </button>
            ))}
         </nav>
-        <div className="p-3 border-t border-[#dadce0]">
-           <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[#f1f3f4] cursor-pointer" onClick={() => setIsSettingsOpen(true)}>
-              <div className="w-8 h-8 bg-[#fbbc05] rounded-full flex items-center justify-center text-white font-bold text-xs">AD</div>
+        <div className="p-3 border-t border-[#dadce0] space-y-1">
+           <div className="flex items-center gap-2 p-2 rounded-lg hover:bg-[#f1f3f4] cursor-pointer" onClick={() => openSettings('api')}>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0" style={{ background: currentUser.avatarColor || '#1a73e8' }}>
+                {currentUser.name.slice(0, 1)}
+              </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-[#3c4043] truncate">김관리</p>
-                <p className="text-[10px] text-[#5f6368]">설정</p>
+                <p className="text-xs font-bold text-[#3c4043] truncate">{currentUser.name}</p>
+                <p className="text-[10px] text-[#5f6368] truncate">{currentUser.role === 'ADMIN' ? '관리자' : currentUser.role === 'MANAGER' ? '담당자' : '열람'}</p>
               </div>
               <Settings size={14} className="text-[#5f6368]"/>
            </div>
+           <button onClick={handleLogout} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[11px] text-[#5f6368] hover:bg-[#fce8e6] hover:text-[#ea4335] transition-colors">
+              <LogOut size={13}/> 로그아웃
+           </button>
         </div>
       </aside>
 
@@ -354,7 +489,7 @@ function App() {
                   </button>
 
                   {/* 설정 (PC) */}
-                  <button onClick={() => setIsSettingsOpen(true)} className="hidden lg:flex p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg">
+                  <button onClick={() => openSettings('api')} className="hidden lg:flex p-2 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg">
                      <Settings size={18}/>
                   </button>
                </div>
@@ -364,7 +499,7 @@ function App() {
          {/* 메인 콘텐츠 */}
          <div className="flex-1 overflow-y-auto p-3 md:p-6 pb-20 lg:pb-6 bg-[#f8f9fa] custom-scrollbar">
             <div className="max-w-[1400px] mx-auto">
-               {activeTab === 'DASHBOARD' && <Dashboard financials={financials} properties={properties} contracts={leaseContracts} units={units} valuations={valuations} facilities={facilities} transactions={transactions} stakeholders={stakeholders} formatMoney={formatMoney} />}
+               {activeTab === 'DASHBOARD' && <Dashboard financials={financials} properties={properties} contracts={leaseContracts} units={units} valuations={valuations} facilities={facilities} transactions={transactions} stakeholders={stakeholders} maintenanceContracts={maintenanceContracts} utilityContracts={utilityContracts} formatMoney={formatMoney} />}
                {activeTab === 'PROPERTY' && (
                   <PropertyManager
                     properties={properties} units={units} facilities={facilities}
@@ -508,7 +643,7 @@ function App() {
                </nav>
                <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-[#dadce0] bg-white">
                   <button
-                     onClick={() => { setIsSettingsOpen(true); setIsMobileMenuOpen(false); }}
+                     onClick={() => { openSettings('api'); setIsMobileMenuOpen(false); }}
                      className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
                   >
                      <Settings size={18}/>
@@ -523,10 +658,11 @@ function App() {
       {/* Settings Modal */}
       {isSettingsOpen && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
-          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-white rounded-2xl shadow-2xl">
-            <div className="p-6 border-b border-[#dadce0] flex justify-between items-center">
-              <h3 className="text-xl font-bold text-[#202124] flex items-center gap-3">
-                <Settings size={24} className="text-[#1a73e8]" />
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-xl bg-white rounded-2xl shadow-2xl flex flex-col" style={{ maxHeight: '90vh' }}>
+            {/* 헤더 */}
+            <div className="p-5 border-b border-[#dadce0] flex justify-between items-center flex-shrink-0">
+              <h3 className="text-lg font-bold text-[#202124] flex items-center gap-2">
+                <Settings size={20} className="text-[#1a73e8]" />
                 환경설정
               </h3>
               <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-[#f1f3f4] rounded-full transition-colors">
@@ -534,108 +670,293 @@ function App() {
               </button>
             </div>
 
-            <div className="p-6 space-y-6">
-              {/* 주소 검색 API 설정 */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <MapPin size={18} className="text-[#1a73e8]" />
-                  <h4 className="font-bold text-[#3c4043]">주소 검색 API</h4>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => setAppSettings(prev => ({ ...prev, addressApi: 'DAUM' }))}
-                    className={`p-4 rounded-xl border-2 transition-all text-left ${
-                      appSettings.addressApi === 'DAUM'
-                        ? 'border-[#1a73e8] bg-[#e8f0fe]'
-                        : 'border-[#dadce0] hover:border-[#1a73e8]'
-                    }`}
-                  >
-                    <p className="font-bold text-[#202124]">다음 우편번호</p>
-                    <p className="text-xs text-[#5f6368] mt-1">Kakao 제공, API 키 불필요</p>
-                  </button>
-                  <button
-                    onClick={() => setAppSettings(prev => ({ ...prev, addressApi: 'VWORLD' }))}
-                    className={`p-4 rounded-xl border-2 transition-all text-left ${
-                      appSettings.addressApi === 'VWORLD'
-                        ? 'border-[#1a73e8] bg-[#e8f0fe]'
-                        : 'border-[#dadce0] hover:border-[#1a73e8]'
-                    }`}
-                  >
-                    <p className="font-bold text-[#202124]">VWorld API</p>
-                    <p className="text-xs text-[#5f6368] mt-1">국토교통부, API 키 필요</p>
-                  </button>
-                </div>
-
-                {/* VWorld API Key 입력 */}
-                {appSettings.addressApi === 'VWORLD' && (
-                  <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
-                    <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]">
-                      <Key size={14} />
-                      VWorld API Key
-                    </label>
-                    <input
-                      type="text"
-                      value={appSettings.vworldApiKey}
-                      onChange={(e) => setAppSettings(prev => ({ ...prev, vworldApiKey: e.target.value }))}
-                      placeholder="API 키를 입력하세요"
-                      className="w-full border border-[#dadce0] p-3 rounded-lg text-sm focus:ring-2 focus:ring-[#1a73e8] focus:border-[#1a73e8] outline-none"
-                    />
-                    <p className="text-xs text-[#5f6368]">
-                      <a href="https://www.vworld.kr/dev/v4dv_search2_s001.do" target="_blank" rel="noopener noreferrer" className="text-[#1a73e8] hover:underline">
-                        VWorld 개발자센터
-                      </a>에서 API 키를 발급받으세요.
-                    </p>
-                    {appSettings.addressApi === 'VWORLD' && !appSettings.vworldApiKey && (
-                      <p className="text-xs text-[#ea4335] font-medium">⚠️ API 키가 없으면 주소 검색이 작동하지 않습니다.</p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* 공공데이터포털 API 설정 (건축물대장) */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Building2 size={18} className="text-[#34a853]" />
-                  <h4 className="font-bold text-[#3c4043]">건축물대장 API</h4>
-                </div>
-                <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
-                  <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]">
-                    <Key size={14} />
-                    공공데이터포털 API Key
-                  </label>
-                  <input
-                    type="text"
-                    value={appSettings.dataGoKrApiKey}
-                    onChange={(e) => setAppSettings(prev => ({ ...prev, dataGoKrApiKey: e.target.value }))}
-                    placeholder="공공데이터포털 API 키를 입력하세요"
-                    className="w-full border border-[#dadce0] p-3 rounded-lg text-sm focus:ring-2 focus:ring-[#34a853] focus:border-[#34a853] outline-none"
-                  />
-                  <p className="text-xs text-[#5f6368]">
-                    <a href="https://www.data.go.kr/data/15044713/openapi.do" target="_blank" rel="noopener noreferrer" className="text-[#34a853] hover:underline">
-                      공공데이터포털
-                    </a>에서 "건축물대장정보 서비스" API 키를 발급받으세요.
-                  </p>
-                  <div className="mt-2 p-3 bg-white rounded-lg border border-[#dadce0]">
-                    <p className="text-xs font-bold text-[#3c4043] mb-1">연동 예정 기능:</p>
-                    <ul className="text-xs text-[#5f6368] space-y-1">
-                      <li>• 건물 표제부 자동 입력 (동별 건물정보)</li>
-                      <li>• 층별 정보 자동 입력</li>
-                    </ul>
-                  </div>
-                  {!appSettings.dataGoKrApiKey && (
-                    <p className="text-xs text-[#fbbc05] font-medium">⚠️ API 키가 없으면 건물정보 자동 조회가 작동하지 않습니다.</p>
-                  )}
-                </div>
-              </div>
+            {/* 탭 */}
+            <div className="flex border-b border-[#dadce0] flex-shrink-0">
+              {([['api', 'API 설정'], ['company', '기본 정보'], ['users', '사용자 관리']] as const).map(([tab, label]) => (
+                <button
+                  key={tab}
+                  onClick={() => setSettingsTab(tab)}
+                  className={`flex-1 py-3 text-sm font-bold transition-colors border-b-2 ${settingsTab === tab ? 'border-[#1a73e8] text-[#1a73e8]' : 'border-transparent text-[#5f6368] hover:text-[#3c4043]'}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
-            <div className="p-6 border-t border-[#dadce0] flex justify-end">
-              <button
-                onClick={() => setIsSettingsOpen(false)}
-                className="px-6 py-2.5 bg-[#1a73e8] text-white font-bold rounded-lg hover:bg-[#1557b0] transition-colors"
-              >
-                확인
+            {/* 탭 콘텐츠 */}
+            <div className="overflow-y-auto flex-1 relative">
+              <div className="absolute top-0 left-0 right-0 h-4 bg-gradient-to-b from-white to-transparent z-10 pointer-events-none"/>
+              <div className="p-6 space-y-6">
+
+                {/* ── API 설정 탭 ── */}
+                {settingsTab === 'api' && (
+                  <>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <MapPin size={16} className="text-[#1a73e8]" />
+                        <h4 className="font-bold text-[#3c4043]">주소 검색 API</h4>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button onClick={() => setAppSettings(prev => ({ ...prev, addressApi: 'DAUM' }))} className={`p-3 rounded-xl border-2 transition-all text-left ${appSettings.addressApi === 'DAUM' ? 'border-[#1a73e8] bg-[#e8f0fe]' : 'border-[#dadce0] hover:border-[#1a73e8]'}`}>
+                          <p className="font-bold text-[#202124] text-sm">다음 우편번호</p>
+                          <p className="text-xs text-[#5f6368] mt-0.5">Kakao 제공, API 키 불필요</p>
+                        </button>
+                        <button onClick={() => setAppSettings(prev => ({ ...prev, addressApi: 'VWORLD' }))} className={`p-3 rounded-xl border-2 transition-all text-left ${appSettings.addressApi === 'VWORLD' ? 'border-[#1a73e8] bg-[#e8f0fe]' : 'border-[#dadce0] hover:border-[#1a73e8]'}`}>
+                          <p className="font-bold text-[#202124] text-sm">VWorld API</p>
+                          <p className="text-xs text-[#5f6368] mt-0.5">국토교통부, API 키 필요</p>
+                        </button>
+                      </div>
+                      {appSettings.addressApi === 'VWORLD' && (
+                        <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                          <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]"><Key size={13}/>VWorld API Key</label>
+                          <input type="text" value={appSettings.vworldApiKey} onChange={e => setAppSettings(prev => ({ ...prev, vworldApiKey: e.target.value }))} placeholder="API 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                          {!appSettings.vworldApiKey && <p className="text-xs text-[#ea4335] font-medium">⚠️ API 키가 없으면 주소 검색이 작동하지 않습니다.</p>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Building2 size={16} className="text-[#34a853]" />
+                        <h4 className="font-bold text-[#3c4043]">건축물대장 / 승강기 API</h4>
+                      </div>
+                      <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                        <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]"><Key size={13}/>공공데이터포털 API Key</label>
+                        <input type="text" value={appSettings.dataGoKrApiKey} onChange={e => setAppSettings(prev => ({ ...prev, dataGoKrApiKey: e.target.value }))} placeholder="공공데이터포털 API 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#34a853] outline-none"/>
+                        {!appSettings.dataGoKrApiKey && <p className="text-xs text-[#fbbc05] font-medium">⚠️ API 키가 없으면 건물/승강기 자동 조회가 작동하지 않습니다.</p>}
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <MapPin size={16} className="text-[#ea4335]" />
+                        <h4 className="font-bold text-[#3c4043]">카카오맵 로드뷰 API</h4>
+                      </div>
+                      <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                        <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]"><Key size={13}/>Kakao JavaScript API Key</label>
+                        <input type="text" value={appSettings.kakaoMapApiKey} onChange={e => setAppSettings(prev => ({ ...prev, kakaoMapApiKey: e.target.value }))} placeholder="카카오 JavaScript 앱 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#ea4335] outline-none"/>
+                        <p className="text-xs text-[#5f6368]">자산 개요의 사진 갤러리에 <strong>주소 기반 로드뷰</strong>가 표시됩니다. <a href="https://developers.kakao.com/console/app" target="_blank" rel="noopener noreferrer" className="text-[#ea4335] hover:underline">카카오 개발자 콘솔</a>에서 JavaScript 앱 키를 발급하세요.</p>
+                        {!appSettings.kakaoMapApiKey && <p className="text-xs text-[#9aa0a6]">※ API 키 없이도 앱 사용 가능 (로드뷰만 비활성)</p>}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* ── 기본 정보 탭 ── */}
+                {settingsTab === 'company' && (
+                  <div className="space-y-4">
+                    {/* 로고 */}
+                    <div className="flex items-center gap-4">
+                      <div className="w-20 h-20 rounded-xl border-2 border-dashed border-[#dadce0] flex items-center justify-center bg-[#f8f9fa] overflow-hidden flex-shrink-0">
+                        {editCompany.logoBase64
+                          ? <img src={editCompany.logoBase64} alt="로고" className="w-full h-full object-contain"/>
+                          : <Building2 size={32} className="text-[#dadce0]"/>
+                        }
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-[#5f6368]">회사 로고</p>
+                        <input ref={logoInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload}/>
+                        <button onClick={() => logoInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-[#dadce0] rounded-lg hover:bg-[#f1f3f4] text-[#3c4043]">
+                          <Upload size={12}/> 업로드
+                        </button>
+                        {editCompany.logoBase64 && (
+                          <button onClick={() => setEditCompany(p => ({ ...p, logoBase64: undefined }))} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-[#fce8e6] rounded-lg hover:bg-[#fce8e6] text-[#ea4335]">
+                            <Trash2 size={12}/> 삭제
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="col-span-2">
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">회사명 <span className="text-[#ea4335]">*</span></label>
+                        <input value={editCompany.name} onChange={e => setEditCompany(p => ({...p, name: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">사업자등록번호</label>
+                        <input value={editCompany.businessRegNumber || ''} onChange={e => setEditCompany(p => ({...p, businessRegNumber: e.target.value}))} placeholder="000-00-00000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">법인등록번호</label>
+                        <input value={editCompany.corporateRegNumber || ''} onChange={e => setEditCompany(p => ({...p, corporateRegNumber: e.target.value}))} placeholder="000000-0000000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">대표자명</label>
+                        <input value={editCompany.representative || ''} onChange={e => setEditCompany(p => ({...p, representative: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">대표 전화</label>
+                        <input value={editCompany.phone || ''} onChange={e => setEditCompany(p => ({...p, phone: e.target.value}))} placeholder="02-0000-0000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">팩스</label>
+                        <input value={editCompany.faxNumber || ''} onChange={e => setEditCompany(p => ({...p, faxNumber: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">이메일</label>
+                        <input type="email" value={editCompany.email || ''} onChange={e => setEditCompany(p => ({...p, email: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">웹사이트</label>
+                        <input value={editCompany.website || ''} onChange={e => setEditCompany(p => ({...p, website: e.target.value}))} placeholder="https://" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">주소</label>
+                        <input value={editCompany.address || ''} onChange={e => setEditCompany(p => ({...p, address: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">상세주소</label>
+                        <input value={editCompany.addressDetail || ''} onChange={e => setEditCompany(p => ({...p, addressDetail: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-[#5f6368] mb-1 block">우편번호</label>
+                        <input value={editCompany.postalCode || ''} onChange={e => setEditCompany(p => ({...p, postalCode: e.target.value}))} placeholder="00000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => { if (!editCompany.name.trim()) { alert('회사명을 입력하세요.'); return; } setCompanyInfo({...editCompany}); alert('기본정보가 저장되었습니다.'); }}
+                      className="w-full py-2.5 bg-[#1a73e8] text-white font-bold rounded-lg hover:bg-[#1557b0] transition-colors"
+                    >
+                      저장
+                    </button>
+                  </div>
+                )}
+
+                {/* ── 사용자 관리 탭 ── */}
+                {settingsTab === 'users' && (
+                  <div className="space-y-3">
+                    {/* 사용자 목록 */}
+                    {users.map(user => (
+                      <div key={user.id} className={`border rounded-xl transition-all ${editingUserId === user.id ? 'border-[#1a73e8] bg-[#f8fbff]' : 'border-[#dadce0] bg-white'}`}>
+                        <div className="flex items-center gap-3 p-3">
+                          <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0" style={{ background: user.avatarColor || '#1a73e8' }}>
+                            {user.name.slice(0, 1)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-bold text-[#202124]">{user.name}</p>
+                              {user.id === currentUser.id && <span className="text-[10px] bg-[#e6f4ea] text-[#34a853] px-1.5 py-0.5 rounded-full font-bold">현재</span>}
+                              {!user.isActive && <span className="text-[10px] bg-[#fce8e6] text-[#ea4335] px-1.5 py-0.5 rounded-full font-bold">비활성</span>}
+                            </div>
+                            <p className="text-xs text-[#5f6368]">@{user.username} {user.email ? `· ${user.email}` : ''}</p>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${user.role === 'ADMIN' ? 'bg-[#fce8e6] text-[#ea4335]' : user.role === 'MANAGER' ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'bg-[#f1f3f4] text-[#5f6368]'}`}>
+                            {user.role === 'ADMIN' ? '관리자' : user.role === 'MANAGER' ? '담당자' : '열람'}
+                          </span>
+                          <button
+                            onClick={() => {
+                              if (editingUserId === user.id) { setEditingUserId(null); return; }
+                              setEditingUserId(user.id);
+                              setEditUserForm({ name: user.name, email: user.email || '', role: user.role });
+                              setUserFormError('');
+                            }}
+                            className="p-1.5 rounded-lg hover:bg-[#f1f3f4] text-[#5f6368] flex-shrink-0"
+                          >
+                            <Edit2 size={14}/>
+                          </button>
+                        </div>
+
+                        {/* 인라인 편집 */}
+                        {editingUserId === user.id && (
+                          <div className="px-3 pb-3 space-y-2 border-t border-[#e8f0fe] pt-2">
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">표시 이름</label>
+                                <input value={editUserForm.name} onChange={e => setEditUserForm(p => ({...p, name: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">역할</label>
+                                <select value={editUserForm.role} onChange={e => setEditUserForm(p => ({...p, role: e.target.value as UserRole}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none bg-white">
+                                  <option value="ADMIN">관리자</option>
+                                  <option value="MANAGER">담당자</option>
+                                  <option value="VIEWER">열람</option>
+                                </select>
+                              </div>
+                              <div className="col-span-2">
+                                <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">이메일</label>
+                                <input type="email" value={editUserForm.email} onChange={e => setEditUserForm(p => ({...p, email: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                              </div>
+                            </div>
+                            {userFormError && <p className="text-[10px] text-[#ea4335]">{userFormError}</p>}
+                            <div className="flex gap-1.5 flex-wrap">
+                              <button onClick={handleSaveEditUser} className="px-3 py-1 bg-[#1a73e8] text-white text-xs font-bold rounded-lg hover:bg-[#1557b0]">저장</button>
+                              <button onClick={() => handleToggleUserActive(user.id)} className={`px-3 py-1 text-xs font-bold rounded-lg border ${user.isActive ? 'border-[#fbbc05] text-[#f29900] hover:bg-[#fef7e0]' : 'border-[#34a853] text-[#34a853] hover:bg-[#e6f4ea]'}`}>
+                                {user.isActive ? <><UserX size={11} className="inline mr-0.5"/>비활성화</> : <><UserCheck size={11} className="inline mr-0.5"/>활성화</>}
+                              </button>
+                              <button onClick={() => handleResetPassword(user.id)} className="px-3 py-1 text-xs font-bold rounded-lg border border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]">
+                                <Key size={11} className="inline mr-0.5"/>비밀번호 초기화
+                              </button>
+                              <button onClick={() => setEditingUserId(null)} className="px-3 py-1 text-xs font-bold rounded-lg border border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]">취소</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {/* 사용자 추가 폼 */}
+                    {showAddUserForm ? (
+                      <div className="border-2 border-dashed border-[#1a73e8] rounded-xl p-4 bg-[#f8fbff] space-y-3">
+                        <p className="text-sm font-bold text-[#1a73e8]">새 사용자 추가</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">아이디 *</label>
+                            <input value={newUserForm.username} onChange={e => setNewUserForm(p => ({...p, username: e.target.value}))} placeholder="로그인 아이디" className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">표시 이름 *</label>
+                            <input value={newUserForm.name} onChange={e => setNewUserForm(p => ({...p, name: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">역할</label>
+                            <select value={newUserForm.role} onChange={e => setNewUserForm(p => ({...p, role: e.target.value as UserRole}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none bg-white">
+                              <option value="MANAGER">담당자</option>
+                              <option value="ADMIN">관리자</option>
+                              <option value="VIEWER">열람</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">이메일</label>
+                            <input type="email" value={newUserForm.email} onChange={e => setNewUserForm(p => ({...p, email: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                          </div>
+                          <div className="relative">
+                            <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">비밀번호 *</label>
+                            <input type={showNewUserPw ? 'text' : 'password'} value={newUserForm.password} onChange={e => setNewUserForm(p => ({...p, password: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 pr-7 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                            <button type="button" onClick={() => setShowNewUserPw(!showNewUserPw)} className="absolute right-2 bottom-1.5 text-[#5f6368]">{showNewUserPw ? <EyeOff size={12}/> : <Eye size={12}/>}</button>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-bold text-[#5f6368] mb-0.5 block">비밀번호 확인 *</label>
+                            <input type="password" value={newUserForm.confirmPw} onChange={e => setNewUserForm(p => ({...p, confirmPw: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                          </div>
+                        </div>
+                        {userFormError && <p className="text-[10px] text-[#ea4335]">{userFormError}</p>}
+                        <div className="flex gap-2">
+                          <button onClick={handleAddUser} className="px-4 py-1.5 bg-[#1a73e8] text-white text-xs font-bold rounded-lg hover:bg-[#1557b0]">추가</button>
+                          <button onClick={() => { setShowAddUserForm(false); setUserFormError(''); setNewUserForm({ username: '', name: '', email: '', password: '', confirmPw: '', role: 'MANAGER' }); }} className="px-4 py-1.5 border border-[#dadce0] text-xs font-bold rounded-lg hover:bg-[#f1f3f4]">취소</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={() => { setShowAddUserForm(true); setEditingUserId(null); }} className="w-full py-2.5 border-2 border-dashed border-[#dadce0] rounded-xl text-sm font-bold text-[#5f6368] hover:border-[#1a73e8] hover:text-[#1a73e8] transition-colors flex items-center justify-center gap-2">
+                        <Plus size={16}/> 사용자 추가
+                      </button>
+                    )}
+
+                    {/* 역할 안내 */}
+                    <div className="p-3 bg-[#f8f9fa] rounded-xl border border-[#dadce0] space-y-1">
+                      <p className="text-[10px] font-bold text-[#5f6368] mb-2">역할 안내</p>
+                      <div className="flex items-center gap-2"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#fce8e6] text-[#ea4335]">관리자</span><span className="text-[10px] text-[#5f6368]">모든 기능 접근, 사용자 관리 가능</span></div>
+                      <div className="flex items-center gap-2"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#e8f0fe] text-[#1a73e8]">담당자</span><span className="text-[10px] text-[#5f6368]">데이터 조회 및 입력 가능</span></div>
+                      <div className="flex items-center gap-2"><span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#f1f3f4] text-[#5f6368]">열람</span><span className="text-[10px] text-[#5f6368]">데이터 조회만 가능</span></div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-white to-transparent z-10 pointer-events-none"/>
+            </div>
+
+            {/* 푸터 */}
+            <div className="p-4 border-t border-[#dadce0] flex justify-end flex-shrink-0">
+              <button onClick={() => setIsSettingsOpen(false)} className="px-6 py-2 bg-[#1a73e8] text-white font-bold rounded-lg hover:bg-[#1557b0] transition-colors text-sm">
+                닫기
               </button>
             </div>
           </div>

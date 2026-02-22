@@ -44,14 +44,15 @@ git push
 - `types.ts` - 부동산 도메인 TypeScript 인터페이스 (Property, Building, Unit, Lot, LeaseContract, Facility 등)
 
 **컴포넌트** (`components/`):
-- `Dashboard.tsx` - Recharts 시각화가 포함된 분석 위젯
-- `PropertyManager.tsx` - 물건, 건물, 호실, 토지 CRUD (건물별 호실 그룹화)
+- `Dashboard.tsx` - Recharts 시각화 위젯 + 이벤트 캘린더
+- `PropertyManager.tsx` - 물건, 건물, 호실, 토지 CRUD (건물별 호실 그룹화) + 로드뷰/갤러리
 - `AddressSearch.tsx` - 주소 검색 (다음 우편번호 API / VWorld API 선택 가능)
 - `ContractManager.tsx` - 임대차 계약 생명주기 관리
 - `FacilityManager.tsx` - 시설 인벤토리 및 유지보수 추적
-- `StakeholderManager.tsx` - 임차인/협력업체/관리자 디렉토리
+- `StakeholderManager.tsx` - 임차인/협력업체/관리자 디렉토리 + 우편 라벨 인쇄
 - `FinanceManager.tsx` - 거래 및 수납 추적
 - `ValuationManager.tsx` - 자산 감정 이력
+- `LoginPage.tsx` - 로그인 / 초기설정 (신규)
 
 ## 기술 스택
 
@@ -332,6 +333,73 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 - **API 키 관리** - `.env` 파일 또는 설정 페이지에서 관리 (VWorld, data.go.kr)
 
 ## 개발 이력
+
+### 2026-02-22: 로그인/사용자관리, 갤러리/로드뷰 개선, 캘린더, 우편 라벨
+
+#### 로그인 및 사용자 관리 (LoginPage.tsx + App.tsx + types.ts)
+- **초기설정 플로우**: 사용자 0명 → 회사정보 + 관리자 계정 등록 2단계 위자드
+- **로그인 페이지**: 사용자명+비밀번호 입력, 비밀번호 보기/숨기기 토글, 오류 메시지
+- **비밀번호 저장**: `btoa()` 인코딩 (`passwordHash`), 초기화 시 `btoa('1234')`
+- **세션 유지**: `localStorage.rf_currentUserId` 저장, 새로고침 후 자동 복원
+- **로그아웃**: 헤더 우상단 버튼, `localStorage.rf_currentUserId` 삭제
+- **설정 모달 탭 확장**: API 설정 / 기본 정보(회사) / 사용자 관리 3탭
+  - 사용자 추가/수정/활성화비활성화/비밀번호초기화
+  - 회사정보: 이름, 사업자번호, 대표자, 연락처, 이메일, 홈페이지, 로고
+- **types.ts 추가**: `AppUser`, `CompanyInfo`, `UserRole` ('ADMIN'|'MANAGER'|'VIEWER') 인터페이스
+- **localStorage 키**: `rf_users`, `rf_companyInfo`, `rf_currentUserId`
+- **아바타 색상**: 6가지 색상 순환 자동 배정 (`AVATAR_COLORS`)
+
+#### 대시보드 이벤트 캘린더 (Dashboard.tsx)
+- `EventCalendarWidget` 컴포넌트 신규 추가
+- 이벤트 카테고리: 계약만료, 납부일, 유지보수, 공과금 (색상 구분)
+- 월별 달력 뷰 + 이전/다음 월 이동
+- 필터 토글: 카테고리별 on/off
+- 날짜 클릭 → 해당일 이벤트 목록 표시
+
+#### 로드뷰 스크린샷 개선 (PropertyManager.tsx)
+- **getDisplayMedia 방식**: WebGL/CORS 우회 → 브라우저 화면 공유 API 사용
+- **영역 지정 크롭 UI**: 캡처 후 사각형 드래그 → 마우스 업 즉시 저장 (별도 저장 버튼 없음)
+  - portal 기반 전체화면 overlay, 선택 영역 외 반투명 어둠, 크기 실시간 표시
+- **클립보드 동시 복사**: `navigator.clipboard.write([new ClipboardItem({...})])`
+- **buildLocationCard 제거**: 위치 카드 fallback 및 captureStream 코드 전체 삭제
+- **isCapturing 상태**: 캡처 중 미니맵/라벨/버튼 visibility:hidden (DOM 유지)
+
+#### 대표 사진 + 갤러리 모달 개편 (PropertyManager.tsx + types.ts)
+- `PropertyPhoto.isMain?: boolean` 필드 추가
+- **개요 화면**: 대표 사진 있으면 `<img>` 표시, 없으면 로드뷰 (미니맵 없음)
+- **갤러리 모달 구조 개편**:
+  - 메인 뷰: 로드뷰 ↔ 저장된 사진 전환 (visibility 방식, 로드뷰 재초기화 없음)
+  - 하단 썸네일 스트립: `120×80px` (이전 96×64px), 로드뷰 썸네일 + 사진 썸네일
+  - 썸네일 클릭 → 메인 뷰 전환, 현재 선택 하단 컬러 바 표시
+  - 사진 뷰에서 "대표로 설정" 버튼 직접 노출
+  - 사진 없을 때 안내 문구 표시
+- `handleSetMainPhoto`: 클릭된 사진만 `isMain:true`, 나머지 `false`
+- `galleryViewPhotoId` state: null=로드뷰, photoId=해당 사진
+
+#### KakaoRoadview 미니맵 prop 분리 (PropertyManager.tsx)
+- `showMinimap?: boolean` prop 추가 (기본값 true)
+- 개요 화면 소형 뷰: `showMinimap={false}` — 미니맵 없이 로드뷰만
+- 갤러리 전체화면: 기본값 true → 미니맵 표시
+- `visibility` CSS로 숨김 처리 (Kakao SDK ref DOM 유지)
+
+#### 위치지도 뷰 토글 (PropertyManager.tsx)
+- `KakaoMapPin` 컴포넌트에 `MapViewType` 상태 추가
+- 우상단 토글 버튼: **일반** / **위성** / **지적도**
+- 일반: `kakao.maps.MapTypeId.ROADMAP`
+- 위성: `kakao.maps.MapTypeId.HYBRID` (위성사진 + 도로명 레이블)
+- 지적도: ROADMAP + `addOverlayMapTypeId(USE_DISTRICT)` (필지 경계선 오버레이)
+
+#### 개요 사진/지도 반응형 높이 (PropertyManager.tsx)
+- 기존 고정 `h-[200px] md:h-[240px]` → 뷰포트 기반 반응형
+- 모바일(< 768px, grid-cols-1 세로배치): `h-[44vw]`
+- 태블릿(md): `h-[28vh]` 최대 352px
+- 데스크탑(lg): `h-[30vh]` 최대 352px
+
+#### 인물/업체 우편 라벨 인쇄 (StakeholderManager.tsx)
+- 체크박스로 복수 선택 후 "라벨 인쇄" 버튼
+- A4 용지 기준 우편번호 박스 + 주소 + 수신인명 레이아웃
+- 우편번호 5자리 개별 박스 렌더링 (인쇄용 HTML 생성)
+- `window.open` 새 창에서 자동 인쇄 후 닫기
 
 ### 2026-02-20: 평면도 뷰어 4가지 대폭 개선 (툴바/조각/레이어/실행취소)
 
