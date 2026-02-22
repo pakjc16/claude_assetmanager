@@ -710,10 +710,13 @@ const KakaoRoadview: React.FC<{
 };
 
 // ── 카카오맵 위치핀 컴포넌트 ──
+type MapViewType = 'normal' | 'satellite' | 'cadastral';
+
 const KakaoMapPin: React.FC<{ address: string; apiKey: string; className?: string }> = ({ address, apiKey, className = '' }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const [status, setStatus] = useState<'loading' | 'ok' | 'error' | 'no-key'>('loading');
+  const [mapView, setMapView] = useState<MapViewType>('normal');
 
   useEffect(() => {
     if (!apiKey) { setStatus('no-key'); return; }
@@ -743,6 +746,32 @@ const KakaoMapPin: React.FC<{ address: string; apiKey: string; className?: strin
     return () => { mounted = false; };
   }, [address, apiKey]);
 
+  // 뷰 타입 변경 시 지도 타입 적용
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const kakao = (window as any).kakao;
+    if (!kakao?.maps?.MapTypeId) return;
+    const M = kakao.maps.MapTypeId;
+    // 기본 맵 타입 설정
+    if (mapView === 'satellite') {
+      mapRef.current.setMapTypeId(M.HYBRID);          // 위성 + 도로명 레이블
+    } else {
+      mapRef.current.setMapTypeId(M.ROADMAP);          // 일반
+    }
+    // 지적도 오버레이
+    if (mapView === 'cadastral') {
+      mapRef.current.addOverlayMapTypeId(M.USE_DISTRICT);
+    } else {
+      try { mapRef.current.removeOverlayMapTypeId(M.USE_DISTRICT); } catch (_) {}
+    }
+  }, [mapView, status]);
+
+  const VIEW_TABS: { id: MapViewType; label: string }[] = [
+    { id: 'normal',    label: '일반' },
+    { id: 'satellite', label: '위성' },
+    { id: 'cadastral', label: '지적도' },
+  ];
+
   return (
     <div className={`relative ${className}`}>
       <div ref={containerRef} className="w-full h-full" />
@@ -758,9 +787,22 @@ const KakaoMapPin: React.FC<{ address: string; apiKey: string; className?: strin
           <p className="text-[10px] text-[#9aa0a6]">{status === 'no-key' ? 'API 키 미설정' : '주소를 찾을 수 없음'}</p>
         </div>
       )}
+      {/* 뷰 토글 버튼 (우상단) */}
       {status === 'ok' && (
-        <div className="absolute top-1.5 left-1.5 bg-white/80 text-[#202124] text-[9px] px-1.5 py-0.5 rounded shadow-sm font-medium pointer-events-none">
-          위치 지도
+        <div className="absolute top-1.5 right-1.5 flex rounded-md overflow-hidden shadow-md z-10">
+          {VIEW_TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setMapView(tab.id)}
+              className={`px-2 py-0.5 text-[9px] font-bold transition-colors ${
+                mapView === tab.id
+                  ? 'bg-[#1a73e8] text-white'
+                  : 'bg-white/90 text-[#5f6368] hover:bg-white'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       )}
     </div>
