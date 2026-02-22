@@ -563,7 +563,7 @@ const KakaoRoadview: React.FC<{
 
   const handleCropMouseUp = () => {
     if (cropRect && cropRect.w > 8 && cropRect.h > 8) {
-      // 선택 완료 — 사용자가 저장 버튼 클릭 대기
+      handleCropSave();
     } else {
       setCropStart(null);
       setCropRect(null);
@@ -687,22 +687,14 @@ const KakaoRoadview: React.FC<{
               </div>
             </div>
           )}
-          {/* 상단 안내 + 버튼 */}
+          {/* 상단 안내 + 취소 */}
           <div
             className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3 pointer-events-auto"
             onMouseDown={e => e.stopPropagation()}
           >
             <div className="bg-black/70 text-white text-sm px-4 py-2 rounded-full flex items-center gap-2">
-              <Crop size={14}/> 저장할 영역을 드래그하세요
+              <Crop size={14}/> 영역을 드래그하면 바로 저장됩니다
             </div>
-            {cropRect && cropRect.w > 8 && cropRect.h > 8 && (
-              <button
-                onClick={handleCropSave}
-                className="bg-[#1a73e8] hover:bg-[#1557b0] text-white text-sm font-bold px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5 transition-colors"
-              >
-                <Camera size={14}/> 저장
-              </button>
-            )}
             <button
               onClick={handleCropCancel}
               className="bg-white/20 hover:bg-white/30 text-white text-sm px-4 py-2 rounded-full transition-colors"
