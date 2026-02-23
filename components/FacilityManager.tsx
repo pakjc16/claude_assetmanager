@@ -680,7 +680,7 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
         setTempSelfCheckSummaries(data.selfCheckSummaries);
       }
 
-      // 기존 시설이면 조회 즉시 자동 저장
+      // 조회 즉시 자동 저장 (기존 시설: 업데이트, 신규: 생성)
       if (selectedFacilityId) {
         const fac: Facility = {
           ...facilityForm as Facility,
@@ -692,6 +692,19 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
           ...(newName ? { name: newName } : {}),
         };
         onUpdateFacility(fac);
+      } else {
+        const newId = `fac${Date.now()}`;
+        const fac: Facility = {
+          ...facilityForm as Facility,
+          id: newId,
+          spec: newElevatorInfo,
+          lastInspectionDate: newElevatorInfo.lastInspctDe || new Date().toISOString().split('T')[0],
+          nextInspectionDate: newElevatorInfo.applcEnDt || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+          installationDate: newElevatorInfo.installationDe || new Date().toISOString().split('T')[0],
+          ...(newName ? { name: newName } : {}),
+        };
+        onAddFacility(fac);
+        setSelectedFacilityId(newId);
       }
     } catch (err: any) {
       setElevatorApiError(err.message || '승강기 정보 조회에 실패했습니다.');

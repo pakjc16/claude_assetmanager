@@ -1,8 +1,8 @@
 
 import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Stakeholder, StakeholderRole, StakeholderType, LeaseContract, MaintenanceContract, Property, Unit, RelatedPerson, Department } from '../types';
-import { User, Phone, Mail, Building, Briefcase, Plus, Search, X, FileText, AlertCircle, Upload, Paperclip, Lock, Key, Users, Edit2, Trash2, GitBranch, Download, DollarSign, ZoomIn, ZoomOut, Maximize2, Printer } from 'lucide-react';
+import { Stakeholder, StakeholderRole, StakeholderType, StakeholderDocument, LeaseContract, MaintenanceContract, Property, Unit, RelatedPerson, Department, BankAccount } from '../types';
+import { User, Phone, Mail, Building, Briefcase, Plus, Search, X, FileText, AlertCircle, Upload, Paperclip, Lock, Key, Users, Edit2, Trash2, GitBranch, Download, DollarSign, ZoomIn, ZoomOut, Maximize2, Printer, GripVertical } from 'lucide-react';
 
 interface StakeholderManagerProps {
   stakeholders: Stakeholder[];
@@ -18,10 +18,12 @@ interface StakeholderManagerProps {
   formatMoney: (amount: number) => string;
   moneyLabel?: string;
   referenceDate?: string;
+  ntsApiKey?: string;
+  googleVisionApiKey?: string;
 }
 
 export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
-  stakeholders, onAddStakeholder, onUpdateStakeholder, onDeleteStakeholder, leaseContracts, maintenanceContracts, properties, units, onUpdateProperty, onUpdateUnit, formatMoney, referenceDate
+  stakeholders, onAddStakeholder, onUpdateStakeholder, onDeleteStakeholder, leaseContracts, maintenanceContracts, properties, units, onUpdateProperty, onUpdateUnit, formatMoney, referenceDate, ntsApiKey, googleVisionApiKey
 }) => {
   const [filterRole, setFilterRole] = useState<StakeholderRole | 'ALL'>('ALL');
   const [filterPropertyId, setFilterPropertyId] = useState<string>('ALL'); // 자산 필터
@@ -31,10 +33,17 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isOrgChartModalOpen, setIsOrgChartModalOpen] = useState(false);
+  const [historyTab, setHistoryTab] = useState<'contracts' | 'documents'>('contracts');
+  const [docUploadType, setDocUploadType] = useState<'BUSINESS_LICENSE' | 'BANKBOOK' | 'OTHER'>('OTHER');
+  const docUploadRef = useRef<HTMLInputElement>(null);
   const [viewStakeholderId, setViewStakeholderId] = useState<string | null>(null);
   const [selectedStakeholderId, setSelectedStakeholderId] = useState<string | null>(null);
   const [orgChartStakeholderId, setOrgChartStakeholderId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [sortMode, setSortMode] = useState<'DEFAULT' | 'NAME_ASC' | 'NAME_DESC' | 'TYPE' | 'ROLE' | 'MANUAL'>('DEFAULT');
+  const [groupMode, setGroupMode] = useState<'NONE' | 'TYPE' | 'ROLE'>('NONE');
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [formData, setFormData] = useState<Partial<Stakeholder>>({
@@ -48,6 +57,602 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   const [editingDepartmentIndex, setEditingDepartmentIndex] = useState<number | null>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
 
+  // 사업자등록 상태조회
+  const [bizStatusResult, setBizStatusResult] = useState<{b_stt: string; b_stt_cd: string; tax_type: string; end_dt: string} | null>(null);
+  const [isBizStatusLoading, setIsBizStatusLoading] = useState(false);
+  const [bizStatusError, setBizStatusError] = useState('');
+
+  const handleCheckBizStatus = async () => {
+    const rawNo = (formData.businessRegistrationNumber || '').replace(/[^0-9]/g, '');
+    if (rawNo.length !== 10) { alert('사업자등록번호 10자리를 입력하세요.'); return; }
+    if (!ntsApiKey) { alert('설정에서 사업자조회 API Key(Decoding)를 입력하세요.'); return; }
+    setIsBizStatusLoading(true);
+    setBizStatusError('');
+    setBizStatusResult(null);
+    try {
+      const res = await fetch(`/api/nts-businessman/v1/status?serviceKey=${ntsApiKey}&returnType=XML`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ b_no: [rawNo] }),
+      });
+      const xmlText = await res.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xmlText, 'text/xml');
+      const getVal = (tag: string) => doc.getElementsByTagName(tag)?.[0]?.textContent?.trim() || '';
+      const statusCode = getVal('StatusCode');
+      if (statusCode !== 'OK') { setBizStatusError(getVal('StatusCode') || '조회 실패'); return; }
+      const bStt = getVal('BStt');
+      const bSttCd = getVal('BSttCd');
+      const taxType = getVal('TaxType');
+      const endDt = getVal('EndDt');
+      if (!bStt && taxType.includes('등록되지 않은')) {
+        setBizStatusError('국세청에 등록되지 않은 사업자등록번호입니다.');
+      } else {
+        setBizStatusResult({ b_stt: bStt, b_stt_cd: bSttCd, tax_type: taxType, end_dt: endDt });
+      }
+    } catch (err: any) {
+      setBizStatusError(err.message || '사업자 상태조회에 실패했습니다.');
+    } finally {
+      setIsBizStatusLoading(false);
+    }
+  };
+
+  // 사업자등록증 OCR
+  const [businessLicenseBase64, setBusinessLicenseBase64] = useState<string>('');
+  const [isOcrLoading, setIsOcrLoading] = useState(false);
+  const [ocrRawText, setOcrRawText] = useState('');
+  const ocrFileInputRef = useRef<HTMLInputElement>(null);
+  const [ocrBizAddr, setOcrBizAddr] = useState('');
+  const [ocrHeadAddr, setOcrHeadAddr] = useState('');
+
+  // 통장사본 OCR
+  const [bankbookBase64, setBankbookBase64] = useState<string>('');
+  const [isBankbookOcrLoading, setIsBankbookOcrLoading] = useState(false);
+  const bankbookFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOcrFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setBusinessLicenseBase64(result);
+      setFormData(prev => ({ ...prev, businessLicenseFile: file.name, businessLicenseBase64: result }));
+      runOcr(result);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const runOcr = async (base64Data: string) => {
+    if (!googleVisionApiKey) { alert('설정에서 Google Vision API Key를 입력하세요.'); return; }
+    setIsOcrLoading(true);
+    setOcrRawText('');
+    try {
+      const isPdf = base64Data.startsWith('data:application/pdf');
+      const contentBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');
+
+      let fullText = '';
+      let wordAnnotations: any[] = [];
+
+      if (isPdf) {
+        // PDF: files:annotate 엔드포인트 사용
+        const res = await fetch(`/api/vision/v1/files:annotate?key=${googleVisionApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requests: [{ inputConfig: { content: contentBase64, mimeType: 'application/pdf' }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }], pages: [1] }]
+          }),
+        });
+        const json = await res.json();
+        const pageResp = json.responses?.[0]?.responses?.[0];
+        fullText = pageResp?.fullTextAnnotation?.text || '';
+        // PDF는 바운딩박스 재구성 하지 않음 (fullText가 이미 정돈됨)
+      } else {
+        // 이미지: images:annotate 엔드포인트 사용
+        const res = await fetch(`/api/vision/v1/images:annotate?key=${googleVisionApiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requests: [{ image: { content: contentBase64 }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }] }]
+          }),
+        });
+        const json = await res.json();
+        fullText = json.responses?.[0]?.fullTextAnnotation?.text || '';
+        wordAnnotations = (json.responses?.[0]?.textAnnotations || []).slice(1);
+      }
+
+      if (!fullText) { setOcrRawText('텍스트를 인식하지 못했습니다.'); return; }
+      setOcrRawText(fullText);
+
+      // ── normalizeLine: 공백 정리 ──
+      // 변환 순서: 전각→반각 → 괄호앞뒤공백 제거 → 한글간공백 제거(이미지전용)
+      const normalizeLine = (line: string) => {
+        let s = line;
+        s = s.replace(/（/g, '(').replace(/）/g, ')').replace(/：/g, ':');  // 전각→반각
+        s = s.replace(/\s+\(/g, '(');   // "명 (" → "명(" (괄호 앞 공백 제거)
+        s = s.replace(/\(\s+/g, '(');   // "( 단" → "(단" (괄호 뒤 공백 제거)
+        s = s.replace(/\s+\)/g, ')');   // "명 )" → "명)" (닫힘괄호 앞 공백 제거)
+        if (!isPdf) {
+          // 이미지 전용: 한글 사이 과도한 공백 제거 ("대 표 자" → "대표자")
+          s = s.replace(/([가-힣])[ \t]+(?=[가-힣])/g, '$1');
+        }
+        return s;
+      };
+      let normLines: string[] = [];
+      let normText = '';
+
+      // 이미지: 바운딩박스 기반 라인 재구성 (같은 Y 높이 단어를 한 줄로 그룹화)
+      if (!isPdf && wordAnnotations.length > 0) {
+        const items = wordAnnotations.map((a: any) => {
+          const verts = a.boundingPoly?.vertices || [];
+          const ys = verts.map((v: any) => v.y || 0);
+          const yMin = Math.min(...ys);
+          const yMax = Math.max(...ys);
+          const yCenter = (yMin + yMax) / 2;
+          const height = yMax - yMin;
+          const xs = verts.map((v: any) => v.x || 0);
+          const xMin = Math.min(...xs);
+          return { text: a.description || '', yCenter, height, xMin };
+        }).filter((it: any) => it.text.trim());
+
+        if (items.length > 0) {
+          const avgHeight = items.reduce((s: number, it: any) => s + it.height, 0) / items.length;
+          const tolerance = avgHeight * 0.4;
+          items.sort((a: any, b: any) => a.yCenter - b.yCenter);
+          const lines: any[][] = [];
+          let currentLine = [items[0]];
+          for (let i = 1; i < items.length; i++) {
+            const lineAvgY = currentLine.reduce((s: number, it: any) => s + it.yCenter, 0) / currentLine.length;
+            if (Math.abs(items[i].yCenter - lineAvgY) <= tolerance) {
+              currentLine.push(items[i]);
+            } else {
+              lines.push(currentLine);
+              currentLine = [items[i]];
+            }
+          }
+          lines.push(currentLine);
+          const reconstructed = lines.map(line => {
+            line.sort((a: any, b: any) => a.xMin - b.xMin);
+            return line.map((it: any) => it.text).join(' ');
+          });
+          normLines = reconstructed.map(l => normalizeLine(l.trim())).filter(Boolean);
+          normText = normLines.join('\n');
+        }
+      }
+
+      // PDF 또는 바운딩박스 실패 시: fullText 기반
+      if (normLines.length === 0) {
+        normLines = fullText.split('\n').map((l: string) => normalizeLine(l.trim())).filter(Boolean);
+        normText = normLines.join('\n');
+      }
+
+      // 키워드 뒤 값 추출 (정확 매칭 → 유연 매칭 fallback)
+      const findValue = (keywords: string[], fromLines = normLines) => {
+        // 1차: 정확 매칭
+        for (const kw of keywords) {
+          for (let i = 0; i < fromLines.length; i++) {
+            const line = fromLines[i];
+            const idx = line.indexOf(kw);
+            if (idx >= 0) {
+              let val = line.substring(idx + kw.length).replace(/^[\s:：·()（）]+/, '').trim();
+              if (val) return val;
+              if (i + 1 < fromLines.length) return fromLines[i + 1].trim();
+            }
+          }
+        }
+        // 2차: 유연 매칭 (키워드 글자 사이 공백 허용, OCR 글자 쪼개짐 대응)
+        for (const kw of keywords) {
+          const flexPattern = kw.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*');
+          const re = new RegExp(flexPattern);
+          for (let i = 0; i < fromLines.length; i++) {
+            const m = re.exec(fromLines[i]);
+            if (m) {
+              let val = fromLines[i].substring(m.index + m[0].length).replace(/^[\s:：·()（）]+/, '').trim();
+              if (val) return val;
+              if (i + 1 < fromLines.length) return fromLines[i + 1].trim();
+            }
+          }
+        }
+        return '';
+      };
+
+      // ── 1. 사업자등록번호 ──
+      let bizNo = '';
+      const regNoLine = normLines.find(l => l.includes('등록번호') && !l.includes('법인등록번호'));
+      if (regNoLine) {
+        const m = regNoLine.match(/(\d[\d\s\-]{8,}\d)/);
+        if (m) bizNo = m[1].replace(/[\s]/g, '');
+      }
+      if (!bizNo || bizNo.length !== 12) {
+        const m2 = normText.match(/(\d{3})\s*[-–—]\s*(\d{2})\s*[-–—]\s*(\d{5})/);
+        if (m2) bizNo = `${m2[1]}-${m2[2]}-${m2[3]}`;
+      }
+      const bizNoClean = bizNo.replace(/[-–—]/g, '');
+      if (bizNoClean.length === 10 && /^\d+$/.test(bizNoClean)) {
+        bizNo = `${bizNoClean.slice(0,3)}-${bizNoClean.slice(3,5)}-${bizNoClean.slice(5)}`;
+      }
+
+      // ── 2. 법인명(단체명) / 상호 ──
+      let bizName = findValue(['법인명(단체명)', '법인명(단체명)', '단체명)']);
+      if (!bizName) bizName = findValue(['상호(법인명)', '상호(법인명)']);
+      if (!bizName) bizName = findValue(['법인명', '상호']);
+      if (bizName) {
+        bizName = bizName.replace(/(표?개업연월일|법인등록번호|대표자|성명|사업장|소재지|업태|종목|사업의종류).*$/, '').trim();
+        bizName = bizName.replace(/[\s:：]+$/, '').trim();
+        bizName = bizName.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
+        // 법인명이 끊긴 경우 다음 줄 이어붙이기 (키워드가 아닌 짧은 텍스트)
+        const bizNameLineIdx = normLines.findIndex(l => l.includes(bizName!));
+        if (bizNameLineIdx >= 0 && bizNameLineIdx + 1 < normLines.length) {
+          const nextL = normLines[bizNameLineIdx + 1];
+          if (nextL && !nextL.match(/^(개업|사업장|소재지|법인등록|대표자|성명|업태|종목|사업의|등록번호|표)/)) {
+            const cont = nextL.replace(/[\s:：]+$/, '').trim();
+            if (cont.length <= 10 && !cont.match(/\d{3}/)) bizName += cont;
+          }
+        }
+      }
+
+      // ── 3. 대표자(성명) ──
+      let rep = findValue(['대표자(성명)', '대표자(성명)']);
+      if (!rep) rep = findValue(['대표자', '성명)']);
+      if (!rep) {
+        for (let i = 0; i < normLines.length; i++) {
+          const line = normLines[i];
+          if (line.match(/대표자/)) {
+            const m = line.match(/대표자[\s\(\)성명:：]*(.+)/);
+            if (m) {
+              rep = m[1].replace(/^[\s:：()（）]+/, '').trim();
+              rep = rep.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의).*$/, '').trim();
+              if (rep) break;
+            }
+            if (!rep && i + 1 < normLines.length) {
+              const nextLine = normLines[i + 1].trim();
+              if (nextLine && !nextLine.match(/개업|사업장|소재지|법인|등록|업태|종목/)) { rep = nextLine; break; }
+            }
+          }
+        }
+      }
+      // fallback 1: "대표"로 끝나는 줄 + 다음 줄 "자 :" 패턴
+      if (!rep) {
+        for (let i = 0; i < normLines.length - 1; i++) {
+          if (normLines[i].match(/대표\s*$/) || normLines[i].endsWith('대표')) {
+            const nextLine = normLines[i + 1];
+            const m = nextLine.match(/^자[\s\(\)성명:：]*(.+)/);
+            if (m) {
+              rep = m[1].replace(/^[\s:：()（）]+/, '').trim();
+              rep = rep.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의).*$/, '').trim();
+              if (rep) break;
+            }
+          }
+        }
+      }
+      // fallback 2: OCR이 "대표자"를 쪼개 "자 : 이름" 패턴이 된 경우
+      if (!rep) {
+        for (let i = 0; i < normLines.length; i++) {
+          const line = normLines[i];
+          const m = line.match(/^자[\s:：]+(.+)/);
+          if (m && i > 0) {
+            const prev = normLines.slice(Math.max(0, i - 3), i).join('');
+            if (prev.match(/대표|법대/) || prev.endsWith('대') || prev.endsWith('표')) {
+              rep = m[1].trim();
+              rep = rep.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의).*$/, '').trim();
+              break;
+            }
+          }
+        }
+      }
+      if (rep) {
+        rep = rep.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의).*$/, '').trim();
+        rep = rep.replace(/[\s:：]+$/, '').trim();
+      }
+
+      // ── 4. 법인등록번호 ──
+      let corpNo = '';
+      const corpLine = normLines.find(l => l.includes('법인등록번호'));
+      if (corpLine) {
+        const cm = corpLine.match(/법인등록번호[\s:：]*(\d[\d\s\-–—]{10,}\d)/);
+        if (cm) corpNo = cm[1].replace(/[\s]/g, '');
+      }
+      if (!corpNo) {
+        for (const line of normLines) {
+          if (line.includes('법인등록') || line.includes('등록번호')) {
+            const cm2 = line.match(/(\d{6})\s*[-–—]\s*(\d{7})/);
+            if (cm2) { corpNo = `${cm2[1]}-${cm2[2]}`; break; }
+          }
+        }
+      }
+      const corpNoClean = corpNo.replace(/[-–—]/g, '');
+      if (corpNoClean.length === 13 && /^\d+$/.test(corpNoClean)) {
+        corpNo = `${corpNoClean.slice(0,6)}-${corpNoClean.slice(6)}`;
+      }
+
+      // ── 5. 사업장 소재지 ──
+      let bizAddr = '';
+      const bizAddrLine = normLines.findIndex(l => l.includes('사업장') && (l.includes('소재지') || l.includes('주소')));
+      if (bizAddrLine >= 0) {
+        bizAddr = normLines[bizAddrLine].replace(/.*(?:소재지|주소)[\s:：]*/, '').trim();
+        for (let j = bizAddrLine + 1; j < normLines.length && j <= bizAddrLine + 2; j++) {
+          const next = normLines[j];
+          if (next && !next.match(/본점|업태|종목|개업|사업의|발급|발행/) && next.length > 2) { bizAddr += ' ' + next; } else break;
+        }
+      }
+
+      // ── 6. 본점 소재지 ──
+      let headAddr = '';
+      const headAddrLine = normLines.findIndex(l => l.includes('본점') && (l.includes('소재지') || l.includes('주소')));
+      if (headAddrLine >= 0) {
+        headAddr = normLines[headAddrLine].replace(/.*(?:소재지|주소)[\s:：]*/, '').trim();
+        for (let j = headAddrLine + 1; j < normLines.length && j <= headAddrLine + 2; j++) {
+          const next = normLines[j];
+          if (next && !next.match(/사업장|사업의|업태|종목|발급|발행/) && next.length > 2) { headAddr += ' ' + next; } else break;
+        }
+      }
+
+      // ── 7. 업태 / 종목 ──
+      let sector = '';
+      let bType = '';
+      const bizTypeLine = normLines.find(l => l.includes('업태') && l.includes('종목'));
+      if (bizTypeLine) {
+        const sm = bizTypeLine.match(/업태[\s:：]*(.+?)(?=종목)/);
+        if (sm) sector = sm[1].trim();
+        const tm = bizTypeLine.match(/종목[\s:：]*(.+)/);
+        if (tm) bType = tm[1].trim();
+      } else {
+        sector = findValue(['업태']);
+        bType = findValue(['종목']);
+      }
+      if (bizTypeLine) {
+        const btIdx = normLines.indexOf(bizTypeLine);
+        for (let j = btIdx + 1; j < normLines.length && j <= btIdx + 2; j++) {
+          const next = normLines[j];
+          if (next && !next.match(/발급|발행|단위과세|전자세금/) && next.length >= 1) {
+            const parts = next.split(/\s{2,}/);
+            if (parts.length >= 2) {
+              sector += (sector ? ', ' : '') + parts[0].trim();
+              bType += (bType ? ', ' : '') + parts.slice(1).join(', ').trim();
+            } else if (parts[0]) {
+              sector += (sector ? ', ' : '') + parts[0].trim();
+            }
+          } else break;
+        }
+      }
+
+      // 업태/종목 워터마크 노이즈 제거
+      const cleanOcrNoise = (s: string) => s
+        .replace(/\d{5,}/g, '')           // "525252525" 워터마크
+        .replace(/[A-Z]{2,}/g, '')        // "NATIONAL", "TAX", "SERVICE", "REPUBLIC", "OF", "KOREA"
+        .replace(/nts\.go\.kr/gi, '')     // 국세청 URL
+        .replace(/\s{2,}/g, ' ').replace(/[,\s]+$/,'').replace(/^[,\s]+/,'').trim();
+      if (sector) sector = cleanOcrNoise(sector);
+      if (bType) bType = cleanOcrNoise(bType);
+      // 업태/종목 중복 제거
+      const dedup = (s: string) => [...new Set(s.split(',').map(v => v.trim()).filter(Boolean))].join(', ');
+      if (sector) sector = dedup(sector);
+      if (bType) bType = dedup(bType);
+
+      // ── 8. 이메일 ──
+      let email = '';
+      const emailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+      const emailMatch = emailRegex.exec(normText);
+      if (emailMatch) {
+        email = emailMatch[0];
+      } else {
+        const emailMatchFull = emailRegex.exec(fullText);
+        if (emailMatchFull) email = emailMatchFull[0];
+      }
+
+      // ── 9. 전화번호 / 팩스번호 ──
+      let phone = '';
+      let fax = '';
+      const phonePattern = /(?:전화|TEL|Tel)\s*(?:번호)?[\s:：]*(\(?0\d{1,2}\)?[\s\-]?\d{3,4}[\s\-]?\d{4})/gi;
+      const faxPattern = /(?:팩스|FAX|Fax)\s*(?:번호)?[\s:：]*(\(?0\d{1,2}\)?[\s\-]?\d{3,4}[\s\-]?\d{4})/gi;
+      const phoneMatch = phonePattern.exec(normText);
+      if (phoneMatch) phone = phoneMatch[1].replace(/\s/g, '');
+      const faxMatch = faxPattern.exec(normText);
+      if (faxMatch) fax = faxMatch[1].replace(/\s/g, '');
+
+      // ── 폼 데이터 자동 입력 (주소는 임시 상태에 저장) ──
+      if (bizAddr) setOcrBizAddr(bizAddr);
+      if (headAddr) setOcrHeadAddr(headAddr);
+      setFormData(prev => ({
+        ...prev,
+        ...(bizNo ? { businessRegistrationNumber: bizNo } : {}),
+        ...(bizName ? { name: bizName } : {}),
+        ...(rep ? { representative: rep } : {}),
+        ...(corpNo ? { registrationNumber: corpNo } : {}),
+        contact: { ...prev.contact, phone: phone || prev.contact?.phone || '', email: email || prev.contact?.email || '' },
+        ...(sector ? { businessSector: sector } : {}),
+        ...(bType ? { businessType: bType } : {}),
+        ...(fax ? { additionalContacts: [...(prev.additionalContacts || []), { label: '팩스', phone: fax }] } : {}),
+      }));
+
+      // 사업자등록번호 인식 시 → 자동 상태조회
+      if (bizNo) {
+        setBizStatusResult(null); setBizStatusError('');
+        const rawNo = bizNo.replace(/[^0-9]/g, '');
+        if (rawNo.length === 10 && ntsApiKey) {
+          try {
+            const sRes = await fetch(`/api/nts-businessman/v1/status?serviceKey=${ntsApiKey}&returnType=XML`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ b_no: [rawNo] }),
+            });
+            const sXml = await sRes.text();
+            const sDoc = new DOMParser().parseFromString(sXml, 'text/xml');
+            const sGetVal = (tag: string) => sDoc.getElementsByTagName(tag)?.[0]?.textContent?.trim() || '';
+            if (sGetVal('StatusCode') === 'OK') {
+              const bStt = sGetVal('BStt'), bSttCd = sGetVal('BSttCd'), taxType = sGetVal('TaxType'), endDt = sGetVal('EndDt');
+              if (bStt || !taxType.includes('등록되지 않은')) {
+                setBizStatusResult({ b_stt: bStt, b_stt_cd: bSttCd, tax_type: taxType, end_dt: endDt });
+              } else {
+                setBizStatusError('국세청에 등록되지 않은 사업자등록번호입니다.');
+              }
+            }
+          } catch { /* 상태조회 실패 시 무시 */ }
+        }
+      }
+    } catch (err: any) {
+      setOcrRawText('OCR 처리 실패: ' + (err.message || ''));
+    } finally {
+      setIsOcrLoading(false);
+    }
+  };
+
+  // 통장사본 OCR 함수
+  const handleBankbookFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setBankbookBase64(result);
+      setFormData(prev => ({ ...prev, bankbookBase64: result }));
+      runBankbookOcr(result);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  // 한국 은행 정식 리스트 (select용)
+  const KOREAN_BANKS = [
+    '국민은행','신한은행','우리은행','하나은행','농협은행','기업은행','SC제일은행',
+    '씨티은행','케이뱅크','카카오뱅크','토스뱅크','수협은행','대구은행','부산은행',
+    '광주은행','전북은행','경남은행','제주은행','산업은행','새마을금고','신협',
+    '우체국','산림조합','저축은행',
+  ];
+  // OCR 텍스트에서 은행명 유사도 매칭
+  const matchBankName = (ocrText: string): string => {
+    const t = ocrText.replace(/\s/g, '');
+    // 정확 매칭 (은행 정식명에 포함)
+    for (const bn of KOREAN_BANKS) { if (t.includes(bn.replace('은행','').replace('금고','').replace('조합',''))) return bn; }
+    // 부분 매칭 키워드
+    const aliases: [string[], string][] = [
+      [['국민','KB','kb','kookmin'], '국민은행'], [['신한','SH','shinhan'], '신한은행'],
+      [['우리','WR','woori'], '우리은행'], [['하나','KEB','hana'], '하나은행'],
+      [['농협','NH','nh','nonghyup'], '농협은행'], [['기업','IBK','ibk'], '기업은행'],
+      [['SC','제일','sc제일'], 'SC제일은행'], [['씨티','CITI','citi'], '씨티은행'],
+      [['케이뱅크','K뱅크','kbank'], '케이뱅크'], [['카카오','kakao'], '카카오뱅크'],
+      [['토스','toss'], '토스뱅크'], [['수협','Sh','suhyup'], '수협은행'],
+      [['대구','DGB','dgb'], '대구은행'], [['부산','BNK','bnk'], '부산은행'],
+      [['광주','KJB','kjb'], '광주은행'], [['전북','JB','jb'], '전북은행'],
+      [['경남'], '경남은행'], [['제주'], '제주은행'], [['산업','KDB','kdb'], '산업은행'],
+      [['새마을','MG','mg'], '새마을금고'], [['신협','CU','cu'], '신협'],
+      [['우체국'], '우체국'], [['산림'], '산림조합'], [['저축'], '저축은행'],
+    ];
+    for (const [keys, name] of aliases) { for (const k of keys) { if (t.toLowerCase().includes(k.toLowerCase())) return name; } }
+    return '';
+  };
+
+  const runBankbookOcr = async (base64Data: string) => {
+    if (!googleVisionApiKey) { alert('설정에서 Google Vision API Key를 입력하세요.'); return; }
+    setIsBankbookOcrLoading(true);
+    try {
+      const contentBase64 = base64Data.replace(/^data:[^;]+;base64,/, '');
+      const res = await fetch(`/api/vision/v1/images:annotate?key=${googleVisionApiKey}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests: [{ image: { content: contentBase64 }, features: [{ type: 'DOCUMENT_TEXT_DETECTION' }] }] }),
+      });
+      const json = await res.json();
+      const fullText = json.responses?.[0]?.fullTextAnnotation?.text || '';
+      const wordAnnotations = (json.responses?.[0]?.textAnnotations || []).slice(1);
+      if (!fullText) { alert('텍스트를 인식하지 못했습니다.'); return; }
+
+      // ── 바운딩박스 기반 라인 재구성 (Y좌표 기준 정렬) ──
+      let ocrLines: { text: string; yCenter: number }[] = [];
+      if (wordAnnotations.length > 0) {
+        const items = wordAnnotations.map((a: any) => {
+          const verts = a.boundingPoly?.vertices || [];
+          const ys = verts.map((v: any) => v.y || 0);
+          const yMin = Math.min(...ys); const yMax = Math.max(...ys);
+          const xs = verts.map((v: any) => v.x || 0);
+          return { text: a.description || '', yCenter: (yMin + yMax) / 2, height: yMax - yMin, xMin: Math.min(...xs) };
+        }).filter((it: any) => it.text.trim());
+        if (items.length > 0) {
+          const avgH = items.reduce((s: number, it: any) => s + it.height, 0) / items.length;
+          const tol = avgH * 0.4;
+          items.sort((a: any, b: any) => a.yCenter - b.yCenter);
+          const groups: any[][] = []; let cur = [items[0]];
+          for (let i = 1; i < items.length; i++) {
+            const lineY = cur.reduce((s: number, it: any) => s + it.yCenter, 0) / cur.length;
+            if (Math.abs(items[i].yCenter - lineY) <= tol) cur.push(items[i]); else { groups.push(cur); cur = [items[i]]; }
+          }
+          groups.push(cur);
+          ocrLines = groups.map(g => {
+            g.sort((a: any, b: any) => a.xMin - b.xMin);
+            return { text: g.map((it: any) => it.text).join(' '), yCenter: g.reduce((s: number, it: any) => s + it.yCenter, 0) / g.length };
+          });
+        }
+      }
+      if (ocrLines.length === 0) {
+        ocrLines = fullText.split('\n').map((l: string, i: number) => ({ text: l.trim(), yCenter: i * 30 })).filter(l => l.text);
+      }
+
+      // ── 추출: 맨 위 = 예금주, 그 아래 = 계좌번호, 은행명 = 유사도 매칭 ──
+      let accountHolder = '';
+      let accountNumber = '';
+      let bankName = '';
+
+      // 1. 계좌번호 먼저 찾기 (숫자-하이픈 패턴)
+      let acctLineIdx = -1;
+      for (let i = 0; i < ocrLines.length; i++) {
+        const t = ocrLines[i].text;
+        const m = t.match(/(\d{2,4}[-\s]\d{2,6}[-\s]\d{2,6}[-\s]?\d{0,4})/);
+        if (m && m[1].replace(/[-\s]/g, '').length >= 10) { accountNumber = m[1].replace(/\s/g, ''); acctLineIdx = i; break; }
+      }
+      if (!accountNumber) {
+        for (let i = 0; i < ocrLines.length; i++) {
+          const m = ocrLines[i].text.match(/(\d{10,16})/);
+          if (m) { accountNumber = m[1]; acctLineIdx = i; break; }
+        }
+      }
+
+      // 2. 예금주: "예금주" 키워드 뒤 값 또는 계좌번호 바로 위 줄 전체
+      // 통장사본 구조: 맨 위 = 예금주명(개인명 or 법인명), 그 아래 = 계좌번호
+      for (const line of ocrLines) {
+        if (line.text.includes('예금주') || line.text.includes('성명') || line.text.includes('이름')) {
+          const m = line.text.match(/(?:예금주|성명|이름)[\s:：]*(.+)/);
+          if (m) { accountHolder = m[1].replace(/[\s:：]+$/, '').trim(); break; }
+        }
+      }
+      if (!accountHolder && acctLineIdx > 0) {
+        // 계좌번호 위쪽 줄 역순으로 탐색 → 한글 포함된 첫 줄 = 예금주
+        for (let i = acctLineIdx - 1; i >= 0; i--) {
+          const t = ocrLines[i].text.trim();
+          if (t.length < 2 || /^[\d\-\s\.,:]+$/.test(t)) continue; // 숫자/기호만 건너뛰기
+          if (/[가-힣]/.test(t)) {
+            // 괄호 정리 + 불필요 접미사 제거
+            accountHolder = t.replace(/（/g, '(').replace(/）/g, ')').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\s+/g, ' ').trim();
+            break;
+          }
+        }
+      }
+      if (!accountHolder) {
+        // 전체 상위 5줄에서 한글 포함 줄
+        for (const line of ocrLines.slice(0, 5)) {
+          const t = line.text.trim();
+          if (t.length >= 2 && /[가-힣]/.test(t) && !/^[\d\-\s]+$/.test(t) && !matchBankName(t)) {
+            accountHolder = t.replace(/\s+/g, ' ').trim();
+            break;
+          }
+        }
+      }
+
+      // 3. 은행명: 전체 텍스트에서 유사도 매칭
+      const allText = ocrLines.map(l => l.text).join(' ');
+      bankName = matchBankName(allText);
+
+      if (bankName || accountNumber || accountHolder) {
+        const newAccount: BankAccount = { bankName, accountNumber, accountHolder };
+        setFormData(prev => ({ ...prev, bankbookBase64: base64Data, bankAccounts: [...(prev.bankAccounts || []), newAccount] }));
+      } else {
+        alert('통장사본에서 계좌정보를 인식하지 못했습니다.');
+      }
+    } catch (err: any) {
+      alert('통장 OCR 처리 실패: ' + (err.message || ''));
+    } finally {
+      setIsBankbookOcrLoading(false);
+    }
+  };
+
   // 조직도 줌/팬 상태
   const [orgChartZoom, setOrgChartZoom] = useState(1);
   const [orgChartPan, setOrgChartPan] = useState({ x: 0, y: 0 });
@@ -57,66 +662,69 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
   // 우편라벨 인쇄 함수
   const handlePrintPostalLabels = () => {
-    const targets = stakeholders.filter(s => checkedIds.has(s.id) && s.contact?.address);
-    if (targets.length === 0) {
-      alert('주소가 등록된 항목을 선택하세요.');
-      return;
+    const selected = stakeholders.filter(s => checkedIds.has(s.id));
+    if (selected.length === 0) { alert('인물/업체를 선택하세요.'); return; }
+    const hasAddress = selected.filter(s => s.contact?.address || s.headOfficeAddress);
+    const noAddress = selected.filter(s => !s.contact?.address && !s.headOfficeAddress);
+    if (hasAddress.length === 0) { alert('선택한 항목 모두 주소가 등록되지 않았습니다.'); return; }
+    if (noAddress.length > 0) {
+      const names = noAddress.map(s => s.name).join(', ');
+      if (!confirm(`다음 항목은 주소 미등록으로 제외됩니다:\n${names}\n\n나머지 ${hasAddress.length}건으로 계속하시겠습니까?`)) return;
     }
+    const targets = hasAddress;
     const printWindow = window.open('', '_blank', 'width=900,height=700');
     if (!printWindow) { alert('팝업이 차단되었습니다.'); return; }
 
-    // 우편번호 5자리를 개별 박스로 렌더링
+    const getAddr = (s: Stakeholder) => {
+      if (s.primaryAddressType === 'HEAD_OFFICE' && s.headOfficeAddress) {
+        return { address: s.headOfficeAddress, detail: s.headOfficeAddressDetail || '', postalCode: s.headOfficePostalCode || '' };
+      }
+      return { address: s.contact?.address || '', detail: s.contact?.addressDetail || '', postalCode: s.contact?.postalCode || '' };
+    };
     const postalBoxes = (code: string) => {
       const digits = (code || '     ').padEnd(5, ' ').split('');
-      return `<div class="postal-row">
-        ${digits.map(d => `<div class="postal-box">${d.trim()}</div>`).join('')}
-      </div>`;
+      return `<div class="postal-row">${digits.map(d => `<div class="postal-box">${d.trim()}</div>`).join('')}</div>`;
     };
-
-    // 라벨 1개 HTML (105mm × 48mm, A4 2열 5행 = 10개)
-    // 한국 우편 표준: 이름 먼저, 주소, 우편번호 박스 맨 아래
-    const labelHtml = (s: typeof targets[0]) => `
-      <div class="label">
-        <div class="label-inner">
-          <div class="to-tag">받　는　분</div>
-          <div class="name">${s.name} <span class="kijoong">귀 중</span></div>
-          <div class="addr">${s.contact.address || ''}${s.contact.addressDetail ? ' ' + s.contact.addressDetail : ''}</div>
-          ${s.contact.phone ? `<div class="phone">☎ ${s.contact.phone}</div>` : ''}
-          <div class="postal-area">
-            ${postalBoxes(s.contact.postalCode || '')}
-            <div class="postal-label">우편번호</div>
-          </div>
-        </div>
-      </div>`;
-
+    const nameFontSize = (name: string) => {
+      const len = name.length;
+      if (len <= 8) return '18pt';
+      if (len <= 12) return '16pt';
+      if (len <= 18) return '14pt';
+      if (len <= 25) return '12pt';
+      return '10pt';
+    };
+    const labelHtml = (s: typeof targets[0]) => {
+      const addr = getAddr(s);
+      return `<div class="label"><div class="label-inner">
+        <div class="postal-area">${postalBoxes(addr.postalCode)}<div class="postal-label">우편번호</div></div>
+        <div class="addr">${addr.address}${addr.detail ? ' ' + addr.detail : ''}</div>
+        <div class="name" style="font-size:${nameFontSize(s.name)};">${s.name}</div>
+      </div></div>`;
+    };
+    const pages: string[] = [];
+    for (let i = 0; i < targets.length; i += 8) {
+      pages.push(`<div class="page"><div class="grid">${targets.slice(i, i + 8).map(s => labelHtml(s)).join('')}</div></div>`);
+    }
     printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
     <title>우편 라벨</title>
     <style>
+      @page { size: A4 portrait; margin: 10mm; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; background: #fff; }
-      .page { width: 210mm; margin: 0 auto; padding: 8mm; }
-      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }
-      .label { width: 100%; height: 48mm; border: 1px solid #555; page-break-inside: avoid; }
-      .label-inner { padding: 3mm 5mm; height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
-      .to-tag { font-size: 7pt; color: #888; border-bottom: 1px dotted #ccc; padding-bottom: 1mm; margin-bottom: 1.5mm; }
-      .name { font-size: 15pt; font-weight: 900; letter-spacing: 1px; line-height: 1.2; }
-      .kijoong { font-size: 10pt; font-weight: normal; margin-left: 3mm; }
-      .addr { font-size: 9pt; line-height: 1.6; color: #222; word-break: keep-all; margin-top: 1mm; flex: 1; }
-      .phone { font-size: 8pt; color: #555; margin-top: 1mm; }
-      .postal-area { display: flex; align-items: center; gap: 3mm; margin-top: 2mm; border-top: 1px dotted #ccc; padding-top: 1.5mm; }
-      .postal-row { display: flex; gap: 1mm; }
-      .postal-box { width: 6mm; height: 6mm; border: 1.5px solid #c00; display: flex; align-items: center; justify-content: center; font-size: 10pt; font-weight: bold; font-family: monospace; color: #c00; }
-      .postal-label { font-size: 7pt; color: #888; }
-      @media print {
-        body { margin: 0; }
-        .page { padding: 6mm; }
-        .label { border: 1px solid #333; }
-        .postal-box { border-color: #c00; }
-      }
+      .page { width: 190mm; margin: 0 auto; page-break-after: always; }
+      .page:last-child { page-break-after: auto; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+      .label { width: 95mm; height: 67mm; border: 1px solid #999; page-break-inside: avoid; }
+      .label-inner { padding: 5mm 7mm; height: 100%; display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
+      .name { font-size: 18pt; font-weight: 900; letter-spacing: 1px; line-height: 1.3; word-break: keep-all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .addr { font-size: 11pt; line-height: 1.6; color: #222; word-break: keep-all; flex: 1; display: flex; align-items: center; }
+      .postal-area { display: flex; align-items: center; gap: 3mm; padding-bottom: 2mm; border-bottom: 1px dotted #ccc; margin-bottom: 2mm; }
+      .postal-row { display: flex; gap: 1.5mm; }
+      .postal-box { width: 7mm; height: 7mm; border: 1.5px solid #c00; display: flex; align-items: center; justify-content: center; font-size: 11pt; font-weight: bold; font-family: monospace; color: #c00; }
+      .postal-label { font-size: 8pt; color: #888; margin-left: 2mm; }
+      @media print { body { margin: 0; } .label { border: 1px solid #666; } }
     </style></head><body>
-    <div class="page"><div class="grid">
-    ${targets.map(s => labelHtml(s)).join('')}
-    </div></div>
+    ${pages.join('')}
     <script>window.onload=function(){ window.print(); window.onafterprint=function(){ window.close(); }; };<\/script>
     </body></html>`);
     printWindow.document.close();
@@ -316,28 +924,86 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
     // 개인 타입 필터 (체크박스 미선택 시 개인 제외)
     const matchesIndividualFilter = showIndividuals || s.type !== 'INDIVIDUAL';
 
-    // 자산 필터
+    // 자산 필터 (소유 + 계약 관계 모두 포함)
     let matchesProperty = true;
     if (filterPropertyId !== 'ALL') {
-      const ownsProperty = properties.some(p => p.ownerId === s.id && p.id === filterPropertyId);
-      const ownsLot = properties.some(p => p.lots.some(l => l.ownerId === s.id) && p.id === filterPropertyId);
-      const ownsBuilding = properties.some(p => p.buildings.some(b => b.ownerId === s.id) && p.id === filterPropertyId);
+      const prop = properties.find(p => p.id === filterPropertyId);
+      // 소유 관계
+      const ownsProperty = prop?.ownerId === s.id;
+      const ownsLot = prop?.lots.some(l => l.ownerId === s.id) || false;
+      const ownsBuilding = prop?.buildings.some(b => b.ownerId === s.id) || false;
       const ownsUnit = units.some(u => u.ownerId === s.id && u.propertyId === filterPropertyId);
-      matchesProperty = ownsProperty || ownsLot || ownsBuilding || ownsUnit;
+      // 계약 관계: 해당 물건/건물/호실에 대한 임대차·용역 계약의 당사자
+      const propTargetIds = new Set<string>([filterPropertyId, ...(prop?.buildings.map(b => b.id) || []), ...(prop?.lots.map(l => l.id) || []), ...units.filter(u => u.propertyId === filterPropertyId).map(u => u.id)]);
+      const hasLease = leaseContracts.some(c => (c.tenantIds.includes(s.id) || c.landlordIds.includes(s.id)) && c.targetIds.some(tid => propTargetIds.has(tid)));
+      const hasMaintenance = maintenanceContracts.some(c => c.vendorId === s.id && propTargetIds.has(c.targetId));
+      matchesProperty = ownsProperty || ownsLot || ownsBuilding || ownsUnit || hasLease || hasMaintenance;
     }
 
     return matchesRole && matchesSearch && matchesIndividualFilter && matchesProperty;
   });
 
+  // 정렬
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sortMode) {
+      case 'NAME_ASC': return a.name.localeCompare(b.name, 'ko');
+      case 'NAME_DESC': return b.name.localeCompare(a.name, 'ko');
+      case 'TYPE': return (a.type || '').localeCompare(b.type || '', 'ko');
+      case 'ROLE': return (a.roles[0] || '').localeCompare(b.roles[0] || '', 'ko');
+      case 'MANUAL': return (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999);
+      default: return 0;
+    }
+  });
+
+  // 그룹핑
+  const typeLabel: Record<string, string> = { INDIVIDUAL: '개인', SOLE_PROPRIETOR: '개인사업자', CORPORATE: '법인사업자', INTERNAL_ORG: '내부조직', CUSTOM_GROUP: '임의그룹' };
+  const roleLabel: Record<string, string> = { TENANT: '임차인', LANDLORD: '임대인', MANAGER: '관리자', VENDOR: '업체' };
+  const groupedEntries: { label: string; items: typeof sorted }[] = (() => {
+    if (groupMode === 'NONE') return [{ label: '', items: sorted }];
+    if (groupMode === 'TYPE') {
+      const groups: Record<string, typeof sorted> = {};
+      sorted.forEach(s => { const key = s.type || 'INDIVIDUAL'; if (!groups[key]) groups[key] = []; groups[key].push(s); });
+      return Object.entries(groups).map(([k, v]) => ({ label: typeLabel[k] || k, items: v }));
+    }
+    // ROLE
+    const groups: Record<string, typeof sorted> = {};
+    sorted.forEach(s => { const key = s.roles[0] || 'TENANT'; if (!groups[key]) groups[key] = []; groups[key].push(s); });
+    return Object.entries(groups).map(([k, v]) => ({ label: roleLabel[k] || k, items: v }));
+  })();
+
+  // 수동정렬 드래그핸들
+  const handleDragStart = (idx: number) => { setDragIdx(idx); };
+  const handleDragOver = (e: React.DragEvent, idx: number) => { e.preventDefault(); setDragOverIdx(idx); };
+  const handleDragEnd = () => {
+    if (dragIdx !== null && dragOverIdx !== null && dragIdx !== dragOverIdx && sortMode === 'MANUAL') {
+      const reordered = [...sorted];
+      const [moved] = reordered.splice(dragIdx, 1);
+      reordered.splice(dragOverIdx, 0, moved);
+      reordered.forEach((s, i) => {
+        if (onUpdateStakeholder) onUpdateStakeholder({ ...s, sortOrder: i });
+      });
+    }
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+
   const handleOpenAdd = () => {
     setSelectedStakeholderId(null);
     setFormData({ name: '', type: 'INDIVIDUAL', roles: ['TENANT'], registrationNumber: '', businessRegistrationNumber: '', businessLicenseFile: '', contact: { phone: '', email: '', address: '' }, representative: '' });
+    setBizStatusResult(null); setBizStatusError('');
+    setBusinessLicenseBase64(''); setOcrRawText('');
+    setOcrBizAddr(''); setOcrHeadAddr('');
+    setBankbookBase64('');
     setIsFormOpen(true);
   };
 
   const handleOpenEdit = (sh: Stakeholder) => {
     setSelectedStakeholderId(sh.id);
     setFormData({ ...sh });
+    setBizStatusResult(null); setBizStatusError('');
+    setBusinessLicenseBase64(sh.businessLicenseBase64 || ''); setOcrRawText('');
+    setOcrBizAddr(''); setOcrHeadAddr('');
+    setBankbookBase64(sh.bankbookBase64 || '');
     setIsFormOpen(true);
   };
 
@@ -356,10 +1022,10 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   };
 
   const handleSelectAll = () => {
-    if (checkedIds.size === filtered.length) {
+    if (checkedIds.size === sorted.length) {
       setCheckedIds(new Set());
     } else {
-      setCheckedIds(new Set(filtered.map(s => s.id)));
+      setCheckedIds(new Set(sorted.map(s => s.id)));
     }
   };
 
@@ -374,9 +1040,43 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
   const handleOpenHistory = (id: string) => {
     setSelectedStakeholderId(id);
+    setHistoryTab('contracts');
     setIsHistoryOpen(true);
   };
-  
+
+  const handleViewDocument = (doc: StakeholderDocument) => {
+    if (doc.fileData.startsWith('data:application/pdf')) {
+      const w = window.open('');
+      if (w) { w.document.write(`<iframe src="${doc.fileData}" width="100%" height="100%" style="border:none;position:fixed;inset:0;"></iframe>`); w.document.close(); }
+    } else {
+      const w = window.open('');
+      if (w) { w.document.write(`<img src="${doc.fileData}" style="max-width:100%;"/>`); w.document.close(); }
+    }
+  };
+
+  const handleDeleteDocument = (docId: string) => {
+    if (!selectedStakeholderId) return;
+    if (!confirm('이 서류를 삭제하시겠습니까?')) return;
+    const sh = stakeholders.find(s => s.id === selectedStakeholderId);
+    if (!sh) return;
+    onUpdateStakeholder({ ...sh, documents: (sh.documents || []).filter(d => d.id !== docId) });
+  };
+
+  const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedStakeholderId) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const fileData = reader.result as string;
+      const sh = stakeholders.find(s => s.id === selectedStakeholderId);
+      if (!sh) return;
+      const newDoc: StakeholderDocument = { id: `doc_${Date.now()}`, type: docUploadType, fileName: file.name, fileData, uploadedAt: new Date().toISOString() };
+      onUpdateStakeholder({ ...sh, documents: [...(sh.documents || []), newDoc] });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const handleSave = () => {
     if (!formData.name || !formData.contact?.phone || !formData.contact?.email) return alert('이름, 연락처, 대표 이메일은 필수입니다.');
     if ((formData.type === 'CORPORATE' || formData.type === 'SOLE_PROPRIETOR') && !formData.businessRegistrationNumber) return alert('법인/사업자의 경우 사업자등록번호는 필수입니다.');
@@ -405,8 +1105,32 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       // Stage 3 fields
       relatedPersons: formData.relatedPersons,
       departments: formData.departments,
-      additionalContacts: formData.additionalContacts
+      additionalContacts: formData.additionalContacts,
+      // OCR/서류 관련
+      businessLicenseBase64: businessLicenseBase64 || formData.businessLicenseBase64,
+      businessSector: formData.businessSector,
+      businessType: formData.businessType,
+      headOfficeAddress: formData.headOfficeAddress,
+      headOfficePostalCode: formData.headOfficePostalCode,
+      headOfficeAddressDetail: formData.headOfficeAddressDetail,
+      primaryAddressType: formData.primaryAddressType,
+      bankbookBase64: bankbookBase64 || formData.bankbookBase64,
+      sortOrder: formData.sortOrder,
+      note: formData.note,
     };
+
+    // 서류 이력 자동 생성
+    const existingDocs = formData.documents || [];
+    const newDocs: StakeholderDocument[] = [];
+    const currentBizLicense = businessLicenseBase64 || formData.businessLicenseBase64;
+    if (currentBizLicense && !existingDocs.some(d => d.fileData === currentBizLicense)) {
+      newDocs.push({ id: `doc_${Date.now()}_bl`, type: 'BUSINESS_LICENSE', fileName: formData.businessLicenseFile || '사업자등록증', fileData: currentBizLicense, uploadedAt: new Date().toISOString() });
+    }
+    const currentBankbook = bankbookBase64 || formData.bankbookBase64;
+    if (currentBankbook && !existingDocs.some(d => d.fileData === currentBankbook)) {
+      newDocs.push({ id: `doc_${Date.now()}_bb`, type: 'BANKBOOK', fileName: '통장사본', fileData: currentBankbook, uploadedAt: new Date().toISOString() });
+    }
+    person.documents = [...existingDocs, ...newDocs];
 
     if (selectedStakeholderId) {
       onUpdateStakeholder(person);
@@ -476,53 +1200,87 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   };
 
   // Stage 3: CSV 대량 등록
+  // CSV 다운로드
+  const handleCSVExport = () => {
+    if (filtered.length === 0) { alert('내보낼 데이터가 없습니다.'); return; }
+    const headers = ['이름','유형','역할','전화','이메일','주소','상세주소','우편번호','사업자등록번호','법인등록번호','대표자','업태','종목','은행명','계좌번호','예금주'];
+    const typeMap: Record<string, string> = { INDIVIDUAL: '개인', SOLE_PROPRIETOR: '개인사업자', CORPORATE: '법인사업자', INTERNAL_ORG: '내부조직', CUSTOM_GROUP: '임의그룹' };
+    const roleMap: Record<string, string> = { TENANT: '임차인', LANDLORD: '임대인', MANAGER: '관리인', VENDOR: '용역업체', SAFETY_OFFICER: '안전관리' };
+    const esc = (v: string) => (v.includes(',') || v.includes('"') || v.includes('\n')) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    const rows = filtered.map(s => {
+      const a = s.bankAccounts?.[0];
+      return [s.name, typeMap[s.type]||s.type, s.roles.map(r=>roleMap[r]||r).join('/'), s.contact?.phone||'', s.contact?.email||'', s.contact?.address||'', s.contact?.addressDetail||'', s.contact?.postalCode||'', s.businessRegistrationNumber||'', s.registrationNumber||'', s.representative||'', s.businessSector||'', s.businessType||'', a?.bankName||'', a?.accountNumber||'', a?.accountHolder||''].map(v=>esc(v));
+    });
+    const csv = '\uFEFF' + headers.join(',') + '\n' + rows.map(r=>r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a2 = document.createElement('a');
+    a2.href = url; a2.download = `인물업체_${new Date().toISOString().slice(0,10)}.csv`;
+    a2.click(); URL.revokeObjectURL(url);
+  };
+
+  // CSV 업로드
   const handleCSVImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target?.result as string;
+      let text = event.target?.result as string;
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
       const lines = text.split('\n').filter(line => line.trim());
+      if (lines.length < 2) { return alert('CSV 파일이 비어있거나 형식이 올바르지 않습니다.'); }
 
-      if (lines.length < 2) {
-        return alert('CSV 파일이 비어있거나 형식이 올바르지 않습니다.');
+      const parseCsvLine = (line: string): string[] => {
+        const result: string[] = []; let current = ''; let inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          if (line[i] === '"') { if (inQ && line[i+1] === '"') { current += '"'; i++; } else inQ = !inQ; }
+          else if (line[i] === ',' && !inQ) { result.push(current.trim()); current = ''; }
+          else current += line[i];
+        }
+        result.push(current.trim()); return result;
+      };
+
+      const headers = parseCsvLine(lines[0]).map(h => h.replace(/^"|"$/g, ''));
+      const colMap: Record<string, number> = {};
+      const aliases: Record<string, string[]> = {
+        name: ['이름','성명','name'], type: ['유형','구분','type'], roles: ['역할','관계','role','roles'],
+        phone: ['전화','연락처','전화번호','phone','tel'], email: ['이메일','email'],
+        address: ['주소','사업장주소','address'], regNum: ['사업자등록번호','사업자번호'],
+        representative: ['대표자','대표','representative'],
+      };
+      for (const [key, als] of Object.entries(aliases)) {
+        const idx = headers.findIndex(h => als.some(a => h.toLowerCase().includes(a.toLowerCase())));
+        if (idx >= 0) colMap[key] = idx;
       }
 
-      // 헤더 검증 (선택사항)
-      const headers = lines[0].split(',').map(h => h.trim());
+      const typeRev: Record<string, StakeholderType> = { '개인':'INDIVIDUAL','개인사업자':'SOLE_PROPRIETOR','법인사업자':'CORPORATE','법인':'CORPORATE','내부조직':'INTERNAL_ORG','임의그룹':'CUSTOM_GROUP' };
+      const roleRev: Record<string, StakeholderRole> = { '임차인':'TENANT','임대인':'LANDLORD','관리인':'MANAGER','용역업체':'VENDOR','안전관리':'SAFETY_OFFICER' };
 
-      // 데이터 파싱
-      const newStakeholders: Stakeholder[] = [];
+      const newSh: Stakeholder[] = [];
       for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.trim());
-        if (values.length < 3) continue; // 최소 이름, 연락처, 역할 필요
-
-        const [name, phone, roleStr, email = '', address = '', regNum = ''] = values;
-
-        newStakeholders.push({
-          id: `sh${Date.now()}_${i}`,
-          name,
-          type: formData.type as StakeholderType,
-          roles: [roleStr as StakeholderRole || 'TENANT'],
-          registrationNumber: regNum,
-          contact: { phone, email, address }
+        const vals = parseCsvLine(lines[i]);
+        if (vals.length < 2) continue;
+        const g = (key: string, fb?: number) => { const idx = colMap[key] ?? fb; return idx !== undefined ? (vals[idx]||'') : ''; };
+        const name = g('name', 0);
+        if (!name) continue;
+        newSh.push({
+          id: `sh${Date.now()}_${i}`, name,
+          type: typeRev[g('type')] || 'INDIVIDUAL',
+          roles: [roleRev[g('roles')] || 'TENANT'],
+          registrationNumber: '', businessRegistrationNumber: g('regNum'),
+          representative: g('representative'),
+          contact: { phone: g('phone', 1), email: g('email'), address: g('address') }
         });
       }
-
-      if (newStakeholders.length === 0) {
-        return alert('유효한 데이터가 없습니다.');
-      }
-
-      if (confirm(`${newStakeholders.length}명의 인물/업체를 일괄 등록하시겠습니까?`)) {
-        newStakeholders.forEach(sh => onAddStakeholder(sh));
-        alert(`${newStakeholders.length}명이 등록되었습니다.`);
-        setIsFormOpen(false);
+      if (newSh.length === 0) { return alert('유효한 데이터가 없습니다.'); }
+      const preview = newSh.slice(0, 3).map(s => `  - ${s.name} (${s.contact.phone})`).join('\n');
+      const more = newSh.length > 3 ? `\n  ... 외 ${newSh.length - 3}건` : '';
+      if (confirm(`${newSh.length}건 인식됨:\n${preview}${more}\n\n일괄 등록하시겠습니까?`)) {
+        newSh.forEach(sh => onAddStakeholder(sh));
+        alert(`${newSh.length}건이 등록되었습니다.`);
       }
     };
-    reader.readAsText(file);
-
-    // 파일 입력 리셋
+    reader.readAsText(file, 'utf-8');
     if (csvInputRef.current) csvInputRef.current.value = '';
   };
 
@@ -575,9 +1333,15 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           </button>
           <button
             onClick={() => csvInputRef.current?.click()}
-            className="bg-white border-2 border-[#1a73e8] text-[#1a73e8] px-3 md:px-5 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 md:gap-2 hover:bg-[#f1f3f4] shadow-md transition-all active:scale-95 whitespace-nowrap"
+            className="bg-white border-2 border-[#1a73e8] text-[#1a73e8] px-2 md:px-4 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 hover:bg-[#f1f3f4] shadow-md transition-all active:scale-95 whitespace-nowrap"
           >
-            <Download size={14} className="md:w-4 md:h-4"/> CSV
+            <Upload size={14} className="md:w-4 md:h-4"/> 업로드
+          </button>
+          <button
+            onClick={handleCSVExport}
+            className="bg-white border-2 border-[#1a73e8] text-[#1a73e8] px-2 md:px-4 py-1.5 md:py-2 rounded-lg text-[10px] md:text-sm font-bold flex items-center gap-1 hover:bg-[#f1f3f4] shadow-md transition-all active:scale-95 whitespace-nowrap"
+          >
+            <Download size={14} className="md:w-4 md:h-4"/> 다운로드
           </button>
           <input
             ref={csvInputRef}
@@ -589,47 +1353,23 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         </div>
       </div>
 
-      {/* 필터 컨트롤 */}
-      <div className="flex flex-col md:flex-row gap-2 md:gap-4 items-start md:items-center bg-gray-50 p-3 rounded-lg border border-gray-200">
-        <div className="flex items-center gap-2 flex-1">
-          <label className="text-xs md:text-sm font-bold text-gray-600 whitespace-nowrap">자산 필터:</label>
-          <select
-            value={filterPropertyId}
-            onChange={(e) => setFilterPropertyId(e.target.value)}
-            className="flex-1 md:w-64 px-3 py-1.5 md:py-2 border border-gray-300 bg-white rounded-lg text-xs md:text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"
-          >
-            <option value="ALL">전체 자산</option>
-            {properties.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        </div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={showIndividuals}
-            onChange={(e) => setShowIndividuals(e.target.checked)}
-            className="w-4 h-4 text-[#1a73e8] rounded focus:ring-2 focus:ring-[#1a73e8]"
-          />
-          <span className="text-xs md:text-sm font-medium text-gray-700">조직구성 개인 표시</span>
-        </label>
-      </div>
+      {/* 필터 컨트롤은 아래 통합 필터바로 이동 */}
 
       {isFormOpen && typeof document !== 'undefined' && createPortal(
          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
            <div className="bg-white rounded-2xl border border-gray-200 shadow-2xl w-full max-w-2xl relative overflow-hidden animate-in zoom-in-95">
-           <div className="max-h-[90vh] overflow-y-auto p-8">
+           <div className="max-h-[90vh] overflow-y-auto p-6">
              <button onClick={() => setIsFormOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200"><X size={20}/></button>
-             <h3 className="font-black text-xl mb-8 text-gray-900 border-b pb-4 flex items-center gap-3">
+             <h3 className="font-black text-xl mb-5 text-gray-900 border-b pb-3 flex items-center gap-3">
                <div className="p-2 bg-[#1a73e8] text-white rounded-lg">
                  {formData.type === 'CORPORATE' ? <Building size={20}/> : <User size={20}/>}
                </div>
                {selectedStakeholderId ? '정보 수정' : '인물/업체 등록'}
              </h3>
              
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 md:col-span-2">
-                 <label className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest block mb-3">유형 선택</label>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 md:col-span-2">
+                 <label className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest block mb-2">유형 선택</label>
                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
                     <button
                       onClick={() => setFormData({...formData, type: 'INDIVIDUAL'})}
@@ -663,6 +1403,49 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                     </button>
                  </div>
               </div>
+
+              {/* ── 사업자등록증 첨부 (compact, SOLE/CORP only) ── */}
+               {(formData.type === 'SOLE_PROPRIETOR' || formData.type === 'CORPORATE') && (
+                 <div className="md:col-span-2 flex items-center gap-3 bg-[#fafbfc] p-3 rounded-xl border border-gray-100">
+                   {(businessLicenseBase64 || formData.businessLicenseBase64) ? (
+                     <div className="relative flex-shrink-0">
+                       {(businessLicenseBase64 || formData.businessLicenseBase64 || '').startsWith('data:application/pdf') ? (
+                         <div onClick={() => ocrFileInputRef.current?.click()} className="w-14 h-[72px] bg-[#fef3f2] border border-[#ea4335]/30 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-[#fee2e2] transition-colors">
+                           <FileText size={20} className="text-[#ea4335]"/>
+                           <span className="text-[7px] font-bold text-[#ea4335] mt-0.5">PDF</span>
+                         </div>
+                       ) : (
+                         <img src={businessLicenseBase64 || formData.businessLicenseBase64} alt="사업자등록증" className="w-14 h-[72px] object-cover rounded-lg border border-gray-200 cursor-pointer" onClick={() => ocrFileInputRef.current?.click()} />
+                       )}
+                       <button type="button" onClick={() => { setBusinessLicenseBase64(''); setFormData(prev => ({ ...prev, businessLicenseFile: '', businessLicenseBase64: '' })); setOcrRawText(''); setOcrBizAddr(''); setOcrHeadAddr(''); }} className="absolute -top-1 -right-1 w-4 h-4 bg-[#ea4335] text-white rounded-full flex items-center justify-center hover:bg-red-600"><X size={8}/></button>
+                     </div>
+                   ) : (
+                     <button type="button" onClick={() => ocrFileInputRef.current?.click()} className="w-14 h-[72px] border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-[#1a73e8] hover:text-[#1a73e8] transition-colors flex-shrink-0">
+                       <Upload size={16}/>
+                       <span className="text-[8px] mt-0.5 font-bold">첨부</span>
+                     </button>
+                   )}
+                   <input ref={ocrFileInputRef} type="file" accept="image/*,.pdf" className="hidden" onChange={handleOcrFileSelect} />
+                   <div className="flex-1 min-w-0">
+                     <div className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest mb-1">사업자등록증</div>
+                     {isOcrLoading && <div className="flex items-center gap-2 text-[10px] text-[#1a73e8] font-bold"><span className="animate-spin">⏳</span> OCR 인식 중...</div>}
+                     {!isOcrLoading && !businessLicenseBase64 && !formData.businessLicenseBase64 && (
+                       <p className="text-[9px] text-[#9aa0a6]">이미지/PDF를 첨부하면 OCR로 자동 인식합니다.</p>
+                     )}
+                     {!isOcrLoading && (businessLicenseBase64 || formData.businessLicenseBase64) && (
+                       <div className="flex items-center gap-2 flex-wrap">
+                         <button type="button" onClick={() => runOcr(businessLicenseBase64 || formData.businessLicenseBase64 || '')} className="px-2 py-1 text-[10px] font-bold text-[#8b5cf6] bg-[#f3f0ff] hover:bg-[#ede9fe] rounded transition-colors">재인식</button>
+                         {ocrRawText && (
+                           <details className="text-[10px]">
+                             <summary className="cursor-pointer text-[#5f6368] font-bold hover:text-[#1a73e8]">OCR 원문</summary>
+                             <pre className="mt-1 p-2 bg-white rounded border border-gray-200 text-[9px] leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto text-gray-600 absolute z-20 shadow-lg w-80">{ocrRawText}</pre>
+                           </details>
+                         )}
+                       </div>
+                     )}
+                   </div>
+                 </div>
+               )}
 
               <div>
                  <label className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest block mb-2">관계</label>
@@ -713,12 +1496,27 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                  </div>
                )}
 
-               {/* 사업자등록번호, 법인등록번호 (개인사업자, 법인사업자) */}
+               {/* 사업자 정보 (개인사업자, 법인사업자) */}
                {(formData.type === 'SOLE_PROPRIETOR' || formData.type === 'CORPORATE') && (
                  <>
                    <div>
                       <label className="text-xs font-bold text-gray-400 block mb-1.5">사업자등록번호 <span className="text-red-500">*</span></label>
-                      <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.businessRegistrationNumber} onChange={e => setFormData({...formData, businessRegistrationNumber: e.target.value})} placeholder="000-00-00000" />
+                      <div className="flex gap-2">
+                        <input className="flex-1 border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.businessRegistrationNumber} onChange={e => { setFormData({...formData, businessRegistrationNumber: e.target.value}); setBizStatusResult(null); setBizStatusError(''); }} placeholder="000-00-00000" />
+                        <button type="button" onClick={handleCheckBizStatus} disabled={isBizStatusLoading} className={`px-3 py-2 text-xs font-bold rounded-lg whitespace-nowrap transition-colors ${isBizStatusLoading ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-[#1a73e8] text-white hover:bg-[#1557b0]'}`}>
+                          {isBizStatusLoading ? '조회중...' : '조회'}
+                        </button>
+                      </div>
+                      {bizStatusResult && (
+                        <div className="mt-2 p-2 rounded-lg border text-[10px] flex flex-wrap items-center gap-1.5" style={{ borderColor: bizStatusResult.b_stt_cd === '01' ? '#34a853' : bizStatusResult.b_stt_cd === '02' ? '#fbbc05' : '#ea4335', backgroundColor: bizStatusResult.b_stt_cd === '01' ? '#e6f4ea' : bizStatusResult.b_stt_cd === '02' ? '#fef7e0' : '#fce8e6' }}>
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full font-bold text-white text-[9px] ${bizStatusResult.b_stt_cd === '01' ? 'bg-[#34a853]' : bizStatusResult.b_stt_cd === '02' ? 'bg-[#fbbc05]' : 'bg-[#ea4335]'}`}>
+                            {bizStatusResult.b_stt || '알 수 없음'}
+                          </span>
+                          <span className="text-[#3c4043] font-medium">{bizStatusResult.tax_type}</span>
+                          {bizStatusResult.end_dt && <span className="text-[#ea4335] font-bold">폐업일: {bizStatusResult.end_dt.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')}</span>}
+                        </div>
+                      )}
+                      {bizStatusError && <p className="mt-1.5 text-[10px] text-[#ea4335] font-medium">{bizStatusError}</p>}
                    </div>
                    {formData.type === 'CORPORATE' && (
                      <div>
@@ -726,6 +1524,30 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                         <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} placeholder="000000-0000000" />
                      </div>
                    )}
+                   <div>
+                     <label className="text-xs font-bold text-gray-400 block mb-1.5">업태</label>
+                     <div className="flex flex-wrap gap-1.5 min-h-[40px] border border-gray-200 bg-white rounded-lg p-2 focus-within:ring-2 focus-within:ring-[#1a73e8]">
+                       {(formData.businessSector || '').split(',').map(s => s.trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).map((tag, ti) => (
+                         <span key={ti} className="inline-flex items-center gap-1 bg-[#e8f0fe] text-[#1a73e8] text-xs font-bold px-2 py-1 rounded-md">
+                           {tag}
+                           <button type="button" onClick={() => { const tags = (formData.businessSector || '').split(',').map(s => s.trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i); tags.splice(ti, 1); setFormData({...formData, businessSector: tags.join(', ')}); }} className="text-[#1a73e8]/60 hover:text-[#1a73e8]"><X size={12}/></button>
+                         </span>
+                       ))}
+                       <input className="flex-1 min-w-[80px] border-none outline-none text-sm bg-transparent" placeholder={!(formData.businessSector || '').trim() ? '도소매, 제조' : ''} onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); const v = (e.target as HTMLInputElement).value.trim(); if (v) { const existing = (formData.businessSector || '').split(',').map(s => s.trim()).filter(Boolean); if (!existing.includes(v)) setFormData({...formData, businessSector: [...existing, v].join(', ')}); (e.target as HTMLInputElement).value = ''; } } }} onBlur={e => { const v = e.target.value.trim(); if (v) { const existing = (formData.businessSector || '').split(',').map(s => s.trim()).filter(Boolean); if (!existing.includes(v)) setFormData({...formData, businessSector: [...existing, v].join(', ')}); e.target.value = ''; } }} />
+                     </div>
+                   </div>
+                   <div>
+                     <label className="text-xs font-bold text-gray-400 block mb-1.5">종목</label>
+                     <div className="flex flex-wrap gap-1.5 min-h-[40px] border border-gray-200 bg-white rounded-lg p-2 focus-within:ring-2 focus-within:ring-[#1a73e8]">
+                       {(formData.businessType || '').split(',').map(s => s.trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).map((tag, ti) => (
+                         <span key={ti} className="inline-flex items-center gap-1 bg-[#f3f0ff] text-[#7c3aed] text-xs font-bold px-2 py-1 rounded-md">
+                           {tag}
+                           <button type="button" onClick={() => { const tags = (formData.businessType || '').split(',').map(s => s.trim()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i); tags.splice(ti, 1); setFormData({...formData, businessType: tags.join(', ')}); }} className="text-[#7c3aed]/60 hover:text-[#7c3aed]"><X size={12}/></button>
+                         </span>
+                       ))}
+                       <input className="flex-1 min-w-[80px] border-none outline-none text-sm bg-transparent" placeholder={!(formData.businessType || '').trim() ? '의류, 스포츠용품' : ''} onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); const v = (e.target as HTMLInputElement).value.trim(); if (v) { const existing = (formData.businessType || '').split(',').map(s => s.trim()).filter(Boolean); if (!existing.includes(v)) setFormData({...formData, businessType: [...existing, v].join(', ')}); (e.target as HTMLInputElement).value = ''; } } }} onBlur={e => { const v = e.target.value.trim(); if (v) { const existing = (formData.businessType || '').split(',').map(s => s.trim()).filter(Boolean); if (!existing.includes(v)) setFormData({...formData, businessType: [...existing, v].join(', ')}); e.target.value = ''; } }} />
+                     </div>
+                   </div>
                  </>
                )}
 
@@ -1083,9 +1905,78 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                  </datalist>
                </div>
 
-               {/* 등록 주소지 (다음 주소검색) */}
+               {/* 본점소재지 (법인사업자만) - 주소검색 API 연동 */}
+               {formData.type === 'CORPORATE' && (
+                 <div className="md:col-span-2">
+                   <label className="text-xs font-bold text-gray-400 block mb-1.5">
+                     본점소재지
+                     {formData.primaryAddressType === 'HEAD_OFFICE' && <span className="ml-2 text-[9px] text-[#1a73e8] font-black bg-[#e8f0fe] px-1.5 py-0.5 rounded">대표</span>}
+                   </label>
+                   {ocrHeadAddr && !formData.headOfficeAddress && (
+                     <div className="text-[10px] text-[#5f6368] bg-[#f1f3f4] px-2.5 py-1.5 rounded-lg mb-1.5 flex items-center gap-1.5">
+                       <span className="font-black text-[#1a73e8]">OCR</span>
+                       <span className="truncate">{ocrHeadAddr}</span>
+                     </div>
+                   )}
+                   <div className="flex gap-2">
+                     <input className="flex-1 border border-gray-200 bg-gray-50 text-gray-900 p-3 rounded-lg outline-none" value={formData.headOfficeAddress || ''} readOnly placeholder="주소 검색 버튼을 눌러주세요" />
+                     <button
+                       type="button"
+                       onClick={() => {
+                         const query = ocrHeadAddr || '';
+                         const openPostcode = () => {
+                           new (window as any).daum.Postcode({
+                             oncomplete: (data: any) => {
+                               const fullAddr = data.roadAddress || data.jibunAddress;
+                               setFormData(prev => ({...prev, headOfficeAddress: fullAddr, headOfficePostalCode: data.zonecode || '', headOfficeAddressDetail: ''}));
+                             }
+                           }).open({ q: query || undefined });
+                         };
+                         if (!(window as any).daum?.Postcode) {
+                           const script = document.createElement('script');
+                           script.src = '//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+                           script.onload = () => openPostcode();
+                           document.head.appendChild(script);
+                         } else {
+                           openPostcode();
+                         }
+                       }}
+                       className="px-4 bg-[#1a73e8] text-white rounded-lg hover:bg-[#1557b0] font-bold text-sm whitespace-nowrap"
+                     >
+                       <Search size={16} />
+                     </button>
+                   </div>
+                   {formData.headOfficeAddress && (
+                     <div className="mt-2 space-y-2">
+                       {formData.headOfficePostalCode && (
+                         <div className="flex items-center gap-2">
+                           <span className="text-xs text-gray-400 font-bold whitespace-nowrap">우편번호</span>
+                           <span className="text-sm font-bold text-[#1a73e8] tracking-widest">{formData.headOfficePostalCode}</span>
+                         </div>
+                       )}
+                       <input
+                         className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none"
+                         value={formData.headOfficeAddressDetail || ''}
+                         onChange={e => setFormData({...formData, headOfficeAddressDetail: e.target.value})}
+                         placeholder="상세주소 입력 (동/호수 등)"
+                       />
+                     </div>
+                   )}
+                 </div>
+               )}
+
+               {/* 사업장 소재지 / 등록 주소지 (다음 주소검색) */}
                <div className="md:col-span-2">
-                 <label className="text-xs font-bold text-gray-400 block mb-1.5">등록 주소지</label>
+                 <label className="text-xs font-bold text-gray-400 block mb-1.5">
+                   {(formData.type === 'SOLE_PROPRIETOR' || formData.type === 'CORPORATE') ? '사업장 소재지' : '등록 주소지'}
+                   {(!formData.primaryAddressType || formData.primaryAddressType === 'BUSINESS') && formData.type === 'CORPORATE' && <span className="ml-2 text-[9px] text-[#1a73e8] font-black bg-[#e8f0fe] px-1.5 py-0.5 rounded">대표</span>}
+                 </label>
+                 {ocrBizAddr && !formData.contact?.address && (
+                   <div className="text-[10px] text-[#5f6368] bg-[#f1f3f4] px-2.5 py-1.5 rounded-lg mb-1.5 flex items-center gap-1.5">
+                     <span className="font-black text-[#1a73e8]">OCR</span>
+                     <span className="truncate">{ocrBizAddr}</span>
+                   </div>
+                 )}
                  <div className="flex gap-2">
                    <input
                      className="flex-1 border border-gray-200 bg-gray-50 text-gray-900 p-3 rounded-lg outline-none"
@@ -1096,13 +1987,14 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <button
                      type="button"
                      onClick={() => {
+                       const query = ocrBizAddr || '';
                        const openPostcode = () => {
                          new (window as any).daum.Postcode({
                            oncomplete: (data: any) => {
                              const fullAddr = data.roadAddress || data.jibunAddress;
                              setFormData(prev => ({...prev, contact: {...prev.contact!, phone: prev.contact?.phone || '', email: prev.contact?.email || '', address: fullAddr, addressDetail: '', postalCode: data.zonecode || ''}}));
                            }
-                         }).open();
+                         }).open({ q: query || undefined });
                        };
                        if (!(window as any).daum?.Postcode) {
                          const script = document.createElement('script');
@@ -1136,6 +2028,23 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    </div>
                  )}
                </div>
+
+               {/* 대표주소 선택 (법인사업자 + 두 주소 모두 등록 시) */}
+               {formData.type === 'CORPORATE' && formData.headOfficeAddress && formData.contact?.address && (
+                 <div className="md:col-span-2">
+                   <label className="text-xs font-bold text-gray-400 block mb-1.5">대표주소 (라벨 인쇄용)</label>
+                   <div className="flex gap-4">
+                     <label className="flex items-center gap-1.5 cursor-pointer">
+                       <input type="radio" name="primaryAddr" checked={!formData.primaryAddressType || formData.primaryAddressType === 'BUSINESS'} onChange={() => setFormData({...formData, primaryAddressType: 'BUSINESS'})} className="accent-[#1a73e8]" />
+                       <span className="text-xs font-bold text-gray-600">사업장 소재지</span>
+                     </label>
+                     <label className="flex items-center gap-1.5 cursor-pointer">
+                       <input type="radio" name="primaryAddr" checked={formData.primaryAddressType === 'HEAD_OFFICE'} onChange={() => setFormData({...formData, primaryAddressType: 'HEAD_OFFICE'})} className="accent-[#1a73e8]" />
+                       <span className="text-xs font-bold text-gray-600">본점소재지</span>
+                     </label>
+                   </div>
+                 </div>
+               )}
 
                {/* 개인용 추가 필드 */}
                {formData.type === 'INDIVIDUAL' && (
@@ -1414,16 +2323,18 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                      <div className="space-y-2">
                        {(formData.bankAccounts || []).map((account, idx) => (
                          <div key={idx} className="flex gap-2 items-start bg-gray-50 p-3 rounded-lg">
-                           <input
-                             className="flex-1 border border-gray-200 bg-white p-2 rounded text-sm"
-                             placeholder="은행명"
+                           <select
+                             className="flex-1 border border-gray-200 bg-white p-2 rounded text-sm min-w-0"
                              value={account.bankName}
                              onChange={e => {
                                const updated = [...(formData.bankAccounts || [])];
                                updated[idx] = {...account, bankName: e.target.value};
                                setFormData({...formData, bankAccounts: updated});
                              }}
-                           />
+                           >
+                             <option value="">은행 선택</option>
+                             {KOREAN_BANKS.map(bn => <option key={bn} value={bn}>{bn}</option>)}
+                           </select>
                            <input
                              className="flex-1 border border-gray-200 bg-white p-2 rounded text-sm"
                              placeholder="계좌번호"
@@ -1465,6 +2376,30 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                        >
                          <Plus size={14} /> 계좌 추가
                        </button>
+                     </div>
+                     {/* 통장사본 OCR */}
+                     <div className="flex items-center gap-3 mt-3 bg-[#fafbfc] p-3 rounded-xl border border-gray-100">
+                       {(bankbookBase64 || formData.bankbookBase64) ? (
+                         <div className="relative flex-shrink-0">
+                           <img src={bankbookBase64 || formData.bankbookBase64} alt="통장사본" className="w-14 h-[72px] object-cover rounded-lg border border-gray-200 cursor-pointer" onClick={() => bankbookFileInputRef.current?.click()} />
+                           <button type="button" onClick={() => { setBankbookBase64(''); setFormData(prev => ({ ...prev, bankbookBase64: '' })); }} className="absolute -top-1 -right-1 w-4 h-4 bg-[#ea4335] text-white rounded-full flex items-center justify-center hover:bg-red-600"><X size={8}/></button>
+                         </div>
+                       ) : (
+                         <button type="button" onClick={() => bankbookFileInputRef.current?.click()} className="w-14 h-[72px] border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:border-[#1a73e8] hover:text-[#1a73e8] transition-colors flex-shrink-0">
+                           <Upload size={16}/><span className="text-[8px] mt-0.5 font-bold">통장</span>
+                         </button>
+                       )}
+                       <input ref={bankbookFileInputRef} type="file" accept="image/*" className="hidden" onChange={handleBankbookFileSelect} />
+                       <div className="flex-1 min-w-0">
+                         <div className="text-[10px] font-black text-[#1a73e8] uppercase tracking-widest mb-1">통장사본</div>
+                         {isBankbookOcrLoading && <div className="flex items-center gap-2 text-[10px] text-[#1a73e8] font-bold"><span className="animate-spin">⏳</span> OCR 인식 중...</div>}
+                         {!isBankbookOcrLoading && !(bankbookBase64 || formData.bankbookBase64) && (
+                           <p className="text-[9px] text-[#9aa0a6]">통장사본을 첨부하면 계좌정보를 자동 인식합니다.</p>
+                         )}
+                         {!isBankbookOcrLoading && (bankbookBase64 || formData.bankbookBase64) && (
+                           <button type="button" onClick={() => runBankbookOcr(bankbookBase64 || formData.bankbookBase64 || '')} className="px-2 py-1 text-[10px] font-bold text-[#8b5cf6] bg-[#f3f0ff] hover:bg-[#ede9fe] rounded transition-colors">재인식</button>
+                         )}
+                       </div>
                      </div>
                    </div>
 
@@ -1564,9 +2499,9 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                );
              })()}
 
-             <div className="mt-10 flex justify-end gap-3">
-               <button onClick={() => setIsFormOpen(false)} className="px-8 py-3 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 font-bold transition-all">취소</button>
-               <button onClick={handleSave} className="bg-[#1a73e8] text-white px-12 py-3 rounded-xl hover:bg-[#1557b0] font-bold shadow-lg transition-all active:scale-95">
+             <div className="mt-6 flex justify-end gap-3">
+               <button onClick={() => setIsFormOpen(false)} className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 font-bold transition-all text-sm">취소</button>
+               <button onClick={handleSave} className="bg-[#1a73e8] text-white px-10 py-2.5 rounded-xl hover:bg-[#1557b0] font-bold shadow-lg transition-all active:scale-95 text-sm">
                  저장
                </button>
              </div>
@@ -1594,7 +2529,16 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
               </div>
               <button onClick={() => setIsHistoryOpen(false)} className="p-2 bg-white border border-gray-200 rounded-full text-gray-400 hover:bg-gray-100 transition-colors shadow-sm"><X size={20}/></button>
             </div>
+            {/* 탭 바 */}
+            <div className="flex border-b border-gray-200 px-6">
+              <button onClick={() => setHistoryTab('contracts')} className={`px-6 py-3 text-sm font-bold border-b-2 transition-all ${historyTab === 'contracts' ? 'border-[#1a73e8] text-[#1a73e8]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>계약이력</button>
+              <button onClick={() => setHistoryTab('documents')} className={`px-6 py-3 text-sm font-bold border-b-2 transition-all ${historyTab === 'documents' ? 'border-[#1a73e8] text-[#1a73e8]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                서류이력 {(selectedStakeholderForHistory.documents?.length || 0) > 0 && <span className="ml-1 text-[10px] bg-[#e8f0fe] text-[#1a73e8] px-1.5 py-0.5 rounded-full font-black">{selectedStakeholderForHistory.documents!.length}</span>}
+              </button>
+            </div>
             <div className="p-8 overflow-y-auto bg-white rounded-b-2xl flex-1">
+              {historyTab === 'contracts' && (
+              <>
               {historyData.leases.length === 0 && historyData.maintenances.length === 0 ? (
                 <div className="text-center py-20 text-gray-300 italic">연결된 계약 정보가 존재하지 않습니다.</div>
               ) : (
@@ -1647,6 +2591,43 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                           </tbody>
                         </table>
                       </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              </>
+              )}
+              {historyTab === 'documents' && (
+                <div>
+                  <div className="flex items-center gap-3 mb-6">
+                    <select value={docUploadType} onChange={e => setDocUploadType(e.target.value as any)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-bold">
+                      <option value="BUSINESS_LICENSE">사업자등록증</option>
+                      <option value="BANKBOOK">통장사본</option>
+                      <option value="OTHER">기타</option>
+                    </select>
+                    <button onClick={() => docUploadRef.current?.click()} className="px-4 py-2 bg-[#1a73e8] text-white text-xs font-bold rounded-lg hover:bg-[#1557b0] flex items-center gap-1"><Upload size={14}/> 서류 업로드</button>
+                    <input ref={docUploadRef} type="file" accept="image/*,.pdf" className="hidden" onChange={handleDocUpload} />
+                  </div>
+                  {(selectedStakeholderForHistory.documents?.length || 0) === 0 ? (
+                    <div className="text-center py-20 text-gray-300 italic">등록된 서류가 없습니다.</div>
+                  ) : (
+                    <div className="overflow-hidden border border-gray-100 rounded-xl shadow-sm">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-gray-50 text-gray-500 font-bold border-b border-gray-100 text-[11px] uppercase">
+                          <tr><th className="p-4">등록일</th><th className="p-4">구분</th><th className="p-4">파일명</th><th className="p-4">비고</th><th className="p-4 text-center w-16">삭제</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {(selectedStakeholderForHistory.documents || []).sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()).map(doc => (
+                            <tr key={doc.id} className="hover:bg-gray-50/50 cursor-pointer" onClick={() => handleViewDocument(doc)}>
+                              <td className="p-4 font-bold text-gray-800">{new Date(doc.uploadedAt).toLocaleDateString('ko-KR')}</td>
+                              <td className="p-4"><span className={`px-2 py-1 text-[10px] font-bold rounded-md ${doc.type === 'BUSINESS_LICENSE' ? 'bg-[#e8f0fe] text-[#1a73e8]' : doc.type === 'BANKBOOK' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{doc.type === 'BUSINESS_LICENSE' ? '사업자등록증' : doc.type === 'BANKBOOK' ? '통장사본' : '기타'}</span></td>
+                              <td className="p-4 text-gray-600">{doc.fileName}</td>
+                              <td className="p-4 text-gray-400 text-xs">{doc.note || '-'}</td>
+                              <td className="p-4 text-center"><button onClick={e => { e.stopPropagation(); handleDeleteDocument(doc.id); }} className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={14}/></button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -1822,19 +2803,51 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         document.body
       )}
 
-      {/* Filter Tabs */}
-      <div className="flex bg-white rounded-lg md:rounded-xl border border-gray-200 p-0.5 md:p-1 w-fit shadow-sm overflow-x-auto">
-        {[
-          { id: 'ALL', label: '전체' }, { id: 'TENANT', label: '임차인' }, { id: 'LANDLORD', label: '임대인' }, { id: 'MANAGER', label: '관리자' }, { id: 'VENDOR', label: '업체' },
-        ].map(tab => (
-           <button key={tab.id} onClick={() => setFilterRole(tab.id as any)} className={`px-3 md:px-6 py-1.5 md:py-2 text-[10px] md:text-xs font-black rounded-md md:rounded-lg transition-all whitespace-nowrap ${filterRole === tab.id ? 'bg-[#1a73e8] text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>{tab.label}</button>
-        ))}
+      {/* 통합 필터바: 역할탭 | 자산 | 정렬 | 그룹 | 개인표시 | 건수 */}
+      <div className="flex items-center gap-1.5 md:gap-2 flex-wrap bg-white rounded-xl border border-gray-200 p-1.5 md:p-2 shadow-sm">
+        {/* 역할 필터 탭 */}
+        <div className="flex bg-gray-100 rounded-lg p-0.5 flex-shrink-0">
+          {[
+            { id: 'ALL', label: '전체' }, { id: 'TENANT', label: '임차인' }, { id: 'LANDLORD', label: '임대인' }, { id: 'MANAGER', label: '관리자' }, { id: 'VENDOR', label: '업체' },
+          ].map(tab => (
+             <button key={tab.id} onClick={() => setFilterRole(tab.id as any)} className={`px-2.5 md:px-4 py-1 md:py-1.5 text-[10px] md:text-xs font-bold rounded-md transition-all whitespace-nowrap ${filterRole === tab.id ? 'bg-[#1a73e8] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{tab.label}</button>
+          ))}
+        </div>
+        <div className="w-px h-5 bg-gray-200 hidden md:block"></div>
+        {/* 자산 필터 */}
+        <select value={filterPropertyId} onChange={e => setFilterPropertyId(e.target.value)} className="px-2 py-1 md:py-1.5 border border-gray-200 rounded-lg text-[10px] md:text-xs bg-white focus:ring-1 focus:ring-[#1a73e8] outline-none max-w-[120px] md:max-w-[160px] truncate">
+          <option value="ALL">전체 자산</option>
+          {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {/* 정렬 */}
+        <select value={sortMode} onChange={e => setSortMode(e.target.value as any)} className="px-2 py-1 md:py-1.5 border border-gray-200 rounded-lg text-[10px] md:text-xs bg-white focus:ring-1 focus:ring-[#1a73e8] outline-none">
+          <option value="DEFAULT">정렬: 기본</option>
+          <option value="NAME_ASC">이름↑</option>
+          <option value="NAME_DESC">이름↓</option>
+          <option value="TYPE">유형별</option>
+          <option value="ROLE">역할별</option>
+          <option value="MANUAL">수동정렬</option>
+        </select>
+        {/* 그룹 */}
+        <select value={groupMode} onChange={e => setGroupMode(e.target.value as any)} className="px-2 py-1 md:py-1.5 border border-gray-200 rounded-lg text-[10px] md:text-xs bg-white focus:ring-1 focus:ring-[#1a73e8] outline-none">
+          <option value="NONE">그룹: 없음</option>
+          <option value="TYPE">유형별</option>
+          <option value="ROLE">역할별</option>
+        </select>
+        <div className="w-px h-5 bg-gray-200 hidden md:block"></div>
+        {/* 개인 표시 */}
+        <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
+          <input type="checkbox" checked={showIndividuals} onChange={e => setShowIndividuals(e.target.checked)} className="w-3.5 h-3.5 text-[#1a73e8] rounded border-gray-300 focus:ring-[#1a73e8]" />
+          <span className="text-[10px] md:text-xs text-gray-500 font-medium whitespace-nowrap">개인 표시</span>
+        </label>
+        {/* 건수 */}
+        <span className="text-[10px] md:text-xs text-gray-400 font-bold ml-auto">{sorted.length}건</span>
       </div>
 
       {/* 일괄 선택 액션 바 */}
       {checkedIds.size > 0 && (
         <div className="flex items-center gap-3 bg-[#e8f0fe] border border-[#dadce0] rounded-lg p-2 md:p-3">
-          <input type="checkbox" checked={checkedIds.size === filtered.length} onChange={handleSelectAll} className="w-4 h-4 text-[#1a73e8] rounded" />
+          <input type="checkbox" checked={checkedIds.size === sorted.length} onChange={handleSelectAll} className="w-4 h-4 text-[#1a73e8] rounded" />
           <span className="text-xs md:text-sm font-bold text-[#1a73e8]">{checkedIds.size}건 선택됨</span>
           <div className="flex gap-2 ml-auto flex-wrap">
             <button onClick={handlePrintPostalLabels} className="px-3 py-1.5 text-[10px] md:text-xs font-bold bg-white border border-[#1a73e8] text-[#1a73e8] rounded-lg hover:bg-[#e8f0fe] transition-all flex items-center gap-1">
@@ -1853,8 +2866,18 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         </div>
       )}
 
+      {groupedEntries.map((group, gi) => (
+        <div key={gi}>
+          {group.label && (
+            <div className="flex items-center gap-2 mt-4 mb-2 first:mt-0">
+              <span className="text-xs md:text-sm font-black text-[#1a73e8]">{group.label}</span>
+              <span className="text-[10px] md:text-xs text-gray-400 font-bold">{group.items.length}건</span>
+              <div className="flex-1 h-px bg-[#dadce0]"></div>
+            </div>
+          )}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
-        {filtered.map(person => {
+        {group.items.map((person, cardIdx) => {
+          const globalIdx = groupedEntries.slice(0, gi).reduce((sum, g) => sum + g.items.length, 0) + cardIdx;
           const personContracts = getStakeholderContracts(person.id);
           const refDate = referenceDate ? new Date(referenceDate + 'T00:00:00') : new Date(); refDate.setHours(0,0,0,0);
           const thirtyDaysLater = new Date(refDate); thirtyDaysLater.setDate(thirtyDaysLater.getDate() + 30);
@@ -1893,10 +2916,11 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           const totalContracts = personContracts.leases.length + personContracts.maintenances.length;
 
           return (
-          <div key={person.id} onClick={() => handleOpenView(person)} className={`bg-white rounded-xl md:rounded-2xl border shadow-sm hover:shadow-lg transition-all group flex flex-col h-full overflow-hidden cursor-pointer ${checkedIds.has(person.id) ? 'border-[#1a73e8] ring-2 ring-[#e8f0fe]' : 'border-gray-200'}`}>
+          <div key={person.id} draggable={sortMode === 'MANUAL'} onDragStart={() => handleDragStart(globalIdx)} onDragOver={e => handleDragOver(e, globalIdx)} onDragEnd={handleDragEnd} onClick={() => handleOpenView(person)} className={`bg-white rounded-xl md:rounded-2xl border shadow-sm hover:shadow-lg transition-all group flex flex-col h-full overflow-hidden cursor-pointer ${checkedIds.has(person.id) ? 'border-[#1a73e8] ring-2 ring-[#e8f0fe]' : 'border-gray-200'} ${dragOverIdx === globalIdx ? 'ring-2 ring-[#1a73e8] ring-dashed' : ''}`}>
             {/* 헤더: 체크박스 + 이름 + 역할 + 액션 버튼 */}
             <div className="flex justify-between items-start p-3 md:p-4 pb-0">
               <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+                 {sortMode === 'MANUAL' && <GripVertical size={14} className="text-gray-300 flex-shrink-0 cursor-grab"/>}
                  <input
                    type="checkbox"
                    checked={checkedIds.has(person.id)}
@@ -2008,8 +3032,11 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           </div>
           );
         })}
-        {filtered.length === 0 && <div className="col-span-full py-12 md:py-20 text-center text-gray-400 italic text-xs md:text-sm">검색 결과가 없습니다.</div>}
+        {group.items.length === 0 && <div className="col-span-full py-12 md:py-20 text-center text-gray-400 italic text-xs md:text-sm">검색 결과가 없습니다.</div>}
       </div>
+        </div>
+      ))}
+      {sorted.length === 0 && <div className="py-12 md:py-20 text-center text-gray-400 italic text-xs md:text-sm">검색 결과가 없습니다.</div>}
 
       {/* 조직도 모달 */}
       {isOrgChartModalOpen && orgChartStakeholderId && (() => {

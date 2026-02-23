@@ -23,6 +23,16 @@ export interface BankAccount {
   accountHolder: string;
 }
 
+// 서류 이력 (사업자등록증, 통장사본 등)
+export interface StakeholderDocument {
+  id: string;
+  type: 'BUSINESS_LICENSE' | 'BANKBOOK' | 'OTHER';
+  fileName: string;
+  fileData: string;  // base64 data URL
+  uploadedAt: string;  // ISO date
+  note?: string;
+}
+
 export interface Stakeholder {
   id: string;
   name: string;
@@ -31,6 +41,13 @@ export interface Stakeholder {
   registrationNumber: string;
   businessRegistrationNumber?: string;
   businessLicenseFile?: string;
+  businessLicenseBase64?: string;
+  businessSector?: string;     // 업태
+  businessType?: string;       // 종목
+  headOfficeAddress?: string;  // 본점소재지
+  headOfficePostalCode?: string;  // 본점 우편번호
+  headOfficeAddressDetail?: string;  // 본점 상세주소
+  primaryAddressType?: 'BUSINESS' | 'HEAD_OFFICE';  // 대표주소 (라벨인쇄용)
   representative?: string;
   contact: {
     phone: string;
@@ -65,6 +82,15 @@ export interface Stakeholder {
 
   // 조직도 (SOLE_PROPRIETOR, CORPORATE, INTERNAL_ORG용)
   departments?: Department[];
+
+  // 통장사본 이미지
+  bankbookBase64?: string;
+
+  // 서류 이력
+  documents?: StakeholderDocument[];
+
+  // 수동 정렬 순서
+  sortOrder?: number;
 }
 
 export interface JibunAddress {

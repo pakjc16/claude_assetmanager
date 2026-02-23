@@ -33,11 +33,11 @@
       "Bash(pushd:*)",
       "Bash(pwsh:*)",
       "Bash(npm install:*)",
-      "Bash(git remote add:*)",
       "Bash(git pull:*)",
-      "Bash(/tmp/parse_transcript2.js:*)",
-      "Bash(node:*)",
-      "WebFetch(domain:apis.map.kakao.com)"
+      "Bash(git stash:*)",
+      "Bash(git stash pop:*)",
+      "WebFetch(domain:infuser.odcloud.kr)",
+      "WebFetch(domain:velog.io)"
     ]
   }
 }

@@ -79,6 +79,41 @@ export default defineConfig({
               });
             },
           },
+          // 국세청 사업자등록 상태조회 API (api.odcloud.kr)
+          '/api/nts-businessman': {
+            target: 'https://api.odcloud.kr',
+            changeOrigin: true,
+            secure: false,
+            configure: (proxy) => {
+              proxy.on('error', (err) => {
+                console.log('nts proxy error', err);
+              });
+              proxy.on('proxyReq', (proxyReq, req) => {
+                console.log('NTS API Proxying:', req.url);
+              });
+              proxy.on('proxyRes', (proxyRes, req) => {
+                console.log('NTS API Received:', proxyRes.statusCode, req.url);
+              });
+            },
+          },
+          // Google Cloud Vision OCR API
+          '/api/vision': {
+            target: 'https://vision.googleapis.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/vision/, ''),
+            secure: false,
+            configure: (proxy) => {
+              proxy.on('error', (err) => {
+                console.log('vision proxy error', err);
+              });
+              proxy.on('proxyReq', (proxyReq, req) => {
+                console.log('Vision API Proxying:', req.url);
+              });
+              proxy.on('proxyRes', (proxyRes, req) => {
+                console.log('Vision API Received:', proxyRes.statusCode, req.url);
+              });
+            },
+          },
         },
       },
       plugins: [react()],

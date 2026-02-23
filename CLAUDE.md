@@ -334,6 +334,63 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 
 ## 개발 이력
 
+### 2026-02-23: 인물/업체 관리 대폭 개선 (OCR/라벨/서류/CSV/필터)
+
+#### OCR 인식률 개선 (StakeholderManager.tsx)
+- **normalizeLine 강화**: 전각→반각 변환(`（→(`, `）→)`, `：→:`), 괄호 앞뒤 공백 제거(`\s+\(→(`)
+- **findValue 유연 매칭**: 1차 exact match 실패 시 2차 flexible regex (`\s*` 조인) fallback
+- **PDF/이미지 분리 처리**: PDF는 fullText 직접 사용(바운딩박스 재구성 안 함), 이미지만 바운딩박스 기반 라인 재구성
+- **한글 공백 제거**: 이미지 전용(`!isPdf` 조건), PDF의 정돈된 텍스트는 보존
+- **cleanOcrNoise 개선**: `[A-Z]{2,}` 워터마크 제거(경계 없음), `nts.go.kr` URL 노이즈 제거, dedup 함수 적용
+- **업태/종목 중복제거**: OCR 추출 + UI 양쪽에서 자동 dedup
+
+#### 통장사본 OCR (StakeholderManager.tsx)
+- **runBankbookOcr**: Google Vision 바운딩박스 Y좌표 기반 라인 재구성
+- **추출 순서**: 계좌번호(숫자-하이픈 패턴) → 예금주(계좌번호 위 라인 전체) → 은행명(퍼지 매칭)
+- **KOREAN_BANKS 상수**: 24개 한국 은행명 리스트
+- **matchBankName**: 정확 매칭 + 영문 별칭(KB→국민, NH→농협, IBK→기업 등) 퍼지 매칭
+- **은행명 UI**: input → select 드롭다운 (KOREAN_BANKS 목록)
+- **예금주 추출 개선**: `[가-힣]{2,5}` 고정길이 → 계좌번호 위 전체 라인 (법인명 대응)
+
+#### 업태/종목 뱃지 UI (StakeholderManager.tsx)
+- 텍스트 입력 → 뱃지/태그 형태 UI 변경
+- 콤마 구분 값을 개별 뱃지로 표시 (업태: 파랑, 종목: 보라)
+- X 버튼으로 개별 삭제, Enter/콤마로 추가
+- 자동 중복 제거: `.filter((v, i, a) => a.indexOf(v) === i)`
+
+#### 우편라벨 인쇄 개선 (StakeholderManager.tsx)
+- A4 세로, 라벨 95×67mm (2열×4행=페이지당 8개)
+- "귀중" 삭제, 전화번호 삭제
+- 이름 폰트 길이별 축소 (8자↓18pt, 12자↓16pt, 18자↓14pt, 25자↓12pt)
+- 주소 미등록 경고: confirm으로 제외 대상 안내
+
+#### 서류이력 관리 (StakeholderManager.tsx + types.ts)
+- **StakeholderDocument 인터페이스**: id, type(BUSINESS_LICENSE/BANKBOOK/OTHER), fileName, fileData, uploadedAt, note
+- **이력 모달 탭 확장**: 계약이력 + 서류이력 2탭
+- **서류 업로드**: 구분 선택 + 파일 업로드 → documents 배열에 자동 추가
+- **서류 열람**: 행 클릭 → 새 창에서 원본 열람 (이미지/PDF)
+- **자동 문서 이력**: 사업자등록증/통장사본 저장 시 documents에 자동 추가
+
+#### CSV 입출력 (StakeholderManager.tsx)
+- **CSV 다운로드**: UTF-8 BOM 포함, 16개 컬럼, 필터 기준 내보내기
+- **CSV 업로드 개선**: BOM 처리, 따옴표 내 콤마 처리, 한글/영어 헤더 자동 매핑
+- **UI**: 단일 "CSV" 버튼 → "업로드" + "다운로드" 2개 버튼 분리
+
+#### 필터/정렬/그룹핑 (StakeholderManager.tsx)
+- **정렬**: 기본/이름순(오름차순·내림차순)/유형별/역할별/수동정렬 6가지
+- **그룹핑**: 없음/유형별/역할별 3가지, 그룹 헤더(라벨+건수+구분선)
+- **수동정렬**: HTML5 드래그앤드롭, GripVertical 핸들, sortOrder 저장
+- **통합 필터바**: 기존 3줄(역할탭+자산필터+정렬그룹) → 1줄 통합 UI
+- **자산 필터 버그 수정**: 소유권만 체크 → 임대차계약+용역계약 관계까지 포함
+
+#### types.ts 확장
+- `StakeholderDocument` 인터페이스 신규
+- Stakeholder에 추가: `bankbookBase64?`, `documents?`, `sortOrder?`, `primaryAddressType?`, `headOfficeAddress?`, `headOfficePostalCode?`, `headOfficeAddressDetail?`, `businessSector?`, `businessType?`
+
+#### vite.config.ts 프록시 추가
+- `/api/nts-businessman` → `api.odcloud.kr` (국세청 사업자등록 상태조회)
+- `/api/vision` → `vision.googleapis.com` (Google Cloud Vision OCR)
+
 ### 2026-02-22: 로그인/사용자관리, 갤러리/로드뷰 개선, 캘린더, 우편 라벨
 
 #### 로그인 및 사용자 관리 (LoginPage.tsx + App.tsx + types.ts)

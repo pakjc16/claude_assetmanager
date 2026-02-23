@@ -55,14 +55,18 @@ export interface AppSettings {
   addressApi: AddressApiType;
   vworldApiKey: string;
   dataGoKrApiKey: string;  // 공공데이터포털 API 키 (건축물대장 등)
+  odcloudApiKey: string;   // 공공데이터포털 Decoding 키 (사업자조회 - api.odcloud.kr)
   kakaoMapApiKey: string;  // 카카오맵 JavaScript API 키 (로드뷰)
+  googleVisionApiKey: string;  // Google Cloud Vision API 키 (OCR)
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   addressApi: 'VWORLD',
   vworldApiKey: '',
   dataGoKrApiKey: '',
+  odcloudApiKey: '',
   kakaoMapApiKey: '',
+  googleVisionApiKey: '',
 };
 
 // localStorage에서 설정 불러오기
@@ -566,7 +570,7 @@ function App() {
                     formatMoney={formatMoney} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput}
                   />
                )}
-               {activeTab === 'STAKEHOLDER' && <StakeholderManager stakeholders={stakeholders} onAddStakeholder={s => setStakeholders(prev => [...prev, s])} onUpdateStakeholder={s => setStakeholders(prev => prev.map(sh => sh.id === s.id ? s : sh))} onDeleteStakeholder={id => setStakeholders(prev => prev.filter(s => s.id !== id))} leaseContracts={leaseContracts} maintenanceContracts={maintenanceContracts} properties={properties} units={units} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))} formatMoney={formatMoney} referenceDate={referenceDate} />}
+               {activeTab === 'STAKEHOLDER' && <StakeholderManager stakeholders={stakeholders} onAddStakeholder={s => setStakeholders(prev => [...prev, s])} onUpdateStakeholder={s => setStakeholders(prev => prev.map(sh => sh.id === s.id ? s : sh))} onDeleteStakeholder={id => setStakeholders(prev => prev.filter(s => s.id !== id))} leaseContracts={leaseContracts} maintenanceContracts={maintenanceContracts} properties={properties} units={units} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))} formatMoney={formatMoney} referenceDate={referenceDate} ntsApiKey={appSettings.odcloudApiKey} googleVisionApiKey={appSettings.googleVisionApiKey} />}
                {activeTab === 'VALUATION' && (
                  /* Fixed duplicate attributes error by renaming repeated parseNumberInput to parseMoneyInput */
                  <ValuationManager properties={properties} valuations={valuations} comparables={comparables} onAddValuation={v => setValuations(prev => [...prev, v])} onUpdateValuation={v => setValuations(prev => prev.map(va => va.id === v.id ? v : va))} onDeleteValuation={id => setValuations(prev => prev.filter(v => v.id !== id))} onAddComparable={c => setComparables(prev => [...prev, c])} formatMoney={formatMoney} formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'} areaUnit={areaUnit} />
@@ -724,6 +728,11 @@ function App() {
                         <input type="text" value={appSettings.dataGoKrApiKey} onChange={e => setAppSettings(prev => ({ ...prev, dataGoKrApiKey: e.target.value }))} placeholder="공공데이터포털 API 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#34a853] outline-none"/>
                         {!appSettings.dataGoKrApiKey && <p className="text-xs text-[#fbbc05] font-medium">⚠️ API 키가 없으면 건물/승강기 자동 조회가 작동하지 않습니다.</p>}
                       </div>
+                      <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                        <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]"><Key size={13}/>사업자조회 API Key (Decoding)</label>
+                        <input type="text" value={appSettings.odcloudApiKey} onChange={e => setAppSettings(prev => ({ ...prev, odcloudApiKey: e.target.value }))} placeholder="공공데이터포털 Decoding 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#34a853] outline-none"/>
+                        <p className="text-xs text-[#5f6368]">인물/업체 관리에서 <strong>사업자등록번호 상태조회</strong>에 사용됩니다. 공공데이터포털의 <strong>Decoding 키</strong>를 입력하세요.</p>
+                      </div>
                     </div>
                     <div className="space-y-4">
                       <div className="flex items-center gap-2">
@@ -735,6 +744,17 @@ function App() {
                         <input type="text" value={appSettings.kakaoMapApiKey} onChange={e => setAppSettings(prev => ({ ...prev, kakaoMapApiKey: e.target.value }))} placeholder="카카오 JavaScript 앱 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#ea4335] outline-none"/>
                         <p className="text-xs text-[#5f6368]">자산 개요의 사진 갤러리에 <strong>주소 기반 로드뷰</strong>가 표시됩니다. <a href="https://developers.kakao.com/console/app" target="_blank" rel="noopener noreferrer" className="text-[#ea4335] hover:underline">카카오 개발자 콘솔</a>에서 JavaScript 앱 키를 발급하세요.</p>
                         {!appSettings.kakaoMapApiKey && <p className="text-xs text-[#9aa0a6]">※ API 키 없이도 앱 사용 가능 (로드뷰만 비활성)</p>}
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <FileText size={16} className="text-[#8b5cf6]" />
+                        <h4 className="font-bold text-[#3c4043]">Google Vision OCR</h4>
+                      </div>
+                      <div className="space-y-2 p-4 bg-[#f8f9fa] rounded-xl border border-[#dadce0]">
+                        <label className="flex items-center gap-2 text-sm font-bold text-[#3c4043]"><Key size={13}/>Google Cloud Vision API Key</label>
+                        <input type="text" value={appSettings.googleVisionApiKey} onChange={e => setAppSettings(prev => ({ ...prev, googleVisionApiKey: e.target.value }))} placeholder="Google Cloud Vision API 키를 입력하세요" className="w-full border border-[#dadce0] p-2.5 rounded-lg text-sm focus:ring-2 focus:ring-[#8b5cf6] outline-none"/>
+                        <p className="text-xs text-[#5f6368]">인물/업체 등록 시 <strong>사업자등록증 OCR 자동 인식</strong>에 사용됩니다.</p>
                       </div>
                     </div>
                   </>
