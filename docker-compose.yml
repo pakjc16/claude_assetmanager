@@ -1,8 +1,9 @@
 version: "3.8"
 
 services:
-  asset-manager:
+  realtyflow:
     build: .
+    container_name: realtyflow
     ports:
       - "8847:80"
     restart: unless-stopped

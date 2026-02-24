@@ -1,0 +1,9 @@
+node_modules
+.git
+.gitignore
+dist
+*.md
+.claude
+.env
+claude_assetmanager
+deploy
