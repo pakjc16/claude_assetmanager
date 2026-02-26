@@ -1,0 +1,13 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# 의존성 캐싱을 위해 package*.json만 먼저 복사
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# 소스코드는 volume mount로 연결 (COPY 안 함)
+# Vite dev server 실행
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]
