@@ -1,16 +1,4 @@
 FROM node:20-alpine
-
 WORKDIR /app
-
-# 의존성을 /deps에 미리 설치 (빌드 캐시)
-COPY package.json package-lock.json /deps/
-RUN cd /deps && npm ci
-
 EXPOSE 8847
-
-# 시작 시: /deps → /app으로 node_modules 복사 후 vite 실행
-# (볼륨 마운트가 /app을 덮어쓰므로 런타임에 복사 필요)
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-
-ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["sh", "-c", "[ -d node_modules ] || npm install && exec npm run dev"]
