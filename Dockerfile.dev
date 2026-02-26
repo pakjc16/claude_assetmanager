@@ -2,14 +2,15 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# 의존성을 /deps에 설치 (볼륨 마운트 영향 없는 경로)
+# 의존성을 /deps에 미리 설치 (빌드 캐시)
 COPY package.json package-lock.json /deps/
 RUN cd /deps && npm ci
 
-# /deps/node_modules의 바이너리와 모듈을 직접 참조 (심볼릭 링크 불필요)
-ENV PATH="/deps/node_modules/.bin:$PATH"
-ENV NODE_PATH="/deps/node_modules"
-
 EXPOSE 8847
 
-CMD ["vite"]
+# 시작 시: /deps → /app으로 node_modules 복사 후 vite 실행
+# (볼륨 마운트가 /app을 덮어쓰므로 런타임에 복사 필요)
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
