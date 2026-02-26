@@ -4,8 +4,17 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
       server: {
-        port: 3000,
+        port: 8847,
         host: '0.0.0.0',
+        // Docker + NAS 파일시스템에서 파일 변경 감지 (폴링 모드)
+        watch: {
+          usePolling: true,
+          interval: 1000,
+        },
+        // HMR WebSocket 설정 (Docker 포트 매핑 호환)
+        hmr: {
+          port: 8847,
+        },
         proxy: {
           // VWorld 주소검색 API
           '/api/vworld': {
