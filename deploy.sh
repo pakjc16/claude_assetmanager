@@ -28,7 +28,7 @@ case "${1:-dev}" in
     log "개발 모드 시작 (Vite HMR, 포트 3000)"
     log "파일 수정 시 브라우저 자동 반영됩니다"
     docker compose up dev --build -d
-    log "실행 완료! http://<NAS_IP>:3000 에서 확인하세요"
+    log "실행 완료! http://<NAS_IP>:8847 에서 확인하세요"
     docker compose logs -f dev
     ;;
 
@@ -63,7 +63,7 @@ case "${1:-dev}" in
     docker compose down dev 2>/dev/null || true
     docker compose build --no-cache dev
     docker compose up dev -d
-    log "재빌드 완료! http://<NAS_IP>:3000 에서 확인하세요"
+    log "재빌드 완료! http://<NAS_IP>:8847 에서 확인하세요"
     docker compose logs -f dev
     ;;
 

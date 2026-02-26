@@ -9,7 +9,7 @@ services:
       dockerfile: Dockerfile.dev
     container_name: realtyflow-dev
     ports:
-      - "3000:3000"
+      - "8847:8847"
     volumes:
       # 소스코드 마운트 (NAS에서 파일 수정 → 즉시 반영)
       - .:/app
@@ -22,9 +22,10 @@ services:
 
   # ===== 프로덕션 모드: nginx 정적 서빙 =====
   # 사용법: docker compose up prod
+  # 주의: dev와 동시 사용 시 포트 충돌 → prod 포트를 변경하세요
   prod:
     build: .
     container_name: realtyflow
     ports:
-      - "8847:80"
+      - "8848:80"
     restart: unless-stopped
