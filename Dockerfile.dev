@@ -2,11 +2,14 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# 의존성을 /deps에 먼저 설치 (볼륨 마운트로 덮어써지지 않는 경로)
+# 의존성을 /deps에 설치 (볼륨 마운트 영향 없는 경로)
 COPY package.json package-lock.json /deps/
 RUN cd /deps && npm ci
 
-# 시작 시: /deps/node_modules → /app/node_modules 심볼릭 링크 후 Vite 실행
+# /deps/node_modules의 바이너리와 모듈을 직접 참조 (심볼릭 링크 불필요)
+ENV PATH="/deps/node_modules/.bin:$PATH"
+ENV NODE_PATH="/deps/node_modules"
+
 EXPOSE 8847
 
-CMD ["sh", "-c", "rm -rf /app/node_modules && ln -s /deps/node_modules /app/node_modules && npm run dev"]
+CMD ["vite"]
