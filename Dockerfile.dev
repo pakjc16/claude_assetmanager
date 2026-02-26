@@ -9,4 +9,4 @@ RUN cd /deps && npm ci
 # 시작 시: /deps/node_modules → /app/node_modules 심볼릭 링크 후 Vite 실행
 EXPOSE 8847
 
-CMD ["sh", "-c", "ln -sf /deps/node_modules /app/node_modules && npm run dev"]
+CMD ["sh", "-c", "rm -rf /app/node_modules && ln -s /deps/node_modules /app/node_modules && npm run dev"]
