@@ -2,12 +2,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# 의존성 캐싱을 위해 package*.json만 먼저 복사
-COPY package.json package-lock.json ./
-RUN npm ci
+# 의존성을 /deps에 먼저 설치 (볼륨 마운트로 덮어써지지 않는 경로)
+COPY package.json package-lock.json /deps/
+RUN cd /deps && npm ci
 
-# 소스코드는 volume mount로 연결 (COPY 안 함)
-# Vite dev server 실행
+# 시작 시: /deps/node_modules → /app/node_modules 심볼릭 링크 후 Vite 실행
 EXPOSE 8847
 
-CMD ["npm", "run", "dev"]
+CMD ["sh", "-c", "ln -sf /deps/node_modules /app/node_modules && npm run dev"]
