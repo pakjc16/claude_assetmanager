@@ -10,6 +10,15 @@ interface LoginPageProps {
 }
 
 const AVATAR_COLORS = ['#1a73e8', '#34a853', '#ea4335', '#fbbc05', '#9c27b0', '#ff6f00'];
+const digitsOnly = (s: string) => (s || '').replace(/[^0-9]/g, '');
+const fmtPhone = (v: string): string => {
+  const d = digitsOnly(v);
+  if (/^01[016789]/.test(d)) { if (d.length <= 3) return d; if (d.length <= 7) return `${d.slice(0,3)}-${d.slice(3)}`; return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7,11)}`; }
+  if (d.startsWith('02')) { if (d.length <= 2) return d; if (d.length <= 5) return `${d.slice(0,2)}-${d.slice(2)}`; if (d.length <= 9) return `${d.slice(0,2)}-${d.slice(2,d.length-4)}-${d.slice(d.length-4)}`; return `${d.slice(0,2)}-${d.slice(2,6)}-${d.slice(6,10)}`; }
+  if (d.length >= 3 && /^0[3-6][0-9]/.test(d)) { if (d.length <= 3) return d; if (d.length <= 6) return `${d.slice(0,3)}-${d.slice(3)}`; if (d.length <= 10) return `${d.slice(0,3)}-${d.slice(3,d.length-4)}-${d.slice(d.length-4)}`; return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7,11)}`; }
+  if (/^1[0-9]{3}/.test(d)) { if (d.length <= 4) return d; return `${d.slice(0,4)}-${d.slice(4,8)}`; }
+  return d;
+};
 
 export const LoginPage: React.FC<LoginPageProps> = ({ users, companyInfo, onLogin, onSetup }) => {
   const isFirstSetup = users.length === 0;
@@ -151,8 +160,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ users, companyInfo, onLogi
                         <div>
                           <label className="text-xs font-bold text-[#5f6368] mb-1 block">대표 전화</label>
                           <input
-                            value={setupCompany.phone}
-                            onChange={e => setSetupCompany(p => ({ ...p, phone: e.target.value }))}
+                            value={fmtPhone(setupCompany.phone)}
+                            onChange={e => setSetupCompany(p => ({ ...p, phone: digitsOnly(e.target.value) }))}
                             placeholder="02-0000-0000"
                             className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"
                           />

@@ -25,6 +25,11 @@ interface StakeholderManagerProps {
 export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
   stakeholders, onAddStakeholder, onUpdateStakeholder, onDeleteStakeholder, leaseContracts, maintenanceContracts, properties, units, onUpdateProperty, onUpdateUnit, formatMoney, referenceDate, ntsApiKey, googleVisionApiKey
 }) => {
+  // 숫자 포맷 유틸: 데이터는 숫자만, 디스플레이는 하이픈 포맷
+  const digitsOnly = (s: string) => (s || '').replace(/[^0-9]/g, '');
+  const fmtBizRegNo = (s: string) => { const d = digitsOnly(s); if (d.length <= 3) return d; if (d.length <= 5) return `${d.slice(0,3)}-${d.slice(3)}`; return `${d.slice(0,3)}-${d.slice(3,5)}-${d.slice(5,10)}`; };
+  const fmtCorpRegNo = (s: string) => { const d = digitsOnly(s); if (d.length <= 6) return d; return `${d.slice(0,6)}-${d.slice(6,13)}`; };
+
   const [filterRole, setFilterRole] = useState<StakeholderRole | 'ALL'>('ALL');
   const [filterPropertyId, setFilterPropertyId] = useState<string>('ALL'); // 자산 필터
   const [showIndividuals, setShowIndividuals] = useState(false); // 개인 표시 여부
@@ -227,6 +232,117 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         normText = normLines.join('\n');
       }
 
+      // ═══ 이미지: 바운딩박스 공간(Spatial) 추출 ═══
+      // 사업자등록증 공통 양식: 라벨 위치 기반 값 추출
+      // 핵심: "대 표 자" 같은 넓은 간격 라벨도 공간적 nearest-neighbor로 결합
+      const spVal: Record<string, string> = {};
+      if (!isPdf && wordAnnotations.length > 0) {
+        type WP = { text: string; xMin: number; xMax: number; yCenter: number; h: number };
+        const ws: WP[] = wordAnnotations.map((a: any) => {
+          const v = a.boundingPoly?.vertices || [];
+          const xs = v.map((p: any) => p.x || 0), ys = v.map((p: any) => p.y || 0);
+          return { text: (a.description||'').trim(), xMin: Math.min(...xs), xMax: Math.max(...xs), yCenter: (Math.min(...ys)+Math.max(...ys))/2, h: Math.max(...ys)-Math.min(...ys) };
+        }).filter((w: any) => w.text);
+
+        // 라벨 찾기: 1차 단일단어 → 2차 오른쪽 결합 → 3차 왼쪽 역결합
+        const findLabel = (hints: string[]): { endIdx: number; endWord: WP } | null => {
+          // 1차: 모든 힌트에 대해 단일 단어 매칭
+          for (const h of hints) {
+            const si = ws.findIndex(w => w.text.includes(h));
+            if (si >= 0) return { endIdx: si, endWord: ws[si] };
+          }
+          // 2차: 첫 글자 포함 단어에서 오른쪽으로 nearest-neighbor 결합
+          for (const h of hints) {
+            for (let i = 0; i < ws.length; i++) {
+              if (!ws[i].text.includes(h[0])) continue; // "법대"도 "대" 포함이면 시도
+              let combined = ws[i].text;
+              let lastW = ws[i];
+              let endIdx = i;
+              const used = new Set([i]);
+              for (let step = 0; step < h.length + 2; step++) {
+                if (combined.includes(h)) return { endIdx, endWord: ws[endIdx] };
+                let bestJ = -1, bestX = Infinity;
+                for (let j = 0; j < ws.length; j++) {
+                  if (used.has(j)) continue;
+                  if (Math.abs(ws[j].yCenter - ws[i].yCenter) > ws[i].h * 0.6) continue;
+                  if (ws[j].xMin < lastW.xMax - 3) continue;
+                  if (ws[j].xMin > lastW.xMax + ws[i].h * 5) continue;
+                  if (ws[j].xMin < bestX) { bestJ = j; bestX = ws[j].xMin; }
+                }
+                if (bestJ < 0) break;
+                combined += ws[bestJ].text;
+                lastW = ws[bestJ];
+                endIdx = bestJ;
+                used.add(bestJ);
+              }
+              if (combined.includes(h)) return { endIdx, endWord: ws[endIdx] };
+            }
+          }
+          // 3차: 끝 글자에서 왼쪽으로 역결합 (OCR이 "법"+"대"→"법대"로 합친 경우)
+          // "자" → 왼쪽으로 "표" → "법대" 결합 = "법대표자" → "대표자" 포함!
+          for (const h of hints) {
+            const lastCh = h[h.length - 1];
+            for (let i = 0; i < ws.length; i++) {
+              if (ws[i].text !== lastCh && !ws[i].text.endsWith(lastCh)) continue;
+              let combined = ws[i].text;
+              let leftW = ws[i];
+              const used = new Set([i]);
+              for (let step = 0; step < h.length + 2; step++) {
+                if (combined.includes(h)) return { endIdx: i, endWord: ws[i] };
+                let bestJ = -1, bestX = -Infinity;
+                for (let j = 0; j < ws.length; j++) {
+                  if (used.has(j)) continue;
+                  if (Math.abs(ws[j].yCenter - ws[i].yCenter) > ws[i].h * 1.0) continue;
+                  if (ws[j].xMax > leftW.xMin + 3) continue;
+                  if (ws[j].xMax < leftW.xMin - ws[i].h * 5) continue;
+                  if (ws[j].xMax > bestX) { bestJ = j; bestX = ws[j].xMax; }
+                }
+                if (bestJ < 0) break;
+                combined = ws[bestJ].text + combined;
+                leftW = ws[bestJ];
+                used.add(bestJ);
+              }
+              if (combined.includes(h)) return { endIdx: i, endWord: ws[i] };
+            }
+          }
+          return null;
+        };
+
+        // 라벨 끝(endWord) 오른쪽에서 값 수집
+        const spGet = (hints: string[], stops: string[] = []): string => {
+          const label = findLabel(hints);
+          if (!label) return '';
+          const ew = label.endWord;
+          const tol = ew.h * 0.5;
+          // endWord 오른쪽, 같은 Y 대역 단어 수집 (X순)
+          let cands = ws
+            .filter(w => Math.abs(w.yCenter - ew.yCenter) <= tol && w.xMin >= ew.xMax - 3)
+            .sort((a, b) => a.xMin - b.xMin);
+          // 라벨 연장 건너뛰기: "(성명)", ":", "자(성명)" 등
+          const isLP = (t: string) =>
+            /^[\(\)（）:：·]+$/.test(t) ||
+            /^\(?(성명|단체명|법인명)\)?$/.test(t) ||
+            /^자\(?(성명)?\)?[：:]*$/.test(t);
+          while (cands.length && isLP(cands[0].text)) cands = cands.slice(1);
+          // 정지 라벨(오른쪽 컬럼)까지 값 수집
+          const vals: WP[] = [];
+          for (const w of cands) {
+            if (stops.some(s => w.text.includes(s))) break;
+            vals.push(w);
+          }
+          // 스마트 조인: 단어 간격이 넓으면 공백 삽입
+          let r = '';
+          for (let i = 0; i < vals.length; i++) {
+            if (i > 0) { const gap = vals[i].xMin - vals[i-1].xMax; r += gap > vals[i-1].h * 0.7 ? ' ' : ''; }
+            r += vals[i].text;
+          }
+          return r.replace(/^[\s:：]+/,'').replace(/[\s:：]+$/,'').trim();
+        };
+
+        spVal.bizName = spGet(['법인명', '상호'], ['개업', '연월일']);
+        spVal.rep = spGet(['대표자', '대표'], ['법인등록', '등록번호']);
+      }
+
       // 키워드 뒤 값 추출 (정확 매칭 → 유연 매칭 fallback)
       const findValue = (keywords: string[], fromLines = normLines) => {
         // 1차: 정확 매칭
@@ -270,16 +386,18 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       }
       const bizNoClean = bizNo.replace(/[-–—]/g, '');
       if (bizNoClean.length === 10 && /^\d+$/.test(bizNoClean)) {
-        bizNo = `${bizNoClean.slice(0,3)}-${bizNoClean.slice(3,5)}-${bizNoClean.slice(5)}`;
+        bizNo = bizNoClean;
       }
 
       // ── 2. 법인명(단체명) / 상호 ──
-      let bizName = findValue(['법인명(단체명)', '법인명(단체명)', '단체명)']);
+      let bizName = spVal.bizName || '';
+      if (!bizName) bizName = findValue(['법인명(단체명)', '법인명(단체명)', '단체명)']);
       if (!bizName) bizName = findValue(['상호(법인명)', '상호(법인명)']);
       if (!bizName) bizName = findValue(['법인명', '상호']);
       if (bizName) {
         bizName = bizName.replace(/(표?개업연월일|법인등록번호|대표자|성명|사업장|소재지|업태|종목|사업의종류).*$/, '').trim();
         bizName = bizName.replace(/[\s:：]+$/, '').trim();
+        bizName = bizName.replace(/nts\.go\.kr/gi, '').replace(/[A-Z]{10,}/g, '').trim();
         bizName = bizName.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
         // 법인명이 끊긴 경우 다음 줄 이어붙이기 (키워드가 아닌 짧은 텍스트)
         const bizNameLineIdx = normLines.findIndex(l => l.includes(bizName!));
@@ -293,7 +411,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       }
 
       // ── 3. 대표자(성명) ──
-      let rep = findValue(['대표자(성명)', '대표자(성명)']);
+      let rep = spVal.rep || '';
+      if (!rep) rep = findValue(['대표자(성명)', '대표자(성명)']);
       if (!rep) rep = findValue(['대표자', '성명)']);
       if (!rep) {
         for (let i = 0; i < normLines.length; i++) {
@@ -326,19 +445,26 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           }
         }
       }
-      // fallback 2: OCR이 "대표자"를 쪼개 "자 : 이름" 패턴이 된 경우
+      // fallback 2: OCR이 "대표자"를 쪼개 "표자 : 이름" 또는 "자 : 이름" 패턴이 된 경우
       if (!rep) {
         for (let i = 0; i < normLines.length; i++) {
           const line = normLines[i];
-          const m = line.match(/^자[\s:：]+(.+)/);
+          const m = line.match(/^표?자[\s:：]+(.+)/);
           if (m && i > 0) {
             const prev = normLines.slice(Math.max(0, i - 3), i).join('');
-            if (prev.match(/대표|법대/) || prev.endsWith('대') || prev.endsWith('표')) {
+            if (prev.match(/대표|법대|표/) || prev.endsWith('대') || prev.endsWith('표')) {
               rep = m[1].trim();
               rep = rep.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의).*$/, '').trim();
               break;
             }
           }
+        }
+      }
+      // fallback 3: "대표" 뒤에 콜론+이름 (자가 별도 줄로 분리되어 "대표: 유석진" 형태)
+      if (!rep) {
+        for (const line of normLines) {
+          const m = line.match(/대표(?:자)?[\s]*[（\(\)）성명:：]+[\s]*([가-힣]{2,5})\s*$/);
+          if (m) { rep = m[1]; break; }
         }
       }
       if (rep) {
@@ -363,7 +489,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       }
       const corpNoClean = corpNo.replace(/[-–—]/g, '');
       if (corpNoClean.length === 13 && /^\d+$/.test(corpNoClean)) {
-        corpNo = `${corpNoClean.slice(0,6)}-${corpNoClean.slice(6)}`;
+        corpNo = corpNoClean;
       }
 
       // ── 5. 사업장 소재지 ──
@@ -420,13 +546,13 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       // 업태/종목 워터마크 노이즈 제거
       const cleanOcrNoise = (s: string) => s
         .replace(/\d{5,}/g, '')           // "525252525" 워터마크
-        .replace(/[A-Z]{2,}/g, '')        // "NATIONAL", "TAX", "SERVICE", "REPUBLIC", "OF", "KOREA"
+        .replace(/[A-Z]+/g, '')           // "NATIONAL", "TAX", "C" 등 모든 영문 대문자 노이즈
         .replace(/nts\.go\.kr/gi, '')     // 국세청 URL
         .replace(/\s{2,}/g, ' ').replace(/[,\s]+$/,'').replace(/^[,\s]+/,'').trim();
       if (sector) sector = cleanOcrNoise(sector);
       if (bType) bType = cleanOcrNoise(bType);
       // 업태/종목 중복 제거
-      const dedup = (s: string) => [...new Set(s.split(',').map(v => v.trim()).filter(Boolean))].join(', ');
+      const dedup = (s: string) => [...new Set(s.split(',').map(v => v.trim()).filter(v => v && v.length > 1))].join(', ');
       if (sector) sector = dedup(sector);
       if (bType) bType = dedup(bType);
 
@@ -447,9 +573,9 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       const phonePattern = /(?:전화|TEL|Tel)\s*(?:번호)?[\s:：]*(\(?0\d{1,2}\)?[\s\-]?\d{3,4}[\s\-]?\d{4})/gi;
       const faxPattern = /(?:팩스|FAX|Fax)\s*(?:번호)?[\s:：]*(\(?0\d{1,2}\)?[\s\-]?\d{3,4}[\s\-]?\d{4})/gi;
       const phoneMatch = phonePattern.exec(normText);
-      if (phoneMatch) phone = phoneMatch[1].replace(/\s/g, '');
+      if (phoneMatch) phone = phoneMatch[1].replace(/[^0-9]/g, '');
       const faxMatch = faxPattern.exec(normText);
-      if (faxMatch) fax = faxMatch[1].replace(/\s/g, '');
+      if (faxMatch) fax = faxMatch[1].replace(/[^0-9]/g, '');
 
       // ── 폼 데이터 자동 입력 (주소는 임시 상태에 저장) ──
       if (bizAddr) setOcrBizAddr(bizAddr);
@@ -556,47 +682,48 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       const wordAnnotations = (json.responses?.[0]?.textAnnotations || []).slice(1);
       if (!fullText) { alert('텍스트를 인식하지 못했습니다.'); return; }
 
-      // ── 바운딩박스 기반 라인 재구성 (Y좌표 기준 정렬) ──
-      let ocrLines: { text: string; yCenter: number }[] = [];
-      if (wordAnnotations.length > 0) {
-        const items = wordAnnotations.map((a: any) => {
-          const verts = a.boundingPoly?.vertices || [];
-          const ys = verts.map((v: any) => v.y || 0);
-          const yMin = Math.min(...ys); const yMax = Math.max(...ys);
-          const xs = verts.map((v: any) => v.x || 0);
-          return { text: a.description || '', yCenter: (yMin + yMax) / 2, height: yMax - yMin, xMin: Math.min(...xs) };
-        }).filter((it: any) => it.text.trim());
-        if (items.length > 0) {
-          const avgH = items.reduce((s: number, it: any) => s + it.height, 0) / items.length;
-          const tol = avgH * 0.4;
-          items.sort((a: any, b: any) => a.yCenter - b.yCenter);
-          const groups: any[][] = []; let cur = [items[0]];
-          for (let i = 1; i < items.length; i++) {
-            const lineY = cur.reduce((s: number, it: any) => s + it.yCenter, 0) / cur.length;
-            if (Math.abs(items[i].yCenter - lineY) <= tol) cur.push(items[i]); else { groups.push(cur); cur = [items[i]]; }
-          }
-          groups.push(cur);
-          ocrLines = groups.map(g => {
-            g.sort((a: any, b: any) => a.xMin - b.xMin);
-            return { text: g.map((it: any) => it.text).join(' '), yCenter: g.reduce((s: number, it: any) => s + it.yCenter, 0) / g.length };
-          });
-        }
-      }
-      if (ocrLines.length === 0) {
-        ocrLines = fullText.split('\n').map((l: string, i: number) => ({ text: l.trim(), yCenter: i * 30 })).filter(l => l.text);
-      }
-
-      // ── 추출: 맨 위 = 예금주, 그 아래 = 계좌번호, 은행명 = 유사도 매칭 ──
       let accountHolder = '';
       let accountNumber = '';
       let bankName = '';
 
-      // 1. 계좌번호 먼저 찾기 (숫자-하이픈 패턴)
+      // ── 바운딩박스 기반 라인 재구성 (Y좌표 기준 정렬) ──
+      type WI = { text: string; xMin: number; height: number; yCenter: number };
+      const allWords: WI[] = [];
+      let ocrLines: { text: string; yCenter: number; words: WI[] }[] = [];
+      if (wordAnnotations.length > 0) {
+        const items: WI[] = wordAnnotations.map((a: any) => {
+          const verts = a.boundingPoly?.vertices || [];
+          const ys = verts.map((v: any) => v.y || 0);
+          const xs = verts.map((v: any) => v.x || 0);
+          return { text: (a.description || '').trim(), yCenter: (Math.min(...ys) + Math.max(...ys)) / 2, height: Math.max(...ys) - Math.min(...ys), xMin: Math.min(...xs) };
+        }).filter((it: WI) => it.text);
+        allWords.push(...items);
+        if (items.length > 0) {
+          const avgH = items.reduce((s, it) => s + it.height, 0) / items.length;
+          const tol = avgH * 0.4;
+          items.sort((a, b) => a.yCenter - b.yCenter);
+          const groups: WI[][] = []; let cur = [items[0]];
+          for (let i = 1; i < items.length; i++) {
+            const lineY = cur.reduce((s, it) => s + it.yCenter, 0) / cur.length;
+            if (Math.abs(items[i].yCenter - lineY) <= tol) cur.push(items[i]); else { groups.push(cur); cur = [items[i]]; }
+          }
+          groups.push(cur);
+          ocrLines = groups.map(g => {
+            g.sort((a, b) => a.xMin - b.xMin);
+            return { text: g.map(it => it.text).join(' '), yCenter: g.reduce((s, it) => s + it.yCenter, 0) / g.length, words: g };
+          });
+        }
+      }
+      if (ocrLines.length === 0) {
+        ocrLines = fullText.split('\n').map((l: string, i: number) => ({ text: l.trim(), yCenter: i * 30, words: [] as WI[] })).filter(l => l.text);
+      }
+
+      // ── 1. 계좌번호 (기존 방식: 라인 순회) ──
       let acctLineIdx = -1;
       for (let i = 0; i < ocrLines.length; i++) {
         const t = ocrLines[i].text;
         const m = t.match(/(\d{2,4}[-\s]\d{2,6}[-\s]\d{2,6}[-\s]?\d{0,4})/);
-        if (m && m[1].replace(/[-\s]/g, '').length >= 10) { accountNumber = m[1].replace(/\s/g, ''); acctLineIdx = i; break; }
+        if (m && m[1].replace(/[-\s]/g, '').length >= 10) { accountNumber = m[1].replace(/[-\s]/g, ''); acctLineIdx = i; break; }
       }
       if (!accountNumber) {
         for (let i = 0; i < ocrLines.length; i++) {
@@ -605,38 +732,55 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         }
       }
 
-      // 2. 예금주: "예금주" 키워드 뒤 값 또는 계좌번호 바로 위 줄 전체
-      // 통장사본 구조: 맨 위 = 예금주명(개인명 or 법인명), 그 아래 = 계좌번호
+      // ── 2. 예금주 (기존 방식: 계좌번호 위쪽 줄) + 크기 기반 노이즈 제거 ──
+      // 2a: "예금주" 키워드
       for (const line of ocrLines) {
         if (line.text.includes('예금주') || line.text.includes('성명') || line.text.includes('이름')) {
           const m = line.text.match(/(?:예금주|성명|이름)[\s:：]*(.+)/);
           if (m) { accountHolder = m[1].replace(/[\s:：]+$/, '').trim(); break; }
         }
       }
+      // 2b: 계좌번호 바로 위 한글 줄
       if (!accountHolder && acctLineIdx > 0) {
-        // 계좌번호 위쪽 줄 역순으로 탐색 → 한글 포함된 첫 줄 = 예금주
         for (let i = acctLineIdx - 1; i >= 0; i--) {
           const t = ocrLines[i].text.trim();
-          if (t.length < 2 || /^[\d\-\s\.,:]+$/.test(t)) continue; // 숫자/기호만 건너뛰기
+          if (t.length < 2 || /^[\d\-\s\.,:]+$/.test(t)) continue;
           if (/[가-힣]/.test(t)) {
-            // 괄호 정리 + 불필요 접미사 제거
             accountHolder = t.replace(/（/g, '(').replace(/）/g, ')').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\s+/g, ' ').trim();
             break;
           }
         }
       }
+      // 2c: 전체 상위 5줄에서 한글 포함 줄 (fallback)
       if (!accountHolder) {
-        // 전체 상위 5줄에서 한글 포함 줄
         for (const line of ocrLines.slice(0, 5)) {
           const t = line.text.trim();
           if (t.length >= 2 && /[가-힣]/.test(t) && !/^[\d\-\s]+$/.test(t) && !matchBankName(t)) {
-            accountHolder = t.replace(/\s+/g, ' ').trim();
-            break;
+            accountHolder = t.replace(/\s+/g, ' ').trim(); break;
           }
         }
       }
 
-      // 3. 은행명: 전체 텍스트에서 유사도 매칭
+      // ── 2d: 예금주 라인에서 크기 기반 노이즈 제거 (작은 글씨 "님/펌" 등 제거) ──
+      if (accountHolder && allWords.length > 0) {
+        // 예금주를 찾은 라인의 words 가져오기
+        const holderLine = ocrLines.find(l => l.text.includes(accountHolder.split(' ')[0]));
+        if (holderLine && holderLine.words.length > 1) {
+          const lineMaxH = Math.max(...holderLine.words.map(w => w.height));
+          // 라인 내 최대 높이의 50% 미만인 단어 제거 (작고 흐린 글씨)
+          const bigWords = holderLine.words.filter(w => w.height >= lineMaxH * 0.5);
+          if (bigWords.length > 0) {
+            bigWords.sort((a, b) => a.xMin - b.xMin);
+            const refined = bigWords.map(w => w.text).join(' ')
+              .replace(/（/g, '(').replace(/）/g, ')').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')').replace(/\s+/g, ' ').trim();
+            if (/[가-힣]/.test(refined)) accountHolder = refined;
+          }
+        }
+      }
+      // 경칭 접미사 제거 (safety net)
+      accountHolder = accountHolder.replace(/\s*(님|귀하|귀중|씨|펌|殿|様)\s*$/, '').trim();
+
+      // ── 3. 은행명 (기존 방식) ──
       const allText = ocrLines.map(l => l.text).join(' ');
       bankName = matchBankName(allText);
 
@@ -918,8 +1062,10 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
     const matchesRole = filterRole === 'ALL' || s.roles.includes(filterRole);
 
     // 검색어 필터
+    const searchDigits = searchTerm.replace(/[^0-9]/g, '');
     const matchesSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          s.contact.phone.includes(searchTerm);
+                          (searchDigits ? s.contact.phone.includes(searchDigits) : false) ||
+                          formatPhoneNumber(s.contact.phone).includes(searchTerm);
 
     // 개인 타입 필터 (체크박스 미선택 시 개인 제외)
     const matchesIndividualFilter = showIndividuals || s.type !== 'INDIVIDUAL';
@@ -1209,7 +1355,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
     const esc = (v: string) => (v.includes(',') || v.includes('"') || v.includes('\n')) ? '"' + v.replace(/"/g, '""') + '"' : v;
     const rows = filtered.map(s => {
       const a = s.bankAccounts?.[0];
-      return [s.name, typeMap[s.type]||s.type, s.roles.map(r=>roleMap[r]||r).join('/'), s.contact?.phone||'', s.contact?.email||'', s.contact?.address||'', s.contact?.addressDetail||'', s.contact?.postalCode||'', s.businessRegistrationNumber||'', s.registrationNumber||'', s.representative||'', s.businessSector||'', s.businessType||'', a?.bankName||'', a?.accountNumber||'', a?.accountHolder||''].map(v=>esc(v));
+      return [s.name, typeMap[s.type]||s.type, s.roles.map(r=>roleMap[r]||r).join('/'), formatPhoneNumber(s.contact?.phone||''), s.contact?.email||'', s.contact?.address||'', s.contact?.addressDetail||'', s.contact?.postalCode||'', fmtBizRegNo(s.businessRegistrationNumber||''), fmtCorpRegNo(s.registrationNumber||''), s.representative||'', s.businessSector||'', s.businessType||'', a?.bankName||'', a?.accountNumber||'', a?.accountHolder||''].map(v=>esc(v));
     });
     const csv = '\uFEFF' + headers.join(',') + '\n' + rows.map(r=>r.join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -1267,9 +1413,9 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           id: `sh${Date.now()}_${i}`, name,
           type: typeRev[g('type')] || 'INDIVIDUAL',
           roles: [roleRev[g('roles')] || 'TENANT'],
-          registrationNumber: '', businessRegistrationNumber: g('regNum'),
+          registrationNumber: '', businessRegistrationNumber: g('regNum').replace(/[^0-9]/g, ''),
           representative: g('representative'),
-          contact: { phone: g('phone', 1), email: g('email'), address: g('address') }
+          contact: { phone: g('phone', 1).replace(/[^0-9]/g, ''), email: g('email'), address: g('address') }
         });
       }
       if (newSh.length === 0) { return alert('유효한 데이터가 없습니다.'); }
@@ -1502,7 +1648,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    <div>
                       <label className="text-xs font-bold text-gray-400 block mb-1.5">사업자등록번호 <span className="text-red-500">*</span></label>
                       <div className="flex gap-2">
-                        <input className="flex-1 border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.businessRegistrationNumber} onChange={e => { setFormData({...formData, businessRegistrationNumber: e.target.value}); setBizStatusResult(null); setBizStatusError(''); }} placeholder="000-00-00000" />
+                        <input className="flex-1 border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold font-mono" value={fmtBizRegNo(formData.businessRegistrationNumber || '')} onChange={e => { setFormData({...formData, businessRegistrationNumber: digitsOnly(e.target.value).slice(0, 10)}); setBizStatusResult(null); setBizStatusError(''); }} placeholder="000-00-00000" maxLength={12} />
                         <button type="button" onClick={handleCheckBizStatus} disabled={isBizStatusLoading} className={`px-3 py-2 text-xs font-bold rounded-lg whitespace-nowrap transition-colors ${isBizStatusLoading ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-[#1a73e8] text-white hover:bg-[#1557b0]'}`}>
                           {isBizStatusLoading ? '조회중...' : '조회'}
                         </button>
@@ -1521,7 +1667,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                    {formData.type === 'CORPORATE' && (
                      <div>
                         <label className="text-xs font-bold text-gray-400 block mb-1.5">법인등록번호</label>
-                        <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.registrationNumber} onChange={e => setFormData({...formData, registrationNumber: e.target.value})} placeholder="000000-0000000" />
+                        <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold font-mono" value={fmtCorpRegNo(formData.registrationNumber || '')} onChange={e => setFormData({...formData, registrationNumber: digitsOnly(e.target.value).slice(0, 13)})} placeholder="000000-0000000" maxLength={14} />
                      </div>
                    )}
                    <div>
@@ -1852,7 +1998,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                <div>
                  <label className="text-xs font-bold text-gray-400 block mb-1.5">연락처 (대표 번호) <span className="text-red-500">*</span></label>
                  <div className="relative">
-                   <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formData.contact?.phone} onChange={e => setFormData({...formData, contact: {...formData.contact!, phone: formatPhoneNumber(e.target.value)}})} placeholder="010-0000-0000" maxLength={15} />
+                   <input className="w-full border border-gray-200 bg-white text-gray-900 p-3 rounded-lg focus:ring-2 focus:ring-[#1a73e8] outline-none font-bold" value={formatPhoneNumber(formData.contact?.phone || '')} onChange={e => setFormData({...formData, contact: {...formData.contact!, phone: digitsOnly(e.target.value)}})} placeholder="010-0000-0000" maxLength={15} />
                    {formData.contact?.phone && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1.5 py-0.5 rounded">{getPhoneType(formData.contact.phone)}</span>}
                  </div>
                </div>
@@ -1879,10 +2025,10 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                          <input
                            className="w-full border border-gray-200 bg-white p-2 rounded text-sm font-bold"
                            placeholder="010-0000-0000"
-                           value={ac.phone}
+                           value={formatPhoneNumber(ac.phone || '')}
                            onChange={e => {
                              const updated = [...(formData.additionalContacts || [])];
-                             updated[idx] = {...ac, phone: formatPhoneNumber(e.target.value)};
+                             updated[idx] = {...ac, phone: digitsOnly(e.target.value)};
                              setFormData({...formData, additionalContacts: updated});
                            }}
                            maxLength={15}
@@ -2336,12 +2482,12 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                              {KOREAN_BANKS.map(bn => <option key={bn} value={bn}>{bn}</option>)}
                            </select>
                            <input
-                             className="flex-1 border border-gray-200 bg-white p-2 rounded text-sm"
+                             className="flex-1 border border-gray-200 bg-white p-2 rounded text-sm font-mono"
                              placeholder="계좌번호"
                              value={account.accountNumber}
                              onChange={e => {
                                const updated = [...(formData.bankAccounts || [])];
-                               updated[idx] = {...account, accountNumber: e.target.value};
+                               updated[idx] = {...account, accountNumber: digitsOnly(e.target.value)};
                                setFormData({...formData, bankAccounts: updated});
                              }}
                            />
@@ -2687,12 +2833,12 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2 text-sm">
                       <Phone size={14} className="text-gray-300"/>
-                      <a href={`tel:${vp.contact.phone}`} className="font-bold text-gray-800 hover:text-[#1a73e8]">{vp.contact.phone}</a>
+                      <a href={`tel:${vp.contact.phone}`} className="font-bold text-gray-800 hover:text-[#1a73e8]">{formatPhoneNumber(vp.contact.phone)}</a>
                       <span className="text-[9px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1.5 py-0.5 rounded">{getPhoneType(vp.contact.phone)}</span>
                     </div>
                     {vp.additionalContacts && vp.additionalContacts.map((ac, idx) => (
                       <div key={idx} className="flex items-center gap-2 text-sm pl-5">
-                        <a href={`tel:${ac.phone}`} className="text-gray-600 hover:text-[#1a73e8]">{ac.label ? `${ac.label}: ` : ''}{ac.phone}</a>
+                        <a href={`tel:${ac.phone}`} className="text-gray-600 hover:text-[#1a73e8]">{ac.label ? `${ac.label}: ` : ''}{formatPhoneNumber(ac.phone)}</a>
                         <span className="text-[8px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1 py-0.5 rounded">{getPhoneType(ac.phone)}</span>
                       </div>
                     ))}
@@ -2726,8 +2872,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
                     <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">사업자 정보</h4>
                     <div className="text-sm text-gray-700 space-y-1">
                       {vp.representative && <p>대표자: <span className="font-bold">{vp.representative}</span></p>}
-                      {vp.businessRegistrationNumber && <p>사업자등록번호: <span className="font-mono">{vp.businessRegistrationNumber}</span></p>}
-                      {vp.registrationNumber && vp.type === 'CORPORATE' && <p>법인등록번호: <span className="font-mono">{vp.registrationNumber}</span></p>}
+                      {vp.businessRegistrationNumber && <p>사업자등록번호: <span className="font-mono">{fmtBizRegNo(vp.businessRegistrationNumber)}</span></p>}
+                      {vp.registrationNumber && vp.type === 'CORPORATE' && <p>법인등록번호: <span className="font-mono">{fmtCorpRegNo(vp.registrationNumber)}</span></p>}
                     </div>
                   </div>
                 )}
@@ -2960,7 +3106,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
               {/* 연락처 + 이메일 */}
               <div className="flex items-center gap-1.5">
                 <Phone size={12} className="md:w-3.5 md:h-3.5 text-gray-300 flex-shrink-0"/>
-                <a href={`tel:${person.contact.phone}`} className="font-bold text-gray-700 hover:text-[#1a73e8]">{person.contact.phone}</a>
+                <a href={`tel:${person.contact.phone}`} className="font-bold text-gray-700 hover:text-[#1a73e8]">{formatPhoneNumber(person.contact.phone)}</a>
                 <span className="text-[8px] font-bold text-[#5f6368] bg-[#e8f0fe] px-1 py-0.5 rounded">{getPhoneType(person.contact.phone)}</span>
                 {person.additionalContacts && person.additionalContacts.length > 0 && (
                   <span className="text-[8px] text-gray-400">+{person.additionalContacts.length}</span>

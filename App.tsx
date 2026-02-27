@@ -100,6 +100,23 @@ import {
   INIT_VALUATIONS, INIT_COMPARABLES, INIT_FACILITIES, INIT_FACILITY_LOGS
 } from './dummyData';
 
+// 전화번호 포맷 유틸
+const digitsOnly = (s: string) => (s || '').replace(/[^0-9]/g, '');
+const fmtPhone = (v: string): string => {
+  const d = digitsOnly(v);
+  if (d.startsWith('010') || d.startsWith('011') || d.startsWith('016') || d.startsWith('017') || d.startsWith('018') || d.startsWith('019')) {
+    if (d.length <= 3) return d; if (d.length <= 7) return `${d.slice(0,3)}-${d.slice(3)}`; return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7,11)}`;
+  }
+  if (d.startsWith('02')) {
+    if (d.length <= 2) return d; if (d.length <= 5) return `${d.slice(0,2)}-${d.slice(2)}`; if (d.length <= 9) return `${d.slice(0,2)}-${d.slice(2,d.length-4)}-${d.slice(d.length-4)}`; return `${d.slice(0,2)}-${d.slice(2,6)}-${d.slice(6,10)}`;
+  }
+  if (d.length >= 3 && /^0[3-6][0-9]/.test(d)) {
+    if (d.length <= 3) return d; if (d.length <= 6) return `${d.slice(0,3)}-${d.slice(3)}`; if (d.length <= 10) return `${d.slice(0,3)}-${d.slice(3,d.length-4)}-${d.slice(d.length-4)}`; return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7,11)}`;
+  }
+  if (/^1[0-9]{3}/.test(d)) { if (d.length <= 4) return d; return `${d.slice(0,4)}-${d.slice(4,8)}`; }
+  return d;
+};
+
 function App() {
   const [activeTab, setActiveTab] = useState('DASHBOARD');
   const [currencyUnit, setCurrencyUnit] = useState<MoneyUnit>('WON');
@@ -804,11 +821,11 @@ function App() {
                       </div>
                       <div>
                         <label className="text-xs font-bold text-[#5f6368] mb-1 block">대표 전화</label>
-                        <input value={editCompany.phone || ''} onChange={e => setEditCompany(p => ({...p, phone: e.target.value}))} placeholder="02-0000-0000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                        <input value={fmtPhone(editCompany.phone || '')} onChange={e => setEditCompany(p => ({...p, phone: digitsOnly(e.target.value)}))} placeholder="02-0000-0000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
                       </div>
                       <div>
                         <label className="text-xs font-bold text-[#5f6368] mb-1 block">팩스</label>
-                        <input value={editCompany.faxNumber || ''} onChange={e => setEditCompany(p => ({...p, faxNumber: e.target.value}))} className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
+                        <input value={fmtPhone(editCompany.faxNumber || '')} onChange={e => setEditCompany(p => ({...p, faxNumber: digitsOnly(e.target.value)}))} placeholder="02-0000-0000" className="w-full border border-[#dadce0] rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#1a73e8] outline-none"/>
                       </div>
                       <div>
                         <label className="text-xs font-bold text-[#5f6368] mb-1 block">이메일</label>

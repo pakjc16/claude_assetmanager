@@ -154,9 +154,9 @@ async function fetchElevatorFullData(elevatorNo: string, apiKey: string, refDate
       frstInstallationDe: formatApiDate(v('frstInstallationDe')),
       installationDe: formatApiDate(v('installationDe')),
       partcpntNm: v('partcpntNm'),
-      partcpntTelno: v('partcpntTelno'),
+      partcpntTelno: v('partcpntTelno').replace(/[^0-9]/g, ''),
       mntCpnyNm: v('mntCpnyNm'),
-      mntCpnyTelno: v('mntCpnyTelno'),
+      mntCpnyTelno: v('mntCpnyTelno').replace(/[^0-9]/g, ''),
       subcntrCpny: v('subcntrCpny'),
       inspctInstt: v('inspctInstt'),
     };
@@ -490,6 +490,17 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
   onDeleteElevatorMalfunction, onDeleteElevatorAccident, onDeleteElevatorPartDefect, onDeleteElevatorMaintenanceContract,
   formatMoney, formatMoneyInput, parseMoneyInput, apiKey, referenceDate
 }) => {
+  // 전화번호 포맷 유틸
+  const digitsOnly = (s: string) => (s || '').replace(/[^0-9]/g, '');
+  const fmtPhone = (v: string): string => {
+    const d = digitsOnly(v);
+    if (/^01[016789]/.test(d)) { if (d.length <= 3) return d; if (d.length <= 7) return `${d.slice(0,3)}-${d.slice(3)}`; return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7,11)}`; }
+    if (d.startsWith('02')) { if (d.length <= 2) return d; if (d.length <= 5) return `${d.slice(0,2)}-${d.slice(2)}`; if (d.length <= 9) return `${d.slice(0,2)}-${d.slice(2,d.length-4)}-${d.slice(d.length-4)}`; return `${d.slice(0,2)}-${d.slice(2,6)}-${d.slice(6,10)}`; }
+    if (d.length >= 3 && /^0[3-6][0-9]/.test(d)) { if (d.length <= 3) return d; if (d.length <= 6) return `${d.slice(0,3)}-${d.slice(3)}`; if (d.length <= 10) return `${d.slice(0,3)}-${d.slice(3,d.length-4)}-${d.slice(d.length-4)}`; return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7,11)}`; }
+    if (/^1[0-9]{3}/.test(d)) { if (d.length <= 4) return d; return `${d.slice(0,4)}-${d.slice(4,8)}`; }
+    return d;
+  };
+
   const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLogHistoryOpen, setIsLogHistoryOpen] = useState(false);
@@ -1276,13 +1287,13 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
                                     <td className="bg-gray-50 p-2 md:p-3 font-bold text-gray-600">관리주체</td>
                                     <td className="p-2 md:p-3"><input className="w-full border border-gray-300 p-1.5 md:p-2 rounded text-xs md:text-sm" value={elevatorInfo.partcpntNm || ''} onChange={e => setElevatorInfo({...elevatorInfo, partcpntNm: e.target.value})}/></td>
                                     <td className="bg-gray-50 p-2 md:p-3 font-bold text-gray-600">관리주체 연락처</td>
-                                    <td className="p-2 md:p-3"><input className="w-full border border-gray-300 p-1.5 md:p-2 rounded text-xs md:text-sm" value={elevatorInfo.partcpntTelno || ''} onChange={e => setElevatorInfo({...elevatorInfo, partcpntTelno: e.target.value})}/></td>
+                                    <td className="p-2 md:p-3"><input className="w-full border border-gray-300 p-1.5 md:p-2 rounded text-xs md:text-sm" value={fmtPhone(elevatorInfo.partcpntTelno || '')} onChange={e => setElevatorInfo({...elevatorInfo, partcpntTelno: digitsOnly(e.target.value)})}/></td>
                                  </tr>
                                  <tr className="border-b border-gray-100">
                                     <td className="bg-gray-50 p-2 md:p-3 font-bold text-gray-600">유지관리업체</td>
                                     <td className="p-2 md:p-3"><input className="w-full border border-gray-300 p-1.5 md:p-2 rounded text-xs md:text-sm" value={elevatorInfo.mntCpnyNm || ''} onChange={e => setElevatorInfo({...elevatorInfo, mntCpnyNm: e.target.value})}/></td>
                                     <td className="bg-gray-50 p-2 md:p-3 font-bold text-gray-600">유지관리업체 연락처</td>
-                                    <td className="p-2 md:p-3"><input className="w-full border border-gray-300 p-1.5 md:p-2 rounded text-xs md:text-sm" value={elevatorInfo.mntCpnyTelno || ''} onChange={e => setElevatorInfo({...elevatorInfo, mntCpnyTelno: e.target.value})}/></td>
+                                    <td className="p-2 md:p-3"><input className="w-full border border-gray-300 p-1.5 md:p-2 rounded text-xs md:text-sm" value={fmtPhone(elevatorInfo.mntCpnyTelno || '')} onChange={e => setElevatorInfo({...elevatorInfo, mntCpnyTelno: digitsOnly(e.target.value)})}/></td>
                                  </tr>
                                  <tr>
                                     <td className="bg-gray-50 p-2 md:p-3 font-bold text-gray-600">하도급업체</td>

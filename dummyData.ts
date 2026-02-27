@@ -11,75 +11,75 @@ export const INIT_STAKEHOLDERS: Stakeholder[] = [
   // 임대인 (소유자)
   {
     id: 'sh_owner1', name: '박정우', type: 'INDIVIDUAL', roles: ['LANDLORD'],
-    registrationNumber: '850315-1******',
-    contact: { phone: '010-9876-5432', email: 'jw.park@gmail.com', address: '서울특별시 서초구 반포대로 58' },
-    bankAccounts: [{ bankName: '국민은행', accountNumber: '123-45-6789012', accountHolder: '박정우' }],
+    registrationNumber: '8503151******',
+    contact: { phone: '01098765432', email: 'jw.park@gmail.com', address: '서울특별시 서초구 반포대로 58' },
+    bankAccounts: [{ bankName: '국민은행', accountNumber: '123456789012', accountHolder: '박정우' }],
   },
   // 법인 임대인
   {
     id: 'sh_owner2', name: '(주)한성개발', type: 'CORPORATE', roles: ['LANDLORD'],
-    registrationNumber: '110-81-34567', representative: '김한성',
-    contact: { phone: '02-555-1234', email: 'info@hansung.co.kr', address: '서울특별시 중구 을지로 100' },
-    bankAccounts: [{ bankName: '신한은행', accountNumber: '110-321-456789', accountHolder: '(주)한성개발' }],
+    registrationNumber: '1108134567', representative: '김한성',
+    contact: { phone: '025551234', email: 'info@hansung.co.kr', address: '서울특별시 중구 을지로 100' },
+    bankAccounts: [{ bankName: '신한은행', accountNumber: '110321456789', accountHolder: '(주)한성개발' }],
     taxInvoiceAddress: 'hansung@tax.co.kr',
   },
   // 임차인 - 법인
   {
     id: 'sh_tenant1', name: '(주)미래전자', type: 'CORPORATE', roles: ['TENANT'],
-    registrationNumber: '110-81-00001', representative: '이건희',
-    contact: { phone: '02-1234-5678', email: 'biz@mirae.com', address: '서울특별시 강남구 테헤란로 123' },
+    registrationNumber: '1108100001', representative: '이건희',
+    contact: { phone: '0212345678', email: 'biz@mirae.com', address: '서울특별시 강남구 테헤란로 123' },
   },
   {
     id: 'sh_tenant2', name: '세종법률사무소', type: 'CORPORATE', roles: ['TENANT'],
-    registrationNumber: '110-81-22222', representative: '최세종',
-    contact: { phone: '02-3456-7890', email: 'sejong@lawfirm.co.kr' },
+    registrationNumber: '1108122222', representative: '최세종',
+    contact: { phone: '0234567890', email: 'sejong@lawfirm.co.kr' },
   },
   {
     id: 'sh_tenant3', name: '카페 블루보틀', type: 'SOLE_PROPRIETOR', roles: ['TENANT'],
-    registrationNumber: '215-09-88888', representative: '김바리',
-    contact: { phone: '010-2222-3333', email: 'blue@cafe.com' },
+    registrationNumber: '2150988888', representative: '김바리',
+    contact: { phone: '01022223333', email: 'blue@cafe.com' },
   },
   {
     id: 'sh_tenant4', name: '굿닥터 내과의원', type: 'SOLE_PROPRIETOR', roles: ['TENANT'],
-    registrationNumber: '215-90-11111', representative: '이의사',
-    contact: { phone: '02-111-2222', email: 'clinic@gooddr.com' },
+    registrationNumber: '2159011111', representative: '이의사',
+    contact: { phone: '021112222', email: 'clinic@gooddr.com' },
   },
   {
     id: 'sh_tenant5', name: '(주)디지털솔루션', type: 'CORPORATE', roles: ['TENANT'],
-    registrationNumber: '211-81-55555', representative: '정개발',
-    contact: { phone: '02-999-8888', email: 'info@digisol.co.kr' },
+    registrationNumber: '2118155555', representative: '정개발',
+    contact: { phone: '029998888', email: 'info@digisol.co.kr' },
   },
   // 관리회사
   {
     id: 'sh_manager1', name: '(주)리얼티프로', type: 'CORPORATE', roles: ['MANAGER'],
-    registrationNumber: '110-86-00001', representative: '박관리',
-    contact: { phone: '02-777-8888', email: 'pm@realty.com' },
+    registrationNumber: '1108600001', representative: '박관리',
+    contact: { phone: '027778888', email: 'pm@realty.com' },
   },
   // 협력업체
   {
     id: 'sh_vendor1', name: '오티스엘리베이터', type: 'CORPORATE', roles: ['VENDOR'],
-    registrationNumber: '113-81-12345',
-    contact: { phone: '1577-0603', email: 'service@otis.com' },
+    registrationNumber: '1138112345',
+    contact: { phone: '15770603', email: 'service@otis.com' },
   },
   {
     id: 'sh_vendor2', name: '에스원', type: 'CORPORATE', roles: ['VENDOR'],
-    registrationNumber: '211-81-99999',
-    contact: { phone: '1588-3112', email: 'security@s1.co.kr' },
+    registrationNumber: '2118199999',
+    contact: { phone: '15883112', email: 'security@s1.co.kr' },
   },
   {
     id: 'sh_vendor3', name: '(주)그린환경', type: 'CORPORATE', roles: ['VENDOR'],
-    registrationNumber: '120-81-77777',
-    contact: { phone: '02-444-5555', email: 'green@env.co.kr' },
+    registrationNumber: '1208177777',
+    contact: { phone: '024445555', email: 'green@env.co.kr' },
   },
   {
     id: 'sh_vendor4', name: '한국전기안전공사', type: 'CORPORATE', roles: ['VENDOR'],
-    registrationNumber: '120-82-11111',
-    contact: { phone: '1588-7500', email: 'kesco@kesco.or.kr' },
+    registrationNumber: '1208211111',
+    contact: { phone: '15887500', email: 'kesco@kesco.or.kr' },
   },
   {
     id: 'sh_vendor5', name: '(주)소방테크', type: 'CORPORATE', roles: ['VENDOR'],
-    registrationNumber: '130-81-33333',
-    contact: { phone: '02-666-7777', email: 'fire@firetech.co.kr' },
+    registrationNumber: '1308133333',
+    contact: { phone: '026667777', email: 'fire@firetech.co.kr' },
   },
 ];
 
