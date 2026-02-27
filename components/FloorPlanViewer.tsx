@@ -94,14 +94,22 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
   const [showDetectSettings, setShowDetectSettings] = useState(false);
   const [detectSettings, setDetectSettings] = useState({
     threshold: 127,        // 이진화 임계값 (0-255)
-    minArea: 0.005,        // 최소 영역 비율 (전체 대비) - 더 작은 영역도 감지
-    simplify: 0.001,       // 윤곽선 단순화 정도 - 더 정밀하게
+    minArea: 0.005,        // 최소 영역 비율 (전체 대비)
+    simplify: 0.003,       // 윤곽선 단순화 정도 (Douglas-Peucker)
     invertColors: false,   // 색상 반전 (검은 배경용)
     detectAll: true,       // 모든 윤곽선 감지 (기본 true)
-    detectMode: 'canny' as 'threshold' | 'canny' | 'adaptive',  // 감지 모드
+    detectMode: 'canny' as 'threshold' | 'canny' | 'adaptive',
     cannyLow: 50,          // Canny 엣지 감지 하한
     cannyHigh: 150,        // Canny 엣지 감지 상한
-    detectInternal: true   // 내부 공간도 감지
+    detectInternal: true,  // 내부 공간도 감지
+    // 전처리: 안내선/가느다란 선 제거
+    morphKernel: 5,        // 모폴로지 커널 크기 (3~15, 클수록 가는 선 제거)
+    // 후처리
+    postSimplify: true,    // 점 축소 (Visvalingam)
+    postOrthoSnap: true,   // 직교 스냅 (직선화)
+    postConvexHull: false, // 볼록 외곽선
+    simplifyRatio: 0.5,    // 점 축소 비율 (0.1~0.9, 높을수록 많이 제거)
+    orthoTolerance: 20,    // 직교 허용 각도 (5~45°)
   });
   const [detectedContours, setDetectedContours] = useState<ZonePoint[][]>([]);
 
@@ -515,7 +523,19 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
     }
   };
 
-  // 구역 전체 이동
+  // 구역 전체 이동 - Shift: 수평/수직 제한
+  const handleZoneDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
+    const evt = e.evt as DragEvent;
+    if (evt.shiftKey) {
+      const x = e.target.x();
+      const y = e.target.y();
+      if (Math.abs(x) >= Math.abs(y)) {
+        e.target.y(0);
+      } else {
+        e.target.x(0);
+      }
+    }
+  };
   const handleZoneDragEnd = (zoneId: string, e: Konva.KonvaEventObject<DragEvent>) => {
     const zone = currentZones.find(z => z.id === zoneId);
     if (!zone || !image) return;
@@ -682,17 +702,9 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
       let result: ReturnType<typeof polygonClipping.union>;
 
       if (mergeType === 'UNION') {
-        // 합집합: 모든 zone을 순차 병합
-        let accumulated = toClipPoly(zonesToMerge[0].points);
-        for (let i = 1; i < zonesToMerge.length; i++) {
-          const next = toClipPoly(zonesToMerge[i].points);
-          accumulated = polygonClipping.union(accumulated, next) as unknown as Poly;
-          if (Array.isArray(accumulated) && accumulated.length > 0 && Array.isArray(accumulated[0]) && Array.isArray(accumulated[0][0]) && Array.isArray(accumulated[0][0][0])) {
-            // MultiPolygon → 첫 번째 폴리곤만 사용
-            accumulated = (accumulated as unknown as Poly[])[0];
-          }
-        }
-        result = polygonClipping.union(accumulated, toClipPoly([]));
+        // 합집합: 가변인수로 모든 폴리곤 한번에 전달
+        const [first, ...rest] = zonesToMerge.map(z => toClipPoly(z.points));
+        result = polygonClipping.union(first, ...rest);
       } else if (mergeType === 'INTERSECTION') {
         result = polygonClipping.intersection(polyA, polyB);
       } else {
@@ -822,6 +834,141 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
   };
 
   // ========================================
+  // 자동감지 후처리 함수
+  // ========================================
+
+  // Visvalingam-Whyatt: 삼각형 면적 기반 점 축소 (토폴로지 보존)
+  // ratio: 0~1, 제거할 점의 비율 (0.5 = 절반 제거)
+  const visvalingamSimplify = (points: ZonePoint[], ratio: number): ZonePoint[] => {
+    if (points.length <= 4) return points;
+    const targetCount = Math.max(4, Math.round(points.length * (1 - ratio)));
+    if (points.length <= targetCount) return points;
+
+    // 삼각형 면적 계산 (부호 있는 면적의 절대값)
+    const triArea = (a: ZonePoint, b: ZonePoint, c: ZonePoint) =>
+      Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2;
+
+    // 이중 연결 리스트 구조
+    type Node = { pt: ZonePoint; prev: Node | null; next: Node | null; area: number; removed: boolean };
+    const nodes: Node[] = points.map(pt => ({ pt, prev: null, next: null, area: Infinity, removed: false }));
+    for (let i = 0; i < nodes.length; i++) {
+      nodes[i].prev = nodes[(i - 1 + nodes.length) % nodes.length];
+      nodes[i].next = nodes[(i + 1) % nodes.length];
+    }
+    // 면적 계산 (순환)
+    for (const n of nodes) {
+      n.area = triArea(n.prev!.pt, n.pt, n.next!.pt);
+    }
+
+    let remaining = nodes.length;
+    while (remaining > targetCount) {
+      // 최소 면적 노드 찾기
+      let minNode: Node | null = null;
+      let minArea = Infinity;
+      for (const n of nodes) {
+        if (!n.removed && n.area < minArea) {
+          minArea = n.area;
+          minNode = n;
+        }
+      }
+      if (!minNode) break;
+
+      // 제거
+      minNode.removed = true;
+      minNode.prev!.next = minNode.next;
+      minNode.next!.prev = minNode.prev;
+      remaining--;
+
+      // 인접 노드 면적 재계산 (제거된 면적보다 작으면 올림 - Visvalingam 특성)
+      if (remaining >= 3) {
+        const p = minNode.prev!;
+        const n = minNode.next!;
+        p.area = Math.max(triArea(p.prev!.pt, p.pt, p.next!.pt), minArea);
+        n.area = Math.max(triArea(n.prev!.pt, n.pt, n.next!.pt), minArea);
+      }
+    }
+
+    const result = nodes.filter(n => !n.removed).map(n => n.pt);
+    return result.length >= 3 ? result : points;
+  };
+
+  // 직교 스냅: 직선 도면에 맞게 변을 수평/수직으로 보정 + 돌기/일직선 제거
+  const orthoSnapAndClean = (points: ZonePoint[], toleranceDeg: number): ZonePoint[] => {
+    if (points.length < 3) return points;
+
+    // 1단계: 동일선상 + 미세 돌기 제거 (반복 3회)
+    let pts = [...points];
+    for (let pass = 0; pass < 3; pass++) {
+      const cleaned: ZonePoint[] = [];
+      const len = pts.length;
+      for (let i = 0; i < len; i++) {
+        const prev = pts[(i - 1 + len) % len];
+        const curr = pts[i];
+        const next = pts[(i + 1) % len];
+        const dx1 = curr.x - prev.x, dy1 = curr.y - prev.y;
+        const dx2 = next.x - curr.x, dy2 = next.y - curr.y;
+        const a1 = Math.atan2(dy1, dx1);
+        const a2 = Math.atan2(dy2, dx2);
+        let turn = Math.abs(a2 - a1) * (180 / Math.PI);
+        if (turn > 180) turn = 360 - turn;
+
+        // 거의 일직선 (turn < 8°) → 중간점 불필요
+        if (turn < 8) continue;
+
+        // 미세 돌기: 짧은 변 + 급격한 방향 전환
+        const edgeA = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+        const edgeB = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+        const totalPerimeter = pts.reduce((sum, p, idx) => {
+          const nx = pts[(idx + 1) % len];
+          return sum + Math.sqrt((nx.x - p.x) ** 2 + (nx.y - p.y) ** 2);
+        }, 0);
+        const shortThreshold = totalPerimeter * 0.03;
+        // 양쪽 변 모두 짧으면 돌기
+        if (edgeA < shortThreshold && edgeB < shortThreshold && turn > 30) continue;
+
+        cleaned.push(curr);
+      }
+      if (cleaned.length < 3 || cleaned.length === pts.length) break;
+      pts = cleaned;
+    }
+    if (pts.length < 3) return points;
+
+    // 2단계: 직교 스냅 (0°/90°/180°/270° 근처 변을 정확히 맞춤)
+    const tolRad = toleranceDeg * (Math.PI / 180);
+    const snapped = pts.map(p => ({ ...p }));
+    const len = snapped.length;
+
+    // 각 변의 주요 방향(수평/수직) 판별 후, 두 점 중 짧은 변 쪽 좌표를 맞춤
+    for (let i = 0; i < len; i++) {
+      const j = (i + 1) % len;
+      const dx = snapped[j].x - snapped[i].x;
+      const dy = snapped[j].y - snapped[i].y;
+      const angle = Math.atan2(dy, dx);
+
+      // 수평 (0° or 180°)
+      const hDiff = Math.abs(Math.abs(angle) - 0) < Math.abs(Math.abs(angle) - Math.PI / 2)
+        ? Math.min(Math.abs(angle), Math.abs(Math.abs(angle) - Math.PI))
+        : Infinity;
+      // 수직 (90° or -90°)
+      const vDiff = Math.min(Math.abs(Math.abs(angle) - Math.PI / 2), Infinity);
+
+      if (hDiff <= tolRad && hDiff <= vDiff) {
+        // 수평 스냅: y좌표 맞춤 (중간값)
+        const midY = (snapped[i].y + snapped[j].y) / 2;
+        snapped[i].y = midY;
+        snapped[j].y = midY;
+      } else if (vDiff <= tolRad && vDiff < hDiff) {
+        // 수직 스냅: x좌표 맞춤 (중간값)
+        const midX = (snapped[i].x + snapped[j].x) / 2;
+        snapped[i].x = midX;
+        snapped[j].x = midX;
+      }
+    }
+
+    return snapped;
+  };
+
+  // ========================================
   // OpenCV 자동 바닥 영역 감지
   // ========================================
   const detectFloorBoundary = async () => {
@@ -860,35 +1007,43 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
       // Grayscale 변환
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
+      // 모폴로지 커널 크기 (홀수 보장)
+      const mk = detectSettings.morphKernel | 1; // 홀수로 변환
+
       // 감지 모드에 따른 처리
       if (detectSettings.detectMode === 'canny') {
-        // Canny 엣지 감지 - 건축 도면에 최적
         cv.GaussianBlur(gray, gray, new cv.Size(3, 3), 0);
         cv.Canny(gray, processed, detectSettings.cannyLow, detectSettings.cannyHigh);
-        // 엣지를 두껍게 (연결되지 않은 선 연결)
-        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-        cv.dilate(processed, processed, kernel);
-        cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kernel);
-        kernel.delete();
+        // 엣지 연결: dilate → close
+        const kSmall = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+        cv.dilate(processed, processed, kSmall);
+        cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kSmall);
+        kSmall.delete();
+        // 안내선/가느다란 선 제거: OPEN (침식→팽창) - 가는 선 제거, 굵은 벽체 유지
+        if (mk > 3) {
+          const kBig = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(mk, mk));
+          cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kBig);
+          kBig.delete();
+        }
       } else if (detectSettings.detectMode === 'adaptive') {
-        // 적응형 이진화 - 조명이 불균일한 경우
         cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
         cv.adaptiveThreshold(gray, processed, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C,
           detectSettings.invertColors ? cv.THRESH_BINARY : cv.THRESH_BINARY_INV, 11, 2);
-        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-        cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kernel);
-        kernel.delete();
+        const kMorph = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(mk, mk));
+        cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kMorph);
+        if (mk > 3) cv.morphologyEx(processed, processed, cv.MORPH_OPEN, kMorph);
+        kMorph.delete();
       } else {
-        // 기본 임계값 이진화
         cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
         if (detectSettings.invertColors) {
           cv.threshold(gray, processed, detectSettings.threshold, 255, cv.THRESH_BINARY_INV);
         } else {
           cv.threshold(gray, processed, detectSettings.threshold, 255, cv.THRESH_BINARY);
         }
-        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-        cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kernel);
-        kernel.delete();
+        const kMorph = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(mk, mk));
+        cv.morphologyEx(processed, processed, cv.MORPH_CLOSE, kMorph);
+        if (mk > 3) cv.morphologyEx(processed, processed, cv.MORPH_OPEN, kMorph);
+        kMorph.delete();
       }
 
       // 윤곽선 찾기 - 내부 공간 포함 여부에 따라 모드 변경
@@ -919,9 +1074,23 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
           points.push({ x, y });
         }
 
-        // 최소 3개 점, 합리적인 형태인지 확인
-        if (points.length >= 3 && points.length <= 100) {
-          detectedPolygons.push(points);
+        // 최소 3개 점인지 확인
+        if (points.length >= 3) {
+          // 후처리 파이프라인: 점 축소 → 직교 스냅 → [볼록 외곽선]
+          let result = points;
+          if (detectSettings.postSimplify) {
+            const r = visvalingamSimplify(result, detectSettings.simplifyRatio);
+            if (r.length >= 3) result = r;
+          }
+          if (detectSettings.postOrthoSnap) {
+            const r = orthoSnapAndClean(result, detectSettings.orthoTolerance);
+            if (r.length >= 3) result = r;
+          }
+          if (detectSettings.postConvexHull) {
+            const r = computeConvexHull(result);
+            if (r.length >= 3) result = r;
+          }
+          detectedPolygons.push(result);
         }
 
         approx.delete();
@@ -1211,7 +1380,7 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
           : '';
 
     return (
-      <Group key={zone.id} draggable={isDraggable} onDragEnd={(e) => handleZoneDragEnd(zone.id, e)}>
+      <Group key={zone.id} draggable={isDraggable} onDragMove={handleZoneDragMove} onDragEnd={(e) => handleZoneDragEnd(zone.id, e)}>
         <Line
           points={points}
           closed
@@ -1609,6 +1778,65 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                     </label>
                   </div>
 
+                  {/* 전처리: 안내선 제거 */}
+                  <div className="pt-2 border-t border-[#e8eaed]">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-bold text-[#5f6368]">안내선 제거</label>
+                      <span className="text-[10px] text-[#1a73e8] font-bold">{detectSettings.morphKernel}px</span>
+                    </div>
+                    <input type="range" min="3" max="15" step="2" value={detectSettings.morphKernel}
+                      onChange={e => setDetectSettings(prev => ({ ...prev, morphKernel: parseInt(e.target.value) }))}
+                      className="w-full" />
+                    <p className="text-[9px] text-[#9aa0a6] mt-0.5">클수록 가느다란 선을 강하게 제거 (벽체는 유지)</p>
+                  </div>
+
+                  {/* 후처리 */}
+                  <div className="pt-2 border-t border-[#e8eaed]">
+                    <label className="text-[10px] font-bold text-[#5f6368] mb-1.5 block">후처리</label>
+                    <div className="space-y-1.5">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={detectSettings.postSimplify}
+                          onChange={e => setDetectSettings(prev => ({ ...prev, postSimplify: e.target.checked }))}
+                          className="w-3.5 h-3.5 rounded border-[#dadce0]" />
+                        <span className="text-[10px] text-[#5f6368]">점 축소</span>
+                      </label>
+                      {detectSettings.postSimplify && (
+                        <div className="ml-5">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-[9px] text-[#9aa0a6]">축소 비율</span>
+                            <span className="text-[9px] text-[#1a73e8] font-bold">{(detectSettings.simplifyRatio * 100).toFixed(0)}%</span>
+                          </div>
+                          <input type="range" min="0.1" max="0.9" step="0.05" value={detectSettings.simplifyRatio}
+                            onChange={e => setDetectSettings(prev => ({ ...prev, simplifyRatio: parseFloat(e.target.value) }))}
+                            className="w-full" />
+                        </div>
+                      )}
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={detectSettings.postOrthoSnap}
+                          onChange={e => setDetectSettings(prev => ({ ...prev, postOrthoSnap: e.target.checked }))}
+                          className="w-3.5 h-3.5 rounded border-[#dadce0]" />
+                        <span className="text-[10px] text-[#5f6368]">직교 스냅</span>
+                      </label>
+                      {detectSettings.postOrthoSnap && (
+                        <div className="ml-5">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-[9px] text-[#9aa0a6]">허용 각도</span>
+                            <span className="text-[9px] text-[#1a73e8] font-bold">{detectSettings.orthoTolerance}°</span>
+                          </div>
+                          <input type="range" min="5" max="45" value={detectSettings.orthoTolerance}
+                            onChange={e => setDetectSettings(prev => ({ ...prev, orthoTolerance: parseInt(e.target.value) }))}
+                            className="w-full" />
+                        </div>
+                      )}
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={detectSettings.postConvexHull}
+                          onChange={e => setDetectSettings(prev => ({ ...prev, postConvexHull: e.target.checked }))}
+                          className="w-3.5 h-3.5 rounded border-[#dadce0]" />
+                        <span className="text-[10px] text-[#5f6368]">볼록 외곽선</span>
+                      </label>
+                    </div>
+                  </div>
+
                   {/* 감지 버튼 */}
                   <button
                     onClick={detectFloorBoundary}
@@ -1695,24 +1923,52 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
 
           {/* 우측: 속성 패널 */}
           <div className="w-80 bg-white border-l border-[#dadce0] flex flex-col overflow-hidden">
-            {/* 새 조닝 설정 */}
+            {/* 조닝 설정 (선택된 조닝 편집 / 새 조닝 기본값) */}
             <div className="p-3 border-b border-[#dadce0]">
-              <h3 className="text-[11px] font-black text-[#5f6368] uppercase mb-2">새 조닝 설정</h3>
+              <h3 className="text-[11px] font-black text-[#5f6368] uppercase mb-2">
+                {selectedZone ? `${selectedZone.name}` : '새 조닝 설정'}
+              </h3>
               <div className="space-y-2">
-                <input type="text" placeholder="영역 이름" value={newZoneName} onChange={e => setNewZoneName(e.target.value)} className="w-full px-3 py-2 text-sm border border-[#dadce0] rounded-lg" />
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-[#5f6368] w-10">색상</span>
-                  <div className="flex gap-1 flex-wrap flex-1">
-                    {ZONE_COLORS.map(c => (
-                      <button key={c} onClick={() => setNewZoneColor(c)} className={`w-6 h-6 rounded ${newZoneColor === c ? 'ring-2 ring-offset-1 ring-[#1a73e8]' : ''}`} style={{ backgroundColor: c }} />
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-[#5f6368] w-10">투명도</span>
-                  <input type="range" min="0.1" max="0.8" step="0.1" value={newZoneOpacity} onChange={e => setNewZoneOpacity(parseFloat(e.target.value))} className="flex-1" />
-                  <span className="text-[10px] text-[#5f6368] w-10">{(newZoneOpacity * 100).toFixed(0)}%</span>
-                </div>
+                {selectedZone ? (
+                  <>
+                    <input type="text" value={selectedZone.name}
+                      onChange={e => onSaveZone({ ...selectedZone, name: e.target.value, updatedAt: new Date().toISOString() })}
+                      className="w-full px-3 py-2 text-sm border border-[#dadce0] rounded-lg" />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#5f6368] w-10">색상</span>
+                      <div className="flex gap-1 flex-wrap flex-1">
+                        {ZONE_COLORS.map(c => (
+                          <button key={c} onClick={() => onSaveZone({ ...selectedZone, color: c, updatedAt: new Date().toISOString() })}
+                            className={`w-6 h-6 rounded ${selectedZone.color === c ? 'ring-2 ring-offset-1 ring-[#1a73e8]' : ''}`} style={{ backgroundColor: c }} />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#5f6368] w-10">투명도</span>
+                      <input type="range" min="0.1" max="0.8" step="0.1" value={selectedZone.opacity}
+                        onChange={e => onSaveZone({ ...selectedZone, opacity: parseFloat(e.target.value), updatedAt: new Date().toISOString() })}
+                        className="flex-1" />
+                      <span className="text-[10px] text-[#5f6368] w-10">{(selectedZone.opacity * 100).toFixed(0)}%</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <input type="text" placeholder="영역 이름" value={newZoneName} onChange={e => setNewZoneName(e.target.value)} className="w-full px-3 py-2 text-sm border border-[#dadce0] rounded-lg" />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#5f6368] w-10">색상</span>
+                      <div className="flex gap-1 flex-wrap flex-1">
+                        {ZONE_COLORS.map(c => (
+                          <button key={c} onClick={() => setNewZoneColor(c)} className={`w-6 h-6 rounded ${newZoneColor === c ? 'ring-2 ring-offset-1 ring-[#1a73e8]' : ''}`} style={{ backgroundColor: c }} />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#5f6368] w-10">투명도</span>
+                      <input type="range" min="0.1" max="0.8" step="0.1" value={newZoneOpacity} onChange={e => setNewZoneOpacity(parseFloat(e.target.value))} className="flex-1" />
+                      <span className="text-[10px] text-[#5f6368] w-10">{(newZoneOpacity * 100).toFixed(0)}%</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -1851,9 +2107,6 @@ const FloorPlanViewer: React.FC<FloorPlanViewerProps> = ({
                   {/* 단일 선택 액션 */}
                   {selectedZone && (
                     <>
-                      <button onClick={() => { setEditingZoneName(selectedZone.name); setShowEditNameModal(true); }} className="px-2.5 py-1.5 bg-[#5f6368] text-white text-[10px] font-bold rounded-lg flex items-center gap-1">
-                        <Edit3 size={12} /> 이름 수정
-                      </button>
                       <button onClick={() => handleRotateZone(selectedZone.id, 15)} className="px-2.5 py-1.5 bg-[#607d8b] text-white text-[10px] font-bold rounded-lg flex items-center gap-1">
                         <RotateCw size={12} /> +15°
                       </button>
