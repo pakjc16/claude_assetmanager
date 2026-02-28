@@ -325,6 +325,52 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 - **층별 정보 테이블**: 면적 단위 토글 반영 (㎡/평)
 - **호실 층수**: 건물 층수 범위 내 드롭다운 선택
 
+## 시놀로지 NAS Docker 개발서버
+
+**용도**: 어디서든(회사/집/모바일클로드) 코드 수정 → GitHub 푸시 → NAS에서 자동 반영 확인
+
+**구성**: Portainer 스택으로 관리 (저장소에 Docker 파일 없음, Portainer에서 직접 설정)
+
+**docker-compose.yml** (Portainer Web editor에 붙여넣기):
+```yaml
+version: "3.8"
+
+services:
+  realtyflow:
+    image: node:20-alpine
+    container_name: realtyflow-dev
+    network_mode: host
+    volumes:
+      - app-data:/app
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - |
+        apk add --no-cache git
+        if [ ! -d /app/.git ]; then
+          rm -rf /app/*
+          git clone --branch main https://github.com/pakjc16/claude_assetmanager.git /app
+        fi
+        cd /app
+        git fetch origin && git reset --hard origin/main
+        npm install
+        (while true; do sleep 30; cd /app; git fetch origin 2>/dev/null; L=$$(git rev-parse HEAD); R=$$(git rev-parse origin/main); [ $$L != $$R ] && echo Updating && git reset --hard origin/main && npm install --prefer-offline 2>/dev/null; done) &
+        exec npx vite --host 0.0.0.0 --port 3100
+
+volumes:
+  app-data:
+```
+
+**핵심 포인트**:
+- `network_mode: host`: 시놀로지 NAS 네트워크 직접 사용 (Docker DNS 문제 해결)
+- 30초마다 GitHub 자동 폴링 → 새 커밋 감지 시 `git reset --hard` + `npm install`
+- Vite `usePolling: true` (vite.config.ts) → Docker 볼륨에서 파일 변경 감지
+- 접속: `http://나스IP:3100`
+
+**문제 해결**:
+- 볼륨 찌꺼기로 클론 실패 시: Portainer Volumes → `realtyflow_app-data` 삭제 후 재배포
+
 ## 참고 사항
 
 - **백엔드 미연동** - 모든 데이터는 클라이언트 사이드, 새로고침 시 초기화
@@ -333,6 +379,47 @@ const apiPlatGbCd = String(parseInt(pnu.substring(10, 11)) - 1);
 - **API 키 관리** - `.env` 파일 또는 설정 페이지에서 관리 (VWorld, data.go.kr)
 
 ## 개발 이력
+
+### 2026-02-28: 시놀로지 NAS Docker 개발서버 구축
+
+- **Portainer 스택 기반**: docker-compose.yml을 Portainer Web editor에서 관리 (저장소에 Docker 파일 미포함)
+- **node:20-alpine 이미지**: git 설치 → GitHub 클론 → npm install → Vite 개발서버 실행
+- **자동 업데이트**: 30초 간격 GitHub 폴링, 새 커밋 감지 시 자동 pull + 반영
+- **network_mode: host**: 시놀로지 Docker DNS 해석 실패(EAI_AGAIN) 문제 해결
+- **접속**: `http://나스IP:3100`
+
+### 2026-02-27: 평면도 뷰어 4가지 개선 (버그수정/기능삭제/z-order/페인트채우기)
+
+**레이블 드래그 버그 수정 (FloorPlanViewer.tsx)**:
+- **원인**: `onDragEnd` 핸들러에서 `panX`/`panY` (존재하지 않는 변수) 참조 → `panOffset.x`/`panOffset.y`로 수정
+- `e.cancelBubble = true` 추가: 레이블 드래그 이벤트가 부모 Group 드래그로 전파되지 않도록 차단
+
+**자동감지 후처리 기능 삭제 (FloorPlanViewer.tsx)**:
+- **삭제된 detectSettings 필드**: `invertColors`, `morphKernel`, `postSimplify`, `postOrthoSnap`, `postConvexHull`, `simplifyRatio`, `orthoTolerance`
+- **삭제된 함수**: `visvalingamSimplify()` (Visvalingam-Whyatt 점 축소), `orthoSnapAndClean()` (직교 스냅 + 돌기 제거)
+- **유지된 함수**: `computeConvexHull()` (zone 병합 "외곽선" 기능에서 사용 중)
+- **detectFloorBoundary 간소화**: `mk` 변수 제거, Canny/Adaptive/Threshold 모두 고정 3x3 커널로 교체, 후처리 파이프라인 삭제
+- **삭제된 UI**: "반전" 체크박스, "안내선 제거" 슬라이더, "후처리" 섹션 전체 (점 축소/직교 스냅/볼록 외곽선)
+
+**레이블 z-order 수정 (FloorPlanViewer.tsx)**:
+- `renderZone` 함수 → `renderZonePolygon` + `renderZoneLabel` 2개로 분리
+- **Layer 렌더링 순서**: 이미지 → `renderZonePolygon` → `renderZoneEditPoints` → 드로잉 → 감지결과 → `renderZoneLabel`(최상위)
+- 모든 레이블이 항상 모든 zone 폴리곤 위에 표시됨 (레이어 순위와 무관)
+
+**페인트 채우기(플러드필) 도구 추가 (FloorPlanViewer.tsx)**:
+- **ToolType**: `'PAINT_FILL'` 추가, `PaintBucket` lucide-react 아이콘 import
+- **fillTolerance state**: 기본값 30, 범위 5-100
+- **handlePaintFill 알고리즘**:
+  1. 클릭 위치를 이미지 픽셀 좌표로 변환 (`panOffset`/`zoom` 역변환)
+  2. offscreen canvas에 이미지 → `getImageData` 획득
+  3. BFS 플러드필: 시작 픽셀과 RGB 차이 합이 `tolerance * 3` 이내인 인접 픽셀 4방향 확장
+  4. 영역 크기 검증: 0.1% 미만(너무 작음) 또는 95% 초과(너무 큼) 시 경고
+  5. Moore neighborhood 윤곽 추적: 8방향 탐색으로 채워진 영역의 외곽 경계 추출
+  6. Douglas-Peucker 단순화: `epsilon = max(w,h) * 0.003`으로 폴리곤 점 수 감소
+  7. 정규화 좌표 변환 후 `FloorZone` 생성 (바닥 영역 없으면 FLOOR_BOUNDARY, 있으면 PLANNED)
+- **handleStageClick 수정**: `PAINT_FILL` 활성 시 `handlePaintFill` 호출 후 return
+- **툴바 버튼**: EDIT_POINTS 뒤에 PaintBucket 아이콘 버튼 추가
+- **플로팅 안내바**: 보라색 배경, "클릭하여 영역 채우기" + 허용 오차 슬라이더 + 취소 버튼
 
 ### 2026-02-23: 인물/업체 관리 대폭 개선 (OCR/라벨/서류/CSV/필터)
 
