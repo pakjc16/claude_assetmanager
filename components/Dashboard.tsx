@@ -266,7 +266,7 @@ const WIDGETS: WidgetDef[] = [
       if (data.length === 0) return <div className="h-full flex items-center justify-center text-gray-400 text-[10px] md:text-sm">표시할 재무 데이터가 없습니다.</div>;
       return (
         <div className="h-full w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
             <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
@@ -330,7 +330,7 @@ const WIDGETS: WidgetDef[] = [
       if (data.length === 0) return <div className="h-full flex items-center justify-center text-gray-400 text-[10px] md:text-sm">자산 평가 데이터가 없습니다.</div>;
       return (
         <div className="h-full w-full">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
             <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6"/>
               <XAxis dataKey="year" axisLine={false} tickLine={false}/>
@@ -364,7 +364,7 @@ const WIDGETS: WidgetDef[] = [
       return (
         <div className="h-full w-full flex flex-col">
           <div className="relative flex-1 min-h-0">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <PieChart>
                 <Pie data={data} cx="50%" cy="50%" innerRadius="30%" outerRadius="48%" paddingAngle={5} dataKey="value">
                   {data.map((entry, i) => <Cell key={i} fill={entry.color}/>)}
