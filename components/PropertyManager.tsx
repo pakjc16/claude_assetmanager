@@ -2093,7 +2093,6 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-2">
                                                             <h4 className="font-black text-sm md:text-xl text-gray-900 truncate tracking-tight">{b.name}</h4>
-                                                            {b.spec.earthquakeDesign && <span className="px-1.5 md:px-2 py-0.5 bg-[#e6f4ea] text-[#137333] text-[9px] md:text-[10px] font-bold rounded flex-shrink-0">내진</span>}
                                                         </div>
                                                         <p className="text-[10px] md:text-sm text-[#5f6368] mt-0.5 md:mt-1 font-medium whitespace-nowrap tracking-tight">
                                                             <span className="hidden md:inline">{b.spec.detailUsage || b.spec.mainUsage} | </span>
@@ -2105,18 +2104,18 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                                     </div>
                                                 </div>
                                                 <div className="flex items-center gap-2 md:gap-6 flex-shrink-0">
-                                                    <div className="grid grid-cols-3 gap-2 md:gap-6 text-right">
-                                                        <div>
-                                                            <p className="text-[8px] md:text-[10px] text-gray-400 font-bold whitespace-nowrap">건축</p>
-                                                            <p className="font-black text-[11px] md:text-base text-gray-800 whitespace-nowrap tracking-tight">{formatArea(b.spec.buildingArea)}</p>
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-6 text-right">
+                                                        <div className="hidden md:block">
+                                                            <p className="text-[10px] text-gray-400 font-bold whitespace-nowrap">건축</p>
+                                                            <p className="font-black text-base text-gray-800 whitespace-nowrap tracking-tight">{formatArea(b.spec.buildingArea)}</p>
                                                         </div>
                                                         <div>
                                                             <p className="text-[8px] md:text-[10px] text-gray-400 font-bold whitespace-nowrap">연면적</p>
                                                             <p className="font-black text-[11px] md:text-base text-[#1a73e8] whitespace-nowrap tracking-tight">{formatArea(b.spec.grossFloorArea)}</p>
                                                         </div>
-                                                        <div>
-                                                            <p className="text-[8px] md:text-[10px] text-gray-400 font-bold whitespace-nowrap">호실</p>
-                                                            <p className="font-black text-[11px] md:text-base text-gray-800 whitespace-nowrap">{buildingUnits.length}개</p>
+                                                        <div className="hidden md:block">
+                                                            <p className="text-[10px] text-gray-400 font-bold whitespace-nowrap">호실</p>
+                                                            <p className="font-black text-base text-gray-800 whitespace-nowrap">{buildingUnits.length}개</p>
                                                         </div>
                                                     </div>
                                                     <div className={`transition-transform flex-shrink-0 ${isExpanded ? 'rotate-180' : ''}`}>
