@@ -421,6 +421,48 @@ volumes:
 - **툴바 버튼**: EDIT_POINTS 뒤에 PaintBucket 아이콘 버튼 추가
 - **플로팅 안내바**: 보라색 배경, "클릭하여 영역 채우기" + 허용 오차 슬라이더 + 취소 버튼
 
+### 2026-03-01: 사업자등록증 OCR 개인사업자 양식 보강 (symbol-level 재구성)
+
+#### 근본 문제: Google Vision 세로 병합
+- **원인**: `textAnnotations`(단어 수준)은 세로로 나란한 글자를 같은 단어로 합침 ("상"+"성" → "상성")
+- **해결**: `fullTextAnnotation.pages[].blocks[].paragraphs[].words[].symbols[]` 개별 글자 바운딩박스 사용
+- 글자 단위 Y좌표 그룹화(허용 오차 `avgH * 0.35`) → 같은 행 왼→오 순서로 결합
+- 갭 기반 구분: `avgH * 3` 이상 → TAB(열 구분), `avgH * 0.3` 이상 → 공백(단어 구분)
+- `textAnnotations` 단어 수준은 symbol 데이터 없을 때만 fallback
+
+#### PDF 스캔본 대응
+- PDF `files:annotate` 응답에서도 `ftaPages` 추출하여 symbol 재구성 적용
+- `vertices`와 `normalizedVertices` 양쪽 모두 지원 (PDF는 normalizedVertices 사용 가능)
+- `normalizeLine(line, removeKoreanSpaces)` 파라미터화: 바운딩박스 재구성 시 `true`, fullText fallback 시 `false`
+
+#### 부분 라벨 복원 (symbol 재구성 실패 시 fallback)
+- OCR이 "상\n성\n개\n사" 라벨 첫글자를 세로로 합치면 "상성개사" 쓰레기 + "호 : 새기미", "명 : 남명현" 부분 라벨 발생
+- **복원 맵**: `호` → `상호`, `명` → `성명` (콜론 앞 1~2글자 라벨을 완전한 라벨로 복원)
+- **쓰레기 줄 제거**: 한글 3~8자 + 알려진 라벨 아닌 줄 + "상성개사" 패턴 → 제거
+
+#### 콜론 기반 필드 추출 (cf 파서)
+- 매 줄에서 콜론(:) 기준 왼쪽 = 라벨(공백 제거 후 비교), 오른쪽 = 값
+- `trimAtNextLabel`: 값에서 다음 라벨 키워드 위치까지만 잘라냄
+- cf 값을 모든 필드 추출에서 최우선 사용, 기존 키워드 매칭은 fallback
+- `rawLabel === '호'` → cf.bizName, `rawLabel === '명'` → cf.rep (부분 라벨 직접 매칭)
+
+#### bizName 이어붙이기 안전장치
+- 다음 줄에 콜론(`:`)이 있으면 별도 필드이므로 절대 이어붙이지 않음
+- "새기미" + "명 : 남명현" → "새기미명 : 남명현" 버그 방지
+
+#### 업태/종목 추출 개선
+- **2열 분할**: TAB 우선, 없으면 `\s{2,}`(공백 2개 이상) fallback (PDF 텍스트 대응)
+- **연장줄 확장**: `btIdx + 2` → `btIdx + 10` (법인 7줄 대응)
+- **정지 조건 강화**: `발\s*공` (발급사유+공동사업자 세로 병합), `공동사업`, 콜론 있는 줄
+- **길이 제한**: `< 3` → `< 2` ("도매" 등 2글자 업태/종목 보존)
+- **cleanOcrNoise**: `[A-Z]{4,}` (SNS 등 짧은 약어 보존), FAX 헤더, 전화/팩스/이메일/날짜 노이즈 제거
+
+#### 개인사업자 "성명" 키워드 대응
+- `spGet` stops에 `생년월일` 추가 (성명 오른쪽에 생년월일이 있는 양식)
+- rep fallback 4: `findValue(['성명'])` (대표자 없는 개인사업자 양식)
+- rep fallback 5: `findValueFuzzy('성명')` (퍼지 매칭)
+- "외 N명" 패턴 보존: 분리 → 정리 → 재결합
+
 ### 2026-02-23: 인물/업체 관리 대폭 개선 (OCR/라벨/서류/CSV/필터)
 
 #### OCR 인식률 개선 (StakeholderManager.tsx)

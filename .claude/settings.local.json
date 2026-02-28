@@ -37,7 +37,11 @@
       "Bash(git stash:*)",
       "Bash(git stash pop:*)",
       "WebFetch(domain:infuser.odcloud.kr)",
-      "WebFetch(domain:velog.io)"
+      "WebFetch(domain:velog.io)",
+      "Bash(git remote:*)",
+      "Bash(git checkout:*)",
+      "Bash(git:*)",
+      "Bash(rm:*)"
     ]
   }
 }

@@ -139,6 +139,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
 
       let fullText = '';
       let wordAnnotations: any[] = [];
+      let ftaPages: any[] = [];
 
       if (isPdf) {
         // PDF: files:annotate 엔드포인트 사용
@@ -152,7 +153,8 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         const json = await res.json();
         const pageResp = json.responses?.[0]?.responses?.[0];
         fullText = pageResp?.fullTextAnnotation?.text || '';
-        // PDF는 바운딩박스 재구성 하지 않음 (fullText가 이미 정돈됨)
+        // 스캔 PDF도 symbol 바운딩박스가 있으면 재구성 시도
+        ftaPages = pageResp?.fullTextAnnotation?.pages || [];
       } else {
         // 이미지: images:annotate 엔드포인트 사용
         const res = await fetch(`/api/vision/v1/images:annotate?key=${googleVisionApiKey}`, {
@@ -165,72 +167,219 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         const json = await res.json();
         fullText = json.responses?.[0]?.fullTextAnnotation?.text || '';
         wordAnnotations = (json.responses?.[0]?.textAnnotations || []).slice(1);
+        // 개별 글자(symbol) 바운딩박스 추출 (세로 병합 방지)
+        ftaPages = json.responses?.[0]?.fullTextAnnotation?.pages || [];
       }
 
       if (!fullText) { setOcrRawText('텍스트를 인식하지 못했습니다.'); return; }
-      setOcrRawText(fullText);
 
       // ── normalizeLine: 공백 정리 ──
       // 변환 순서: 전각→반각 → 괄호앞뒤공백 제거 → 한글간공백 제거(이미지전용)
-      const normalizeLine = (line: string) => {
+      const normalizeLine = (line: string, removeKoreanSpaces = false) => {
         let s = line;
         s = s.replace(/（/g, '(').replace(/）/g, ')').replace(/：/g, ':');  // 전각→반각
         s = s.replace(/\s+\(/g, '(');   // "명 (" → "명(" (괄호 앞 공백 제거)
         s = s.replace(/\(\s+/g, '(');   // "( 단" → "(단" (괄호 뒤 공백 제거)
         s = s.replace(/\s+\)/g, ')');   // "명 )" → "명)" (닫힘괄호 앞 공백 제거)
-        if (!isPdf) {
-          // 이미지 전용: 한글 사이 과도한 공백 제거 ("대 표 자" → "대표자")
-          s = s.replace(/([가-힣])[ \t]+(?=[가-힣])/g, '$1');
+        if (removeKoreanSpaces) {
+          // 바운딩박스 재구성 시: 한글 사이 과도한 공백 제거 ("대 표 자" → "대표자"), 탭은 열구분자로 보존
+          s = s.replace(/([가-힣]) +(?=[가-힣])/g, '$1');
         }
         return s;
       };
       let normLines: string[] = [];
       let normText = '';
 
-      // 이미지: 바운딩박스 기반 라인 재구성 (같은 Y 높이 단어를 한 줄로 그룹화)
-      if (!isPdf && wordAnnotations.length > 0) {
+      // 개별 글자(symbol) 바운딩박스 기반 라인 재구성 (이미지 + 스캔PDF 공통)
+      // 핵심: 글자 단위로 Y좌표 그룹화 → 같은 행의 글자를 왼→오 순서로 결합
+      // textAnnotations 단어 수준은 "상"+"성"을 "상성"으로 합칠 수 있지만,
+      // symbol 수준은 개별 글자이므로 절대 세로 병합이 안 됨
+      if (ftaPages?.[0]) {
+        type CI = { text: string; xMin: number; xMax: number; yCenter: number; height: number };
+        const chars: CI[] = [];
+        for (const block of (ftaPages[0].blocks || [])) {
+          for (const para of (block.paragraphs || [])) {
+            for (const word of (para.words || [])) {
+              for (const sym of (word.symbols || [])) {
+                const verts = sym.boundingBox?.vertices;
+                const nverts = sym.boundingBox?.normalizedVertices;
+                const pts = (verts?.length >= 4) ? verts : (nverts?.length >= 4) ? nverts : null;
+                if (!pts) continue;
+                const xs = pts.map((v: any) => v.x || 0);
+                const ys = pts.map((v: any) => v.y || 0);
+                const text = sym.text || '';
+                if (!text.trim()) continue;
+                chars.push({
+                  text,
+                  xMin: Math.min(...xs), xMax: Math.max(...xs),
+                  yCenter: (Math.min(...ys) + Math.max(...ys)) / 2,
+                  height: Math.max(...ys) - Math.min(...ys)
+                });
+              }
+            }
+          }
+        }
+
+        if (chars.length > 0) {
+          const avgH = chars.reduce((s, c) => s + c.height, 0) / chars.length;
+          const tol = avgH * 0.35;
+          chars.sort((a, b) => a.yCenter - b.yCenter);
+          // Y좌표로 행 그룹화
+          const rows: CI[][] = [];
+          let curRow = [chars[0]];
+          for (let i = 1; i < chars.length; i++) {
+            const rowAvgY = curRow.reduce((s, c) => s + c.yCenter, 0) / curRow.length;
+            if (Math.abs(chars[i].yCenter - rowAvgY) <= tol) {
+              curRow.push(chars[i]);
+            } else {
+              rows.push(curRow);
+              curRow = [chars[i]];
+            }
+          }
+          rows.push(curRow);
+          // 각 행 내 X 정렬 후 글자 결합
+          const reconstructed = rows.map(row => {
+            row.sort((a, b) => a.xMin - b.xMin);
+            let result = '';
+            for (let k = 0; k < row.length; k++) {
+              if (k > 0) {
+                const gap = row[k].xMin - row[k - 1].xMax;
+                if (gap > avgH * 3) result += '\t';        // 열 구분 (업태/종목 2열)
+                else if (gap > avgH * 0.3) result += ' ';  // 단어 구분
+              }
+              result += row[k].text;
+            }
+            return result;
+          });
+          normLines = reconstructed.map(l => normalizeLine(l.trim(), true)).filter(Boolean);
+          normText = normLines.join('\n');
+        }
+      }
+      // fallback: textAnnotations 단어 수준 (symbol 데이터 없을 때, 이미지 전용)
+      if (normLines.length === 0 && !isPdf && wordAnnotations.length > 0) {
         const items = wordAnnotations.map((a: any) => {
           const verts = a.boundingPoly?.vertices || [];
           const ys = verts.map((v: any) => v.y || 0);
-          const yMin = Math.min(...ys);
-          const yMax = Math.max(...ys);
-          const yCenter = (yMin + yMax) / 2;
-          const height = yMax - yMin;
           const xs = verts.map((v: any) => v.x || 0);
-          const xMin = Math.min(...xs);
-          return { text: a.description || '', yCenter, height, xMin };
-        }).filter((it: any) => it.text.trim());
-
+          return { text: (a.description || '').trim(), yCenter: (Math.min(...ys) + Math.max(...ys)) / 2, height: Math.max(...ys) - Math.min(...ys), xMin: Math.min(...xs), xMax: Math.max(...xs) };
+        }).filter((it: any) => it.text);
         if (items.length > 0) {
-          const avgHeight = items.reduce((s: number, it: any) => s + it.height, 0) / items.length;
-          const tolerance = avgHeight * 0.4;
+          const avgH = items.reduce((s: number, it: any) => s + it.height, 0) / items.length;
           items.sort((a: any, b: any) => a.yCenter - b.yCenter);
           const lines: any[][] = [];
-          let currentLine = [items[0]];
+          let cur = [items[0]];
           for (let i = 1; i < items.length; i++) {
-            const lineAvgY = currentLine.reduce((s: number, it: any) => s + it.yCenter, 0) / currentLine.length;
-            if (Math.abs(items[i].yCenter - lineAvgY) <= tolerance) {
-              currentLine.push(items[i]);
-            } else {
-              lines.push(currentLine);
-              currentLine = [items[i]];
-            }
+            const avg = cur.reduce((s: number, it: any) => s + it.yCenter, 0) / cur.length;
+            if (Math.abs(items[i].yCenter - avg) <= avgH * 0.4) cur.push(items[i]);
+            else { lines.push(cur); cur = [items[i]]; }
           }
-          lines.push(currentLine);
-          const reconstructed = lines.map(line => {
+          lines.push(cur);
+          normLines = lines.map(line => {
             line.sort((a: any, b: any) => a.xMin - b.xMin);
             return line.map((it: any) => it.text).join(' ');
-          });
-          normLines = reconstructed.map(l => normalizeLine(l.trim())).filter(Boolean);
+          }).map(l => normalizeLine(l.trim(), true)).filter(Boolean);
           normText = normLines.join('\n');
         }
       }
 
-      // PDF 또는 바운딩박스 실패 시: fullText 기반
+      // fullText 기반 fallback (텍스트 PDF 또는 바운딩박스 실패 시)
+      // 텍스트 PDF는 공백이 의미있으므로 한글 공백 제거 안 함
       if (normLines.length === 0) {
-        normLines = fullText.split('\n').map((l: string) => normalizeLine(l.trim())).filter(Boolean);
+        normLines = fullText.split('\n').map((l: string) => normalizeLine(l.trim(), false)).filter(Boolean);
         normText = normLines.join('\n');
       }
+
+      // FAX 헤더/페이지 번호 노이즈 제거 (팩스 스캔본)
+      normLines = normLines.filter(l => !(/^\d{2}\/\d{2}\s+\d{4}.*FAX/i.test(l) || /^@?\d{3}\/\d{3}$/.test(l)));
+
+      // ── 부분 라벨 복원 (스캔 PDF 세로병합 대응) ──
+      // OCR이 "상\n성\n개\n사" 라벨 첫글자를 세로로 합쳐 "상성개사"를 만들고,
+      // 실제 라벨은 "호 : 새기미", "명 : 남명현"처럼 뒷글자+콜론만 남는 경우 복원
+      const PARTIAL_LABEL_MAP: Record<string, string> = {
+        '호': '상호', '명': '성명',
+      };
+      normLines = normLines.map(line => {
+        const ci = line.search(/[:：]/);
+        if (ci > 0 && ci <= 3) {
+          const prefix = line.substring(0, ci).replace(/\s/g, '');
+          if (PARTIAL_LABEL_MAP[prefix]) {
+            return PARTIAL_LABEL_MAP[prefix] + ' ' + line.substring(ci);
+          }
+        }
+        return line;
+      });
+      // 세로 병합 쓰레기 줄 제거: "상성개사" 등 라벨 첫글자만 합쳐진 무의미 문자열
+      normLines = normLines.filter(line => {
+        if (/^[가-힣]{3,8}$/.test(line) &&
+            !line.match(/등록번호|법인명|대표자|사업장|본점|업태|종목|간이과세|일반과세|면세|소매업|제조업|서비스/) &&
+            /[상성개사]/.test(line)) {
+          return false;
+        }
+        return true;
+      });
+
+      normText = normLines.join('\n');
+      setOcrRawText(normText.replace(/\t+/g, '  '));
+
+      // ═══ 콜론 기반 1차 필드 추출 (사업자등록증 폼 구조) ═══
+      // 원칙: 매 줄에서 콜론(:) 앞 = 라벨(공백제거 후 비교), 콜론 뒤 = 값
+      const cf: Record<string, string> = {};
+
+      // 라벨 매칭: 정확 매칭 또는 끝부분 매칭
+      const labelMatch = (raw: string, target: string): boolean => {
+        if (!raw || !target) return false;
+        return raw === target || raw.endsWith(target) || raw.includes(target);
+      };
+
+      // 값에서 다음 라벨 키워드 위치를 찾아 잘라내기
+      const LABEL_KWS = ['등록번호', '법인명', '단체명', '상호', '대표자', '성명', '생년월일',
+        '개업연월일', '사업장소재지', '본점소재지', '법인등록번호', '업태', '종목', '발급사유', '공동사업자'];
+      const trimAtNextLabel = (val: string): string => {
+        let minIdx = val.length;
+        for (const kw of LABEL_KWS) {
+          const idx = val.indexOf(kw);
+          if (idx > 0 && idx < minIdx) minIdx = idx;
+        }
+        return val.substring(0, minIdx).replace(/[\s:：]+$/, '').trim();
+      };
+
+      for (const line of normLines) {
+        const ci = line.search(/[:：]/);
+        if (ci <= 0) continue;
+        const rawLabel = line.substring(0, ci).replace(/[\s\(\)（）]/g, '');
+        let value = line.substring(ci + 1).trim();
+        if (!rawLabel || !value) continue;
+        value = trimAtNextLabel(value);
+
+        if (!cf.bizNo && labelMatch(rawLabel, '등록번호') && !labelMatch(rawLabel, '법인등록번호')) cf.bizNo = value;
+        if (!cf.bizName && (labelMatch(rawLabel, '법인명') || labelMatch(rawLabel, '단체명') || labelMatch(rawLabel, '상호') || rawLabel === '호')) cf.bizName = value;
+        if (!cf.rep && (labelMatch(rawLabel, '대표자') || labelMatch(rawLabel, '성명') || rawLabel === '명')) cf.rep = value;
+        if (!cf.corpNo && labelMatch(rawLabel, '법인등록번호')) cf.corpNo = value;
+        if (!cf.bizAddr && labelMatch(rawLabel, '사업장소재지')) cf.bizAddr = value;
+        if (!cf.headAddr && labelMatch(rawLabel, '본점소재지')) cf.headAddr = value;
+      }
+
+      // 주소: 닫는 괄호 ")"까지 수집 (한국 도로명주소는 항상 괄호로 닫힘)
+      const collectAddr = (startVal: string, startLineContent: string) => {
+        if (!startVal || startVal.includes(')')) {
+          const cp = startVal.lastIndexOf(')');
+          return cp > 0 ? startVal.substring(0, cp + 1) : startVal;
+        }
+        let addr = startVal;
+        const lineIdx = normLines.findIndex(l => l.includes(startLineContent));
+        if (lineIdx >= 0) {
+          for (let j = lineIdx + 1; j < normLines.length && j <= lineIdx + 3; j++) {
+            const next = normLines[j];
+            if (!next || next.match(/본점|업태|종목|사업의|발급|발행/)) break;
+            addr += ' ' + next;
+            if (addr.includes(')')) break;
+          }
+        }
+        const cp = addr.lastIndexOf(')');
+        return cp > 0 ? addr.substring(0, cp + 1) : addr;
+      };
+      if (cf.bizAddr) cf.bizAddr = collectAddr(cf.bizAddr, cf.bizAddr.substring(0, 6));
+      if (cf.headAddr) cf.headAddr = collectAddr(cf.headAddr, cf.headAddr.substring(0, 6));
 
       // ═══ 이미지: 바운딩박스 공간(Spatial) 추출 ═══
       // 사업자등록증 공통 양식: 라벨 위치 기반 값 추출
@@ -340,7 +489,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         };
 
         spVal.bizName = spGet(['법인명', '상호'], ['개업', '연월일']);
-        spVal.rep = spGet(['대표자', '대표'], ['법인등록', '등록번호']);
+        spVal.rep = spGet(['대표자', '대표', '성명'], ['법인등록', '등록번호', '생년월일', '생년']);
       }
 
       // 키워드 뒤 값 추출 (정확 매칭 → 유연 매칭 fallback)
@@ -373,12 +522,38 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
         return '';
       };
 
+      // 퍼지 라벨 매칭: 라벨 글자 사이에 노이즈가 있어도 매칭 (바운딩박스 재구성 실패 시 fallback)
+      const findValueFuzzy = (label: string) => {
+        const chars = label.split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const pattern = new RegExp(chars.join('[가-힣]*') + '\\s*[:：]\\s*(.+)');
+        // 단일 라인 검색
+        for (const line of normLines) {
+          const m = pattern.exec(line);
+          if (m) return m[1].trim();
+        }
+        // 인접 라인 결합 검색 (OCR이 라벨을 줄바꿈으로 쪼갤 때)
+        for (let i = 0; i < normLines.length - 1; i++) {
+          const joined = (normLines[i] + normLines[i + 1]).replace(/([가-힣])\s+(?=[가-힣])/g, '$1');
+          const m = pattern.exec(joined);
+          if (m) return m[1].trim();
+        }
+        return '';
+      };
+
       // ── 1. 사업자등록번호 ──
       let bizNo = '';
-      const regNoLine = normLines.find(l => l.includes('등록번호') && !l.includes('법인등록번호'));
-      if (regNoLine) {
-        const m = regNoLine.match(/(\d[\d\s\-]{8,}\d)/);
+      // 1차: 콜론 기반 추출
+      if (cf.bizNo) {
+        const m = cf.bizNo.match(/(\d[\d\s\-–—]{8,}\d)/);
         if (m) bizNo = m[1].replace(/[\s]/g, '');
+      }
+      // 2차: 키워드 기반 fallback
+      if (!bizNo) {
+        const regNoLine = normLines.find(l => l.includes('등록번호') && !l.includes('법인등록번호'));
+        if (regNoLine) {
+          const m = regNoLine.match(/(\d[\d\s\-]{8,}\d)/);
+          if (m) bizNo = m[1].replace(/[\s]/g, '');
+        }
       }
       if (!bizNo || bizNo.length !== 12) {
         const m2 = normText.match(/(\d{3})\s*[-–—]\s*(\d{2})\s*[-–—]\s*(\d{5})/);
@@ -390,20 +565,23 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       }
 
       // ── 2. 법인명(단체명) / 상호 ──
-      let bizName = spVal.bizName || '';
+      let bizName = cf.bizName || spVal.bizName || '';
       if (!bizName) bizName = findValue(['법인명(단체명)', '법인명(단체명)', '단체명)']);
       if (!bizName) bizName = findValue(['상호(법인명)', '상호(법인명)']);
       if (!bizName) bizName = findValue(['법인명', '상호']);
+      if (!bizName) bizName = findValueFuzzy('상호');
       if (bizName) {
-        bizName = bizName.replace(/(표?개업연월일|법인등록번호|대표자|성명|사업장|소재지|업태|종목|사업의종류).*$/, '').trim();
+        bizName = bizName.replace(/^.*단체명\)\s*[:：]?\s*/, '');  // "단체명) :" 접두어 제거
+        bizName = bizName.replace(/(표\s*자\s*[:：]|표?개업연월일|법인등록번호|대표자|성명|사업장|소재지|업태|종목|사업의종류).*$/, '').trim();
         bizName = bizName.replace(/[\s:：]+$/, '').trim();
         bizName = bizName.replace(/nts\.go\.kr/gi, '').replace(/[A-Z]{10,}/g, '').trim();
         bizName = bizName.replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
         // 법인명이 끊긴 경우 다음 줄 이어붙이기 (키워드가 아닌 짧은 텍스트)
+        // 단, 다음 줄에 콜론이 있으면 별도 필드이므로 이어붙이지 않음
         const bizNameLineIdx = normLines.findIndex(l => l.includes(bizName!));
         if (bizNameLineIdx >= 0 && bizNameLineIdx + 1 < normLines.length) {
           const nextL = normLines[bizNameLineIdx + 1];
-          if (nextL && !nextL.match(/^(개업|사업장|소재지|법인등록|대표자|성명|업태|종목|사업의|등록번호|표)/)) {
+          if (nextL && !nextL.match(/[:：]/) && !nextL.match(/^(개업|사업장|소재지|법인등록|대표자|성명|성\s|명\s|업태|종목|사업의|등록번호|표)/)) {
             const cont = nextL.replace(/[\s:：]+$/, '').trim();
             if (cont.length <= 10 && !cont.match(/\d{3}/)) bizName += cont;
           }
@@ -411,7 +589,7 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       }
 
       // ── 3. 대표자(성명) ──
-      let rep = spVal.rep || '';
+      let rep = cf.rep || spVal.rep || '';
       if (!rep) rep = findValue(['대표자(성명)', '대표자(성명)']);
       if (!rep) rep = findValue(['대표자', '성명)']);
       if (!rep) {
@@ -467,17 +645,38 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
           if (m) { rep = m[1]; break; }
         }
       }
+      // fallback 4: 개인사업자 "성명" 단독 키워드 (대표자 없는 양식)
+      if (!rep) {
+        rep = findValue(['성명']);
+      }
+      // fallback 5: 퍼지 매칭 (바운딩박스 재구성 실패 시)
+      if (!rep) {
+        rep = findValueFuzzy('성명');
+      }
       if (rep) {
-        rep = rep.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의).*$/, '').trim();
-        rep = rep.replace(/[\s:：]+$/, '').trim();
+        // "외 N명" 패턴 보존: 먼저 분리하고 정리 후 재결합
+        const extMatch = rep.match(/(외\s*\d+\s*명)/);
+        const extSuffix = extMatch ? extMatch[1] : '';
+        let repClean = extMatch ? rep.replace(/(외\s*\d+\s*명)/, '').trim() : rep;
+        repClean = repClean.replace(/(개업|사업장|소재지|법인|등록|업태|종목|사업의|생년월일|생년).*$/, '').trim();
+        repClean = repClean.replace(/[\s:：]+$/, '').trim();
+        rep = extSuffix ? `${repClean} ${extSuffix}`.trim() : repClean;
       }
 
       // ── 4. 법인등록번호 ──
       let corpNo = '';
-      const corpLine = normLines.find(l => l.includes('법인등록번호'));
-      if (corpLine) {
-        const cm = corpLine.match(/법인등록번호[\s:：]*(\d[\d\s\-–—]{10,}\d)/);
+      // 1차: 콜론 기반 추출
+      if (cf.corpNo) {
+        const cm = cf.corpNo.match(/(\d[\d\s\-–—]{10,}\d)/);
         if (cm) corpNo = cm[1].replace(/[\s]/g, '');
+      }
+      // 2차: 키워드 기반 fallback
+      if (!corpNo) {
+        const corpLine = normLines.find(l => l.includes('법인등록번호'));
+        if (corpLine) {
+          const cm = corpLine.match(/법인등록번호[\s:：]*(\d[\d\s\-–—]{10,}\d)/);
+          if (cm) corpNo = cm[1].replace(/[\s]/g, '');
+        }
       }
       if (!corpNo) {
         for (const line of normLines) {
@@ -493,62 +692,121 @@ export const StakeholderManager: React.FC<StakeholderManagerProps> = ({
       }
 
       // ── 5. 사업장 소재지 ──
-      let bizAddr = '';
-      const bizAddrLine = normLines.findIndex(l => l.includes('사업장') && (l.includes('소재지') || l.includes('주소')));
-      if (bizAddrLine >= 0) {
-        bizAddr = normLines[bizAddrLine].replace(/.*(?:소재지|주소)[\s:：]*/, '').trim();
-        for (let j = bizAddrLine + 1; j < normLines.length && j <= bizAddrLine + 2; j++) {
-          const next = normLines[j];
-          if (next && !next.match(/본점|업태|종목|개업|사업의|발급|발행/) && next.length > 2) { bizAddr += ' ' + next; } else break;
+      // 한국 도로명주소: 항상 괄호가 닫히는 ")"까지 인식
+      let bizAddr = cf.bizAddr || '';
+      if (!bizAddr) {
+        const bizAddrLine = normLines.findIndex(l => l.includes('사업장') && (l.includes('소재지') || l.includes('주소')));
+        if (bizAddrLine >= 0) {
+          bizAddr = normLines[bizAddrLine].replace(/.*(?:소재지|주소)[\s:：]*/, '').trim();
+          if (!bizAddr.includes(')')) {
+            for (let j = bizAddrLine + 1; j < normLines.length && j <= bizAddrLine + 3; j++) {
+              const next = normLines[j];
+              if (next && !next.match(/본점|업태|종목|개업|사업의|발급|발행/) && next.length > 2) {
+                bizAddr += ' ' + next;
+                if (bizAddr.includes(')')) break;
+              } else break;
+            }
+          }
+          const closeParen = bizAddr.lastIndexOf(')');
+          if (closeParen > 0) bizAddr = bizAddr.substring(0, closeParen + 1);
         }
       }
 
       // ── 6. 본점 소재지 ──
-      let headAddr = '';
-      const headAddrLine = normLines.findIndex(l => l.includes('본점') && (l.includes('소재지') || l.includes('주소')));
-      if (headAddrLine >= 0) {
-        headAddr = normLines[headAddrLine].replace(/.*(?:소재지|주소)[\s:：]*/, '').trim();
-        for (let j = headAddrLine + 1; j < normLines.length && j <= headAddrLine + 2; j++) {
-          const next = normLines[j];
-          if (next && !next.match(/사업장|사업의|업태|종목|발급|발행/) && next.length > 2) { headAddr += ' ' + next; } else break;
+      let headAddr = cf.headAddr || '';
+      if (!headAddr) {
+        const headAddrLine = normLines.findIndex(l => l.includes('본점') && (l.includes('소재지') || l.includes('주소')));
+        if (headAddrLine >= 0) {
+          headAddr = normLines[headAddrLine].replace(/.*(?:소재지|주소)[\s:：]*/, '').trim();
+          if (!headAddr.includes(')')) {
+            for (let j = headAddrLine + 1; j < normLines.length && j <= headAddrLine + 3; j++) {
+              const next = normLines[j];
+              if (next && !next.match(/사업장|사업의|업태|종목|발급|발행/) && next.length > 2) {
+                headAddr += ' ' + next;
+                if (headAddr.includes(')')) break;
+              } else break;
+            }
+          }
+          const closeParen = headAddr.lastIndexOf(')');
+          if (closeParen > 0) headAddr = headAddr.substring(0, closeParen + 1);
         }
       }
 
       // ── 7. 업태 / 종목 ──
       let sector = '';
       let bType = '';
-      const bizTypeLine = normLines.find(l => l.includes('업태') && l.includes('종목'));
-      if (bizTypeLine) {
-        const sm = bizTypeLine.match(/업태[\s:：]*(.+?)(?=종목)/);
-        if (sm) sector = sm[1].trim();
-        const tm = bizTypeLine.match(/종목[\s:：]*(.+)/);
-        if (tm) bType = tm[1].trim();
-      } else {
-        sector = findValue(['업태']);
-        bType = findValue(['종목']);
-      }
-      if (bizTypeLine) {
-        const btIdx = normLines.indexOf(bizTypeLine);
-        for (let j = btIdx + 1; j < normLines.length && j <= btIdx + 2; j++) {
+      const bizTypeStopRe = /발급|발행|발\s*공|단위과세|전자세금|공동사업|국세청|세무서/;
+      const bizTypeSameLine = normLines.find(l => l.includes('업태') && l.includes('종목'));
+      if (bizTypeSameLine) {
+        // Case A: 업태와 종목이 같은 줄 (개인사업자 2열 구조 포함)
+        const sm = bizTypeSameLine.match(/업태[\s:：]*(.+?)(?=\t*종목)/);
+        if (sm) sector = sm[1].replace(/\t/g, '').trim();
+        const tm = bizTypeSameLine.match(/종목[\s:：]*(.+)/);
+        if (tm) bType = tm[1].replace(/\t/g, '').trim();
+        // 다음 줄 연장: TAB이 있으면 왼쪽=업태, 오른쪽=종목
+        const btIdx = normLines.indexOf(bizTypeSameLine);
+        for (let j = btIdx + 1; j < normLines.length && j <= btIdx + 10; j++) {
           const next = normLines[j];
-          if (next && !next.match(/발급|발행|단위과세|전자세금/) && next.length >= 1) {
-            const parts = next.split(/\s{2,}/);
-            if (parts.length >= 2) {
-              sector += (sector ? ', ' : '') + parts[0].trim();
-              bType += (bType ? ', ' : '') + parts.slice(1).join(', ').trim();
-            } else if (parts[0]) {
-              sector += (sector ? ', ' : '') + parts[0].trim();
-            }
-          } else break;
+          if (!next || next.length < 2 || bizTypeStopRe.test(next)) break;
+          // 콜론이 있으면 다른 섹션 (발급사유:, 공동사업자: 등)
+          if (next.search(/[:：]/) > 0) break;
+          // 열 분할: TAB 우선, 없으면 공백 2개 이상으로 분할 (PDF 텍스트 대응)
+          let parts = next.split(/\t+/);
+          if (parts.length < 2) parts = next.split(/\s{2,}/);
+          if (parts.length >= 2) {
+            const left = parts[0].trim();
+            const right = parts.slice(1).join(', ').trim();
+            if (left.length >= 2) sector += (sector ? ', ' : '') + left;
+            if (right.length >= 2) bType += (bType ? ', ' : '') + right;
+          } else {
+            // 단일 열
+            const val = next.replace(/\t/g, '').trim();
+            if (val.length >= 2) sector += (sector ? ', ' : '') + val;
+          }
+        }
+      } else {
+        // Case B: 업태와 종목이 별도 줄 (개인사업자 등)
+        // "업태 값" 줄 찾고, "종목" 줄까지의 사이 줄들을 업태로 수집
+        const sectorIdx = normLines.findIndex(l => l.includes('업태'));
+        const bTypeIdx = normLines.findIndex(l => l.includes('종목'));
+        if (sectorIdx >= 0) {
+          const sm = normLines[sectorIdx].match(/업태[\s:：]*(.+)/);
+          if (sm) sector = sm[1].trim();
+          // 업태 줄과 종목 줄 사이의 줄들 = 업태 연장
+          const sEnd = bTypeIdx > sectorIdx ? bTypeIdx : Math.min(sectorIdx + 10, normLines.length);
+          for (let j = sectorIdx + 1; j < sEnd; j++) {
+            const next = normLines[j];
+            if (!next || next.length < 2 || bizTypeStopRe.test(next)) break;
+            if (next.search(/[:：]/) > 0) break;
+            sector += (sector ? ', ' : '') + next.replace(/\t/g, '').trim();
+          }
+        }
+        if (bTypeIdx >= 0) {
+          const tm = normLines[bTypeIdx].match(/종목[\s:：]*(.+)/);
+          if (tm) bType = tm[1].trim();
+          // 종목 줄 이후 연장 줄 수집
+          for (let j = bTypeIdx + 1; j < normLines.length && j <= bTypeIdx + 10; j++) {
+            const next = normLines[j];
+            if (!next || next.length < 2 || bizTypeStopRe.test(next)) break;
+            if (next.search(/[:：]/) > 0) break;
+            if (next.includes('업태')) break;
+            bType += (bType ? ', ' : '') + next.replace(/\t/g, '').trim();
+          }
         }
       }
 
       // 업태/종목 워터마크 노이즈 제거
       const cleanOcrNoise = (s: string) => s
         .replace(/\d{5,}/g, '')           // "525252525" 워터마크
-        .replace(/[A-Z]+/g, '')           // "NATIONAL", "TAX", "C" 등 모든 영문 대문자 노이즈
+        .replace(/[A-Z]{4,}/g, '')         // "NATIONAL", "REPUBLIC" 등 긴 영문 대문자 노이즈 (SNS 등 짧은 약어 보존)
         .replace(/nts\.go\.kr/gi, '')     // 국세청 URL
-        .replace(/\s{2,}/g, ' ').replace(/[,\s]+$/,'').replace(/^[,\s]+/,'').trim();
+        .replace(/[ea]?[lx]\.?\s*\d{2,4}[-–]\d{3,4}[-–]\d{4}/g, '')  // el. 031-768-1805, ax. 031-768-1807
+        .replace(/\d{2,4}[-–]\d{3,4}[-–]\d{4}/g, '')  // 전화/팩스 번호
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')  // 이메일
+        .replace(/\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일/g, '')  // 날짜
+        .replace(/발\s*급\s*사\s*유[\s:：]*\S*/g, '')  // 발급사유:정정
+        .replace(/(사업자\s*단위\s*과세|적용사업자\s*여부|전자세금계산서|전자우편주소|세무서|국세청|여\s*\(\s*\)|부\s*\(\s*\)).*$/g, '')  // 문서 하단 노이즈
+        .replace(/\s{2,}/g, ' ').replace(/[,\s|:：]+$/,'').replace(/^[,\s|:：]+/,'').trim();
       if (sector) sector = cleanOcrNoise(sector);
       if (bType) bType = cleanOcrNoise(bType);
       // 업태/종목 중복 제거
