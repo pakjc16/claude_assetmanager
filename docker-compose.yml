@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  realtyflow:
+    build: .
+    container_name: realtyflow-dev
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    environment:
+      - GITHUB_REPO=https://github.com/pakjc16/claude_assetmanager.git
+      - GITHUB_BRANCH=main
+    ports:
+      - "3100:3100"
+    restart: unless-stopped

@@ -4,8 +4,11 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
       server: {
-        port: 3000,
+        port: 3100,
         host: '0.0.0.0',
+        watch: {
+          usePolling: true,  // Docker 볼륨 마운트에서 파일 변경 감지 필수
+        },
         proxy: {
           // VWorld 주소검색 API
           '/api/vworld': {
