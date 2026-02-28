@@ -6,6 +6,7 @@ export default defineConfig({
       server: {
         port: 3100,
         host: '0.0.0.0',
+        allowedHosts: ['app.saegeeme.com'],
         watch: {
           usePolling: true,  // Docker 볼륨 마운트에서 파일 변경 감지 필수
         },
