@@ -51,7 +51,8 @@ git push
 - `FacilityManager.tsx` - 시설 인벤토리 및 유지보수 추적
 - `StakeholderManager.tsx` - 임차인/협력업체/관리자 디렉토리 + 우편 라벨 인쇄
 - `FinanceManager.tsx` - 거래 및 수납 추적
-- `ValuationManager.tsx` - 자산 감정 이력
+- `ValuationManager.tsx` - 다중 지표(공시지가/실거래가/시장호가/감정가) 가치평가 관리
+- `registryPdfParser.ts` - 등기부등본 PDF 파서 (pdfjs-dist 컬럼 위치 인식)
 - `LoginPage.tsx` - 로그인 / 초기설정 (신규)
 
 ## 기술 스택
@@ -65,6 +66,8 @@ git push
 - **VWorld API** - 주소 검색 및 토지정보 조회 (API 키 필요)
 - **data.go.kr 건축물대장 API** - 표제부/층별개요 조회 (API 키 필요)
 - **data.go.kr 국가승강기정보 API** - 승강기 기본정보/안전관리자/검사이력/자체점검 조회 (API 키 필요)
+- **pdfjs-dist** - 등기부등본 PDF 텍스트 추출 (X,Y 좌표 기반 컬럼 인식)
+- **polygon-clipping** - 평면도 다각형 불리언 연산
 
 ## 외부 API 연동
 
@@ -420,6 +423,80 @@ volumes:
 - **handleStageClick 수정**: `PAINT_FILL` 활성 시 `handlePaintFill` 호출 후 return
 - **툴바 버튼**: EDIT_POINTS 뒤에 PaintBucket 아이콘 버튼 추가
 - **플로팅 안내바**: 보라색 배경, "클릭하여 영역 채우기" + 허용 오차 슬라이더 + 취소 버튼
+
+### 2026-03-07: 등기부등본 PDF 파싱 + 가치평가 리빌드
+
+#### registryPdfParser.ts (신규 파일)
+- **pdfjs-dist v5** 기반 PDF 텍스트 추출, X/Y 좌표 보존
+- **컬럼 위치 인식 파싱**: 순위번호/등기목적/접수정보/주요등기사항/대상소유자 5개 컬럼
+  - Y좌표 4px 허용오차로 행 그룹화 (`groupIntoRows`)
+  - 헤더 행에서 컬럼 X 경계 자동 감지 (`findTableHeader` → `buildColumns`)
+  - 텍스트 아이템 X 중심좌표로 컬럼 배정 (`getColumnTexts`)
+- **후처리 (`postProcessColumns`)**: 컬럼 경계 오류 보정
+  - 순위번호에 혼입된 한글 → 등기목적으로 이동 (regex: `/^(\d+(?:\s*-\s*\d+)?)\s*(.*)$/`)
+  - 접수정보에 혼입된 키워드(소유권, 근저당, 전세권 등) → 주요등기사항으로 이동
+- **근저당권이전 자동 감지**: 하위 순위번호(3-1, 3-2) 있으면 부모(3)를 `isTransferred` 처리
+- **권리자 추출 (`extractRightHolder`)**: `근저당권자|채권자|임차권자` 키워드 매칭 + 금액 뒤 텍스트 fallback
+- **매매목록 파싱 (`parseTradeList`)**: 목록번호, 거래가액, 일련번호 테이블
+- **주소 추출 (`extractPdfAddress`)**: `[토지]`/`[건물]` 주소 자동 감지
+- **pdfjs-dist 워커 설정**: Vite 환경 `import.meta.url` 기반
+  ```typescript
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.mjs', import.meta.url
+  ).toString();
+  ```
+
+#### PropertyManager.tsx 등기부등본 PDF 업로드
+- **PDF 업로드 버튼**: 토지/건물 등기부 섹션 헤더에 Upload 아이콘
+- **핸들러**: `handleRegistryPdfUpload` → `extractPdfData` → `parseRegistrySummary(rows)` + `parseTradeList(plainText)`
+- **주소 매칭**: PDF 주소 ↔ 토지/건물 지번주소 비교, 불일치 시 confirm 확인
+- **미리보기 모달**: 주소 매칭 상태(초록/주황) + 소유자 + 갑구/을구 체크박스 선택 + 매매목록
+  - 이전된 항목: `opacity-20 line-through` 음영처리
+  - 을구 채권액: `formatMoneyInput` 글로벌 금액단위 연동
+  - 매매목록 거래가액: 수동 수정 가능한 input (border-dashed 스타일)
+- **적용 로직**: 선택된 갑구/을구 엔트리 → 기존 entries에 병합, 매매목록 체크 시 → ValuationHistory 생성 (indicatorType: 'ACTUAL_TRANSACTION')
+
+#### ValuationManager.tsx 전면 리빌드
+- **레이아웃**: PropertyManager 패턴 (lg:w-72 사이드바 + 오른쪽 콘텐츠)
+- **대상 선택**: 물건 사이드바 → 토지/건물 서브 버튼
+- **지표탭**: 전체 | 공시지가 | 실거래가 | 시장호가 | 감정가
+- **추이 차트**: Recharts LineChart, X축=연도, Y축=가격, 지표별 색상 구분
+- **이력 테이블**: 연도/지표/가격/㎡당 단가/출처/비고 + CRUD (추가/수정/삭제)
+- **추가/수정 모달**: 대상(lot/building) | 지표유형 | 연도 | 가격 | 출처 | 비고
+- **시장 비교 사례**: MarketComparable 카드 그리드 + CRUD
+- **레거시 호환**: `indicatorType` 없는 기존 dummyData → targetType 기반 자동 분류
+
+#### types.ts 타입 확장
+- `ValuationIndicatorType`: OFFICIAL_LAND_PRICE | OFFICIAL_BUILDING_PRICE | ACTUAL_TRANSACTION | MARKET_ASKING_PRICE | APPRAISAL
+- `RegistryTradeEntry`: 매매목록 (listNo, tradeAmount, items[])
+- `ValuationHistory` 확장: indicatorType?, month?, transactionDate?, source?
+- `PropertyRegistry` 확장: tradeEntries?: RegistryTradeEntry[]
+
+#### App.tsx props 연결
+- PropertyManager: `onAddValuation` prop 추가
+- ValuationManager: `onUpdateComparable`, `onDeleteComparable` prop 추가
+
+#### PDF 파싱 트러블슈팅 기록
+
+**문제 1: 순위번호에 등기목적 텍스트 혼입**
+- 증상: "6 압류" → 순위="6 압", 목적="류"
+- 원인: pdfjs 텍스트 아이템의 X좌표가 컬럼 경계 근처에 위치
+- 해결: `postProcessColumns`에서 순위번호의 비숫자 텍스트를 등기목적으로 이동
+
+**문제 2: 을구 순위번호 "3-1" 분리**
+- 증상: "3-1" → 순위="3-", 목적="1" (하이픈 순위가 분리됨)
+- 원인: pdfjs가 "3 - 1"(공백 포함)로 추출, 기존 regex가 공백 있는 하이픈 미처리
+- 해결: regex `/^(\d+(?:\s*-\s*\d+)?)\s*(.*)$/` + `replace(/\s/g, '')` 정규화
+
+**문제 3: 권리자에 금액 혼입**
+- 증상: "금2,880,000,000원 송파신용협동조합" 전체가 권리자로 표시
+- 원인: 주요등기사항 컬럼에 금액+권리자 텍스트가 함께 배치
+- 해결: `extractRightHolder` fallback — `금X원` 패턴 뒤 텍스트를 권리자로 추출
+
+**문제 4: 채권액 글로벌 금액단위 미연동**
+- 증상: 원 단위 고정 표시, 만원/억원 설정 무시
+- 원인: `toLocaleString('ko-KR')` + "원" 하드코딩 사용
+- 해결: 미리보기 모달 + 메인 등기부 화면 모두 `formatMoneyInput` prop 적용
 
 ### 2026-03-01: 사업자등록증 OCR 개인사업자 양식 보강 (symbol-level 재구성)
 
