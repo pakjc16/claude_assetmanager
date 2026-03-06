@@ -534,6 +534,7 @@ function App() {
                     onDeleteFloorPlan={id => setFloorPlans(prev => prev.filter(p => p.id !== id))}
                     onSaveZone={zone => setFloorZones(prev => [...prev.filter(z => z.id !== zone.id), zone])}
                     onDeleteZone={id => setFloorZones(prev => prev.filter(z => z.id !== id))}
+                    onAddValuation={v => setValuations(prev => [...prev, v])}
                   />
                )}
                {activeTab === 'FACILITY' && (
@@ -590,7 +591,7 @@ function App() {
                {activeTab === 'STAKEHOLDER' && <StakeholderManager stakeholders={stakeholders} onAddStakeholder={s => setStakeholders(prev => [...prev, s])} onUpdateStakeholder={s => setStakeholders(prev => prev.map(sh => sh.id === s.id ? s : sh))} onDeleteStakeholder={id => setStakeholders(prev => prev.filter(s => s.id !== id))} leaseContracts={leaseContracts} maintenanceContracts={maintenanceContracts} properties={properties} units={units} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))} formatMoney={formatMoney} referenceDate={referenceDate} ntsApiKey={appSettings.odcloudApiKey} googleVisionApiKey={appSettings.googleVisionApiKey} />}
                {activeTab === 'VALUATION' && (
                  /* Fixed duplicate attributes error by renaming repeated parseNumberInput to parseMoneyInput */
-                 <ValuationManager properties={properties} valuations={valuations} comparables={comparables} onAddValuation={v => setValuations(prev => [...prev, v])} onUpdateValuation={v => setValuations(prev => prev.map(va => va.id === v.id ? v : va))} onDeleteValuation={id => setValuations(prev => prev.filter(v => v.id !== id))} onAddComparable={c => setComparables(prev => [...prev, c])} formatMoney={formatMoney} formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'} areaUnit={areaUnit} />
+                 <ValuationManager properties={properties} valuations={valuations} comparables={comparables} onAddValuation={v => setValuations(prev => [...prev, v])} onUpdateValuation={v => setValuations(prev => prev.map(va => va.id === v.id ? v : va))} onDeleteValuation={id => setValuations(prev => prev.filter(v => v.id !== id))} onAddComparable={c => setComparables(prev => [...prev, c])} onUpdateComparable={c => setComparables(prev => prev.map(cc => cc.id === c.id ? c : cc))} onDeleteComparable={id => setComparables(prev => prev.filter(c => c.id !== id))} formatMoney={formatMoney} formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'} areaUnit={areaUnit} />
                )}
                {activeTab === 'PARKING' && (
                  <ParkingManager

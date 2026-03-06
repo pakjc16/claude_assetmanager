@@ -180,10 +180,25 @@ export interface RegistryEulEntry {
   details?: string;          // 기타사항
 }
 
+export interface RegistryTradeEntry {
+  id: string;
+  listNo: string;              // 목록번호
+  tradeAmount: number;         // 거래가액 (원)
+  items: {
+    serialNo: number;
+    type: '토지' | '건물';
+    address: string;
+    rankNo: string;
+    causeDate: string;
+    cause: string;
+  }[];
+}
+
 export interface PropertyRegistry {
   reviewDate?: string;           // 열람일자
   gabEntries: RegistryGabEntry[]; // 갑구 (소유권에 관한 사항)
   eulEntries: RegistryEulEntry[]; // 을구 (소유권 외 기타 권리)
+  tradeEntries?: RegistryTradeEntry[]; // 매매목록
 }
 
 export interface Building {
@@ -400,14 +415,25 @@ export interface DashboardFinancials {
   monthlyHistory: any[];
 }
 
+export type ValuationIndicatorType =
+  | 'OFFICIAL_LAND_PRICE'     // 공시지가
+  | 'OFFICIAL_BUILDING_PRICE' // 시가표준액
+  | 'ACTUAL_TRANSACTION'      // 실거래가
+  | 'MARKET_ASKING_PRICE'     // 시장호가
+  | 'APPRAISAL';              // 감정가
+
 export interface ValuationHistory {
   id: string;
-  targetId: string; 
+  targetId: string;
   targetType: 'PROPERTY' | 'LOT' | 'BUILDING';
   year: number;
-  officialValue: number; 
-  marketValue?: number;  
+  officialValue: number;
+  marketValue?: number;
   note?: string;
+  indicatorType?: ValuationIndicatorType;
+  month?: number;              // 월 (실거래가 등)
+  transactionDate?: string;    // 거래일자 (YYYY-MM-DD)
+  source?: string;             // 출처 (등기부등본, 국토부 등)
 }
 
 export interface MarketComparable {

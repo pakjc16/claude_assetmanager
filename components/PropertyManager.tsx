@@ -1,8 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder, RegistryGabEntry, RegistryEulEntry, PropertyRegistry } from '../types';
-import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check, ChevronDown, ChevronUp, Camera, Maximize2, Star, Crop } from 'lucide-react';
+import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder, RegistryGabEntry, RegistryEulEntry, PropertyRegistry, ValuationHistory, RegistryTradeEntry } from '../types';
+import { extractPdfData, parseRegistrySummary, parseTradeList, extractPdfAddress, ParsedRegistry, ParsedTradeEntry } from './registryPdfParser';
+import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check, ChevronDown, ChevronUp, Camera, Maximize2, Star, Crop, Upload } from 'lucide-react';
 import { AddressSearch } from './AddressSearch';
 import { AppSettings } from '../App';
 import FloorPlanViewer from './FloorPlanViewer';
@@ -309,6 +310,7 @@ interface PropertyManagerProps {
   onDeleteFloorPlan: (id: string) => void;
   onSaveZone: (zone: FloorZone) => void;
   onDeleteZone: (id: string) => void;
+  onAddValuation?: (v: ValuationHistory) => void;
 }
 
 // 조닝 세부용도 라벨
@@ -811,7 +813,7 @@ const KakaoMapPin: React.FC<{ address: string; apiKey: string; className?: strin
 
 export const PropertyManager: React.FC<PropertyManagerProps> = ({
   properties, units, onAddProperty, onUpdateProperty, onDeleteProperty, onAddUnit, onUpdateUnit, formatArea, formatNumberInput, parseNumberInput, formatMoneyInput, parseMoneyInput, moneyLabel, appSettings,
-  leaseContracts, stakeholders, floorPlans, floorZones, onSaveFloorPlan, onDeleteFloorPlan, onSaveZone, onDeleteZone
+  leaseContracts, stakeholders, floorPlans, floorZones, onSaveFloorPlan, onDeleteFloorPlan, onSaveZone, onDeleteZone, onAddValuation
 }) => {
   const [selectedPropId, setSelectedPropId] = useState<string>(properties[0]?.id || '');
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LAND' | 'BUILDING' | 'FLOOR' | 'UNIT' | 'ZONING'>('OVERVIEW');
@@ -874,6 +876,21 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   const EUL_INIT = { rankNo: '', purpose: '', receiptDate: '', receiptNo: '', rightHolderText: '', claimAmount: '' };
   const [newGabForms, setNewGabForms] = useState<Record<string, typeof GAB_INIT>>({});
   const [newEulForms, setNewEulForms] = useState<Record<string, typeof EUL_INIT>>({});
+
+  // 등기부 PDF 파싱 상태
+  const [registryPdfParsing, setRegistryPdfParsing] = useState(false);
+  const [registryPdfPreview, setRegistryPdfPreview] = useState<{
+    itemType: 'lot' | 'building';
+    targetId: string;
+    addressMatch: { pdf: string; local: string; matched: boolean } | null;
+    parsed: ParsedRegistry;
+    trade: ParsedTradeEntry | null;
+    selectedGab: Set<number>;
+    selectedEul: Set<number>;
+    applyTrade: boolean;
+  } | null>(null);
+  const registryPdfInputRef = useRef<HTMLInputElement>(null);
+  const registryPdfTargetRef = useRef<{ itemType: 'lot' | 'building'; targetId: string } | null>(null);
 
   // 사진 업로드 모달 상태
   const [isPhotoUploadModalOpen, setIsPhotoUploadModalOpen] = useState(false);
@@ -1465,6 +1482,140 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     onUpdateProperty(updated);
   };
 
+  // ── 등기부 PDF 파싱 핸들러 ──────────────────────
+  const handleRegistryPdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedProperty || !registryPdfTargetRef.current) return;
+    e.target.value = ''; // reset input
+
+    const { itemType, targetId } = registryPdfTargetRef.current;
+    setRegistryPdfParsing(true);
+
+    try {
+      const { rows, plainText } = await extractPdfData(file);
+
+      // 주소 매칭
+      const pdfAddr = extractPdfAddress(plainText);
+      let addressMatch: { pdf: string; local: string; matched: boolean } | null = null;
+      if (pdfAddr) {
+        let localAddr = '';
+        if (itemType === 'lot') {
+          const lot = selectedProperty.lots.find(l => l.id === targetId);
+          if (lot) localAddr = getFullAddress(lot.address);
+        } else {
+          const bld = selectedProperty.buildings.find(b => b.id === targetId);
+          if (bld) {
+            const lot = selectedProperty.lots[0];
+            localAddr = lot ? getFullAddress(lot.address) + ' ' + bld.name : bld.name;
+          }
+        }
+        const normalizedPdf = pdfAddr.address.replace(/\s+/g, ' ').trim();
+        const normalizedLocal = localAddr.replace(/\s+/g, ' ').trim();
+        addressMatch = { pdf: normalizedPdf, local: normalizedLocal, matched: normalizedPdf.includes(normalizedLocal) || normalizedLocal.includes(normalizedPdf) };
+      }
+
+      const parsed = parseRegistrySummary(rows);
+      const trade = parseTradeList(plainText);
+
+      setRegistryPdfPreview({
+        itemType,
+        targetId,
+        addressMatch,
+        parsed,
+        trade,
+        selectedGab: new Set(parsed.gabEntries.map((_, i) => i)),
+        selectedEul: new Set(parsed.eulEntries.map((_, i) => i)),
+        applyTrade: !!trade,
+      });
+    } catch (err) {
+      console.error('PDF 파싱 오류:', err);
+      alert('PDF 파싱에 실패했습니다. 등기부등본 PDF 형식을 확인해주세요.');
+    } finally {
+      setRegistryPdfParsing(false);
+    }
+  };
+
+  const applyRegistryPdf = () => {
+    if (!registryPdfPreview || !selectedProperty) return;
+    const { itemType, targetId, parsed, trade, selectedGab, selectedEul, applyTrade } = registryPdfPreview;
+
+    const updated = { ...selectedProperty };
+
+    // 선택된 갑구 엔트리 생성
+    const newGabEntries: RegistryGabEntry[] = parsed.gabEntries
+      .filter((_, i) => selectedGab.has(i))
+      .map((e, i) => ({
+        id: `pdf-gab-${Date.now()}-${i}`,
+        rankNo: e.rankNo,
+        purpose: e.purpose,
+        receiptDate: e.receiptDate,
+        receiptNo: e.receiptNo,
+        rightHolderText: e.mainText,
+        rightHolderId: stakeholders.find(s => e.mainText.includes(s.name))?.id,
+        isDeleted: e.isTransferred,
+      }));
+
+    // 선택된 을구 엔트리 생성
+    const newEulEntries: RegistryEulEntry[] = parsed.eulEntries
+      .filter((_, i) => selectedEul.has(i))
+      .map((e, i) => ({
+        id: `pdf-eul-${Date.now()}-${i}`,
+        rankNo: e.rankNo,
+        purpose: e.purpose,
+        receiptDate: e.receiptDate,
+        receiptNo: e.receiptNo,
+        rightHolderText: e.rightHolderText || e.mainText,
+        rightHolderId: stakeholders.find(s => (e.rightHolderText || e.mainText).includes(s.name))?.id,
+        claimAmount: e.claimAmount || undefined,
+        acquisition: '말소' as const,
+      }));
+
+    // 매매목록 → tradeEntries
+    let newTradeEntries: RegistryTradeEntry[] | undefined;
+    if (applyTrade && trade) {
+      newTradeEntries = [{
+        id: `pdf-trade-${Date.now()}`,
+        listNo: trade.listNo,
+        tradeAmount: trade.tradeAmount,
+        items: trade.items,
+      }];
+    }
+
+    // 기존 registry에 merge
+    const merge = (reg?: PropertyRegistry): PropertyRegistry => ({
+      ...(reg ?? emptyRegistry()),
+      gabEntries: [...(reg?.gabEntries ?? []), ...newGabEntries],
+      eulEntries: [...(reg?.eulEntries ?? []), ...newEulEntries],
+      tradeEntries: newTradeEntries ? [...(reg?.tradeEntries ?? []), ...newTradeEntries] : reg?.tradeEntries,
+    });
+
+    if (itemType === 'lot') {
+      updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: merge(l.registry) } : l);
+    } else {
+      updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: merge(b.registry) } : b);
+    }
+
+    onUpdateProperty(updated);
+
+    // 매매목록 → 실거래가 ValuationHistory
+    if (applyTrade && trade && trade.tradeAmount && onAddValuation) {
+      const valuation: ValuationHistory = {
+        id: `val-trade-${Date.now()}`,
+        targetId,
+        targetType: itemType === 'lot' ? 'LOT' : 'BUILDING',
+        year: new Date().getFullYear(),
+        officialValue: trade.tradeAmount,
+        indicatorType: 'ACTUAL_TRANSACTION',
+        transactionDate: trade.items[0]?.causeDate || '',
+        source: '등기부등본',
+        note: `매매목록 ${trade.listNo}번 거래가액`,
+      };
+      onAddValuation(valuation);
+    }
+
+    setRegistryPdfPreview(null);
+  };
+
   // 등기부 섹션 렌더러
   const GAB_PURPOSES = ['소유권보존', '소유권이전', '소유권경정', '소유권말소', '소유권이전청구권가등기', '공유물분할', '기타'];
   const EUL_PURPOSES = ['근저당권설정', '근저당권이전', '근저당권말소', '저당권설정', '전세권설정', '전세권이전', '전세권말소', '지상권설정', '지역권설정', '임차권설정', '가압류', '가처분', '압류', '임의경매개시결정', '강제경매개시결정', '기타'];
@@ -1501,17 +1652,29 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
               </button>
             ))}
           </div>
-          <input type="date" value={registry?.reviewDate ?? ''}
-            onChange={e => updateRegistryMeta(itemType, targetId, { reviewDate: e.target.value })}
-            className="text-xs border border-[#dadce0] rounded px-1.5 py-1 focus:outline-none focus:border-[#1a73e8]"
-            title="열람일자"/>
+          <div className="flex items-center gap-1.5">
+            <input type="date" value={registry?.reviewDate ?? ''}
+              onChange={e => updateRegistryMeta(itemType, targetId, { reviewDate: e.target.value })}
+              className="text-xs border border-[#dadce0] rounded px-1.5 py-1 focus:outline-none focus:border-[#1a73e8]"
+              title="열람일자"/>
+            <button
+              onClick={() => {
+                registryPdfTargetRef.current = { itemType, targetId };
+                registryPdfInputRef.current?.click();
+              }}
+              disabled={registryPdfParsing}
+              className="p-1 rounded hover:bg-[#e8f0fe] text-[#5f6368] hover:text-[#1a73e8] transition-colors disabled:opacity-40"
+              title="등기부등본 PDF 업로드">
+              {registryPdfParsing ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
+            </button>
+          </div>
         </div>
 
         {/* 을구 채권액 합계 */}
         {activeTab === '을구' && totalClaim > 0 && (
           <div className="px-3 md:px-4 py-1.5 bg-[#e8f0fe] border-b border-[#dadce0] flex items-center gap-2">
             <span className="text-[10px] md:text-xs text-[#5f6368]">채권액 합계</span>
-            <span className="text-xs md:text-sm font-black text-[#1a73e8]">{totalClaim.toLocaleString('ko-KR')}원</span>
+            <span className="text-xs md:text-sm font-black text-[#1a73e8]">{formatMoneyInput(totalClaim)}</span>
           </div>
         )}
 
@@ -1615,7 +1778,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                           {entry.rightHolderText}
                         </td>
                         <td className={`p-1.5 md:p-3 text-right whitespace-nowrap font-medium ${hasDebt ? 'text-red-600' : 'text-[#9aa0a6]'}`}>
-                          {entry.claimAmount ? `${entry.claimAmount.toLocaleString('ko-KR')}원` : '-'}
+                          {entry.claimAmount ? formatMoneyInput(entry.claimAmount) : '-'}
                         </td>
                         <td className="p-1.5 md:p-3">
                           <button onClick={() => deleteEulEntry(itemType, targetId, entry.id)}
@@ -4428,6 +4591,235 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           />
         );
       })()}
+
+      {/* hidden PDF input - 메인 레벨에 배치 (갤러리 모달 밖) */}
+      <input ref={registryPdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handleRegistryPdfUpload}/>
+
+      {/* ── 등기부 PDF 미리보기 모달 ── */}
+      {registryPdfPreview && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setRegistryPdfPreview(null)}>
+          <div onClick={e => e.stopPropagation()} className="w-full max-w-3xl bg-white rounded-xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            {/* 헤더 */}
+            <div className="px-4 md:px-6 py-3 border-b border-[#dadce0] flex items-center justify-between bg-[#f8f9fa]">
+              <h3 className="font-black text-sm md:text-base text-[#202124]">등기부등본 PDF 파싱 결과</h3>
+              <button onClick={() => setRegistryPdfPreview(null)} className="p-1 hover:bg-[#e8eaed] rounded-full"><X size={18}/></button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-4 md:p-6 space-y-4">
+              {/* 주소 매칭 */}
+              {registryPdfPreview.addressMatch && (
+                <div className={`p-3 rounded-lg border ${registryPdfPreview.addressMatch.matched ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    {registryPdfPreview.addressMatch.matched
+                      ? <Check size={14} className="text-green-600"/>
+                      : <Info size={14} className="text-orange-600"/>}
+                    <span className={`text-xs font-bold ${registryPdfPreview.addressMatch.matched ? 'text-green-700' : 'text-orange-700'}`}>
+                      {registryPdfPreview.addressMatch.matched ? '주소 일치' : '주소 불일치'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-[#5f6368] space-y-0.5">
+                    <div>PDF: {registryPdfPreview.addressMatch.pdf}</div>
+                    <div>물건: {registryPdfPreview.addressMatch.local}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* 소유자 정보 */}
+              {registryPdfPreview.parsed.owners.length > 0 && (
+                <div className="border border-[#dadce0] rounded-lg p-3">
+                  <h4 className="text-xs font-bold text-[#5f6368] mb-2">소유지분현황</h4>
+                  {registryPdfPreview.parsed.owners.map((o, i) => (
+                    <div key={i} className="flex items-center gap-3 text-xs py-1">
+                      <span className="font-bold text-[#202124]">{o.name}</span>
+                      {o.regNo && <span className="text-[10px] text-[#9aa0a6]">{o.regNo}</span>}
+                      <span className="text-[#5f6368]">{o.share}</span>
+                      {o.address && <span className="text-[10px] text-[#9aa0a6] truncate max-w-[200px]">{o.address}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 갑구 */}
+              <div className="border border-[#dadce0] rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-[#f8f9fa] border-b border-[#dadce0] flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-[#202124]">갑구 ({registryPdfPreview.parsed.gabEntries.length}건)</h4>
+                  <label className="flex items-center gap-1 text-[10px] text-[#5f6368]">
+                    <input type="checkbox"
+                      checked={registryPdfPreview.selectedGab.size === registryPdfPreview.parsed.gabEntries.length}
+                      onChange={e => {
+                        setRegistryPdfPreview(prev => prev ? {
+                          ...prev,
+                          selectedGab: e.target.checked ? new Set(prev.parsed.gabEntries.map((_, i) => i)) : new Set()
+                        } : null);
+                      }}
+                      className="rounded"/>
+                    전체선택
+                  </label>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs min-w-[400px]">
+                    <thead className="bg-[#f8f9fa]">
+                      <tr className="text-[8px] text-[#5f6368] uppercase font-bold">
+                        <th className="p-1.5 w-6"></th>
+                        <th className="p-1.5 text-center w-10">순위</th>
+                        <th className="p-1.5 text-left">등기목적</th>
+                        <th className="p-1.5 text-left">접수</th>
+                        <th className="p-1.5 text-left">주요등기사항</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#f1f3f4]">
+                      {registryPdfPreview.parsed.gabEntries.map((e, i) => (
+                        <tr key={i} className={`hover:bg-[#f8f9fa] ${e.isTransferred ? 'opacity-20 line-through' : ''}`}>
+                          <td className="p-1.5 text-center">
+                            <input type="checkbox" checked={registryPdfPreview.selectedGab.has(i)}
+                              onChange={ev => {
+                                setRegistryPdfPreview(prev => {
+                                  if (!prev) return null;
+                                  const s = new Set(prev.selectedGab);
+                                  ev.target.checked ? s.add(i) : s.delete(i);
+                                  return { ...prev, selectedGab: s };
+                                });
+                              }}
+                              className="rounded"/>
+                          </td>
+                          <td className="p-1.5 text-center font-bold">{e.rankNo}</td>
+                          <td className="p-1.5 font-medium">
+                            {e.purpose}
+                            {e.isTransferred && <span className="ml-1 text-[8px] text-orange-500 font-bold">(이전)</span>}
+                          </td>
+                          <td className="p-1.5 text-[#5f6368] whitespace-nowrap">{e.receiptDate}<br/>{e.receiptNo}</td>
+                          <td className="p-1.5 text-[#202124] max-w-[200px] truncate">{e.mainText}</td>
+                        </tr>
+                      ))}
+                      {registryPdfPreview.parsed.gabEntries.length === 0 && (
+                        <tr><td colSpan={5} className="p-3 text-center text-[#9aa0a6]">갑구 항목 없음</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 을구 */}
+              <div className="border border-[#dadce0] rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-[#f8f9fa] border-b border-[#dadce0] flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-[#202124]">을구 ({registryPdfPreview.parsed.eulEntries.length}건)</h4>
+                  <label className="flex items-center gap-1 text-[10px] text-[#5f6368]">
+                    <input type="checkbox"
+                      checked={registryPdfPreview.selectedEul.size === registryPdfPreview.parsed.eulEntries.length}
+                      onChange={e => {
+                        setRegistryPdfPreview(prev => prev ? {
+                          ...prev,
+                          selectedEul: e.target.checked ? new Set(prev.parsed.eulEntries.map((_, i) => i)) : new Set()
+                        } : null);
+                      }}
+                      className="rounded"/>
+                    전체선택
+                  </label>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs min-w-[450px]">
+                    <thead className="bg-[#f8f9fa]">
+                      <tr className="text-[8px] text-[#5f6368] uppercase font-bold">
+                        <th className="p-1.5 w-6"></th>
+                        <th className="p-1.5 text-center w-10">순위</th>
+                        <th className="p-1.5 text-left">등기목적</th>
+                        <th className="p-1.5 text-left">접수</th>
+                        <th className="p-1.5 text-left">권리자</th>
+                        <th className="p-1.5 text-right">채권액</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#f1f3f4]">
+                      {registryPdfPreview.parsed.eulEntries.map((e, i) => (
+                        <tr key={i} className={`hover:bg-[#f8f9fa] ${e.isTransferred ? 'opacity-20 line-through' : ''}`}>
+                          <td className="p-1.5 text-center">
+                            <input type="checkbox" checked={registryPdfPreview.selectedEul.has(i)}
+                              onChange={ev => {
+                                setRegistryPdfPreview(prev => {
+                                  if (!prev) return null;
+                                  const s = new Set(prev.selectedEul);
+                                  ev.target.checked ? s.add(i) : s.delete(i);
+                                  return { ...prev, selectedEul: s };
+                                });
+                              }}
+                              className="rounded"/>
+                          </td>
+                          <td className="p-1.5 text-center font-bold">{e.rankNo}</td>
+                          <td className="p-1.5 font-medium text-red-600">
+                            {e.purpose}
+                            {e.isTransferred && <span className="ml-1 text-[8px] text-orange-500 font-bold">(이전)</span>}
+                          </td>
+                          <td className="p-1.5 text-[#5f6368] whitespace-nowrap">{e.receiptDate}<br/>{e.receiptNo}</td>
+                          <td className="p-1.5 text-[#202124] max-w-[160px] truncate" title={e.rightHolderText || e.mainText}>{e.rightHolderText || e.mainText}</td>
+                          <td className="p-1.5 text-right font-medium text-red-600 whitespace-nowrap">
+                            {e.claimAmount ? formatMoneyInput(e.claimAmount) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                      {registryPdfPreview.parsed.eulEntries.length === 0 && (
+                        <tr><td colSpan={6} className="p-3 text-center text-[#9aa0a6]">을구 항목 없음</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 매매목록 */}
+              {registryPdfPreview.trade && (
+                <div className="border border-[#dadce0] rounded-lg overflow-hidden">
+                  <div className="px-3 py-2 bg-[#e8f0fe] border-b border-[#dadce0] flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-[#1a73e8]">매매목록 (목록번호 {registryPdfPreview.trade.listNo})</h4>
+                    <label className="flex items-center gap-1 text-[10px] text-[#1a73e8]">
+                      <input type="checkbox" checked={registryPdfPreview.applyTrade}
+                        onChange={e => setRegistryPdfPreview(prev => prev ? { ...prev, applyTrade: e.target.checked } : null)}
+                        className="rounded"/>
+                      실거래가 등록
+                    </label>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    <div className="text-sm font-bold text-[#202124] flex items-center gap-2">
+                      <span>거래가액:</span>
+                      <input type="text"
+                        className="text-sm font-bold text-[#1a73e8] bg-transparent border-b border-dashed border-[#1a73e8] text-right outline-none w-40 focus:border-solid"
+                        value={formatMoneyInput(registryPdfPreview.trade.tradeAmount)}
+                        onChange={e => {
+                          const val = parseMoneyInput(e.target.value);
+                          setRegistryPdfPreview(prev => prev?.trade ? {
+                            ...prev,
+                            trade: { ...prev.trade, tradeAmount: val }
+                          } : prev);
+                        }}
+                      />
+                    </div>
+                    {registryPdfPreview.trade.items.length > 0 && (
+                      <div className="text-xs text-[#5f6368] space-y-1">
+                        {registryPdfPreview.trade.items.map((item, i) => (
+                          <div key={i}>{item.serialNo}. [{item.type}] {item.address} {item.cause && `(${item.causeDate} ${item.cause})`}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 푸터 */}
+            <div className="px-4 md:px-6 py-3 border-t border-[#dadce0] bg-[#f8f9fa] flex items-center justify-between">
+              <span className="text-[10px] text-[#9aa0a6]">
+                선택: 갑구 {registryPdfPreview.selectedGab.size}건 / 을구 {registryPdfPreview.selectedEul.size}건
+                {registryPdfPreview.applyTrade && registryPdfPreview.trade && ' + 실거래가'}
+              </span>
+              <div className="flex gap-2">
+                <button onClick={() => setRegistryPdfPreview(null)}
+                  className="px-4 py-1.5 bg-[#f1f3f4] text-[#5f6368] rounded-lg text-xs font-bold hover:bg-[#e8eaed]">취소</button>
+                <button onClick={applyRegistryPdf}
+                  disabled={registryPdfPreview.selectedGab.size === 0 && registryPdfPreview.selectedEul.size === 0 && !registryPdfPreview.applyTrade}
+                  className="px-4 py-1.5 bg-[#1a73e8] text-white rounded-lg text-xs font-bold hover:bg-[#1557b0] disabled:opacity-40">적용</button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
