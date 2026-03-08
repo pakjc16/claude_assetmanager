@@ -118,6 +118,7 @@ const fetchBuildingTitleInfo = async (pnu: string, apiKey: string): Promise<Buil
     console.log('[건축물대장 표제부] 파라미터:', params);
 
     const res = await fetch(url);
+    if (!res.ok) { console.error('[건축물대장 표제부] HTTP 오류:', res.status); return []; }
     const data = await res.json();
     console.log('[건축물대장 표제부] 응답:', data);
 
@@ -176,6 +177,7 @@ const fetchBuildingFloorInfo = async (pnu: string, apiKey: string): Promise<Buil
     console.log('[건축물대장 층별개요] 요청:', url);
 
     const res = await fetch(url);
+    if (!res.ok) { console.error('[건축물대장 층별개요] HTTP 오류:', res.status); return []; }
     const data = await res.json();
     console.log('[건축물대장 층별개요] 응답:', data);
 
@@ -206,6 +208,7 @@ const fetchLandInfo = async (pnu: string, apiKey: string): Promise<LandInfo | nu
   try {
     const url = `/api/land/ladfrlList?pnu=${pnu}&format=json&numOfRows=1&pageNo=1&key=${apiKey}`;
     const res = await fetch(url);
+    if (!res.ok) { console.error('[토지정보 API] HTTP 오류:', res.status); return null; }
     const data = await res.json();
     console.log('[토지정보 API] 응답:', data);
 
@@ -233,6 +236,7 @@ const fetchLandUseAttr = async (pnu: string, apiKey: string): Promise<LandUseAtt
   try {
     const url = `/api/land/getLandUseAttr?pnu=${pnu}&cnflcAt=1&format=xml&numOfRows=100&pageNo=1&key=${apiKey}`;
     const res = await fetch(url);
+    if (!res.ok) { console.error('[토지이용계획] HTTP 오류:', res.status); return []; }
     const text = await res.text();
     const parser = new DOMParser();
     const doc = parser.parseFromString(text, 'application/xml');
@@ -291,7 +295,6 @@ interface PropertyManagerProps {
   onAddProperty: (prop: Property) => void;
   onUpdateProperty: (prop: Property) => void;
   onDeleteProperty: (id: string) => void;
-  onUpdateBuilding: (b: Building) => void;
   onAddUnit: (unit: Unit) => void;
   onUpdateUnit: (unit: Unit) => void;
   formatArea: (areaM2: number) => string;
@@ -905,6 +908,20 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
   const [isLoadingRegistryPdf, setIsLoadingRegistryPdf] = useState(false);
   const newPropPdfInputRef = useRef<HTMLInputElement>(null);
 
+  // 토지/건물 추가 시 등기부 PDF 데이터 임시 저장
+  const [registryDataForNewLot, setRegistryDataForNewLot] = useState<{
+    parsed: ParsedRegistry;
+    trade: ParsedTradeEntry | null;
+    reviewDate: string;
+  } | null>(null);
+  const [registryDataForNewBuilding, setRegistryDataForNewBuilding] = useState<{
+    parsed: ParsedRegistry;
+    trade: ParsedTradeEntry | null;
+    reviewDate: string;
+  } | null>(null);
+  const newLotPdfInputRef = useRef<HTMLInputElement>(null);
+  const newBuildingPdfInputRef = useRef<HTMLInputElement>(null);
+
   // 사진 업로드 모달 상태
   const [isPhotoUploadModalOpen, setIsPhotoUploadModalOpen] = useState(false);
   const [pendingPhotoFiles, setPendingPhotoFiles] = useState<File[]>([]);
@@ -1075,52 +1092,8 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
         // 등기부 PDF 데이터가 있으면 registry에 적용
         if (registryDataForNewProp) {
-          const { type: regType, parsed, trade } = registryDataForNewProp;
-          const ownerEntries: RegistryOwnerEntry[] = parsed.owners.map((o, i) => ({
-            id: `pdf-owner-${Date.now()}-${i}`,
-            name: o.name,
-            regNo: o.regNo,
-            share: o.share,
-            address: o.address,
-            rankNo: o.rankNo,
-            stakeholderId: stakeholders.find(s => s.name === o.name.replace(/\s*\(.*\)\s*/, '').trim())?.id,
-          }));
-          const gabEntries: RegistryGabEntry[] = parsed.gabEntries.map((e, i) => ({
-            id: `pdf-gab-${Date.now()}-${i}`,
-            rankNo: e.rankNo,
-            purpose: e.purpose,
-            receiptDate: e.receiptDate,
-            receiptNo: e.receiptNo,
-            rightHolderText: e.mainText,
-            rightHolderId: stakeholders.find(s => e.mainText.includes(s.name))?.id,
-            isDeleted: e.isTransferred,
-          }));
-          const eulEntries: RegistryEulEntry[] = parsed.eulEntries.map((e, i) => ({
-            id: `pdf-eul-${Date.now()}-${i}`,
-            rankNo: e.rankNo,
-            purpose: e.purpose,
-            receiptDate: e.receiptDate,
-            receiptNo: e.receiptNo,
-            rightHolderText: e.rightHolderText || e.mainText,
-            rightHolderId: stakeholders.find(s => (e.rightHolderText || e.mainText).includes(s.name))?.id,
-            debtorText: e.debtorText || undefined,
-            claimAmount: e.claimAmount || undefined,
-            collateralText: e.collateralText || undefined,
-            acquisition: '말소' as const,
-          }));
-          const tradeEntries: RegistryTradeEntry[] | undefined = trade ? [{
-            id: `pdf-trade-${Date.now()}`,
-            listNo: trade.listNo,
-            tradeAmount: trade.tradeAmount,
-            items: trade.items,
-          }] : undefined;
-          const registry: PropertyRegistry = {
-            reviewDate: registryDataForNewProp.reviewDate,
-            ownerEntries: ownerEntries.length > 0 ? ownerEntries : undefined,
-            gabEntries,
-            eulEntries,
-            tradeEntries,
-          };
+          const { type: regType, parsed, trade, reviewDate: rd } = registryDataForNewProp;
+          const registry = buildRegistryFromPdf(parsed, trade, rd);
 
           if (regType === '토지') {
             firstLot.registry = registry;
@@ -1196,6 +1169,59 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         });
       }
     }
+  };
+
+  // ── PDF 파싱 결과 → PropertyRegistry 변환 헬퍼 ──
+  const buildRegistryFromPdf = (
+    parsed: ParsedRegistry,
+    trade: ParsedTradeEntry | null,
+    reviewDate: string,
+  ): PropertyRegistry => {
+    const ownerEntries: RegistryOwnerEntry[] = parsed.owners.map((o, i) => ({
+      id: `pdf-owner-${Date.now()}-${i}`,
+      name: o.name,
+      regNo: o.regNo,
+      share: o.share,
+      address: o.address,
+      rankNo: o.rankNo,
+      stakeholderId: stakeholders.find(s => s.name === o.name.replace(/\s*\(.*\)\s*/, '').trim())?.id,
+    }));
+    const gabEntries: RegistryGabEntry[] = parsed.gabEntries.map((e, i) => ({
+      id: `pdf-gab-${Date.now()}-${i}`,
+      rankNo: e.rankNo,
+      purpose: e.purpose,
+      receiptDate: e.receiptDate,
+      receiptNo: e.receiptNo,
+      rightHolderText: e.mainText,
+      rightHolderId: stakeholders.find(s => e.mainText.includes(s.name))?.id,
+      isDeleted: e.isTransferred,
+    }));
+    const eulEntries: RegistryEulEntry[] = parsed.eulEntries.map((e, i) => ({
+      id: `pdf-eul-${Date.now()}-${i}`,
+      rankNo: e.rankNo,
+      purpose: e.purpose,
+      receiptDate: e.receiptDate,
+      receiptNo: e.receiptNo,
+      rightHolderText: e.rightHolderText || e.mainText,
+      rightHolderId: stakeholders.find(s => (e.rightHolderText || e.mainText).includes(s.name))?.id,
+      debtorText: e.debtorText || undefined,
+      claimAmount: e.claimAmount || undefined,
+      collateralText: e.collateralText || undefined,
+      acquisition: '말소' as const,
+    }));
+    const tradeEntries: RegistryTradeEntry[] | undefined = trade ? [{
+      id: `pdf-trade-${Date.now()}`,
+      listNo: trade.listNo,
+      tradeAmount: trade.tradeAmount,
+      items: trade.items,
+    }] : undefined;
+    return {
+      reviewDate,
+      ownerEntries: ownerEntries.length > 0 ? ownerEntries : undefined,
+      gabEntries,
+      eulEntries,
+      tradeEntries,
+    };
   };
 
   // ── 물건 등록 시 등기부 PDF 업로드 → 주소 자동검색 + 등기부 데이터 저장 ──
@@ -1302,6 +1328,84 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     }
   };
 
+  // ── 토지 추가 모달에서 등기부 PDF 업로드 ──
+  const handleRegistryPdfForNewLot = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setIsLoadingRegistryPdf(true);
+    try {
+      const { rows, plainText, reviewDate: pdfReviewDate } = await extractPdfData(file);
+      const pdfAddr = extractPdfAddress(plainText);
+      const parsed = parseRegistrySummary(rows);
+      const trade = parseTradeList(plainText);
+      const reviewDate = pdfReviewDate || new Date().toISOString().slice(0, 10);
+
+      setRegistryDataForNewLot({ parsed, trade, reviewDate });
+
+      // PDF 주소로 토지 주소 자동입력
+      if (pdfAddr && appSettings.vworldApiKey) {
+        const cleanAddr = cleanPdfAddress(pdfAddr.address);
+        let items = await searchVWorldParcel(cleanAddr);
+        if (items.length === 0 && cleanAddr !== pdfAddr.address.trim()) {
+          items = await searchVWorldParcel(pdfAddr.address.trim());
+        }
+        if (items.length > 0) {
+          const item = items[0];
+          const id = item.id || '';
+          const bun = id.substring(11, 15);
+          let ji = id.substring(15, 19);
+          if (ji === '0000') ji = '';
+          await handleLotAddressSelect({
+            jibunAddress: parseVWorldTitle(item.address?.parcel || cleanAddr, bun, ji),
+            roadAddress: item.address?.road || '',
+            fullJibunAddress: item.address?.parcel || cleanAddr,
+            pnu: id,
+          });
+        } else if (pdfAddr) {
+          const jibunAddress = parseVWorldTitle(pdfAddr.address);
+          setNewLot(prev => ({ ...prev, address: jibunAddress }));
+          setLotDisplayAddress(pdfAddr.address);
+        }
+      } else if (pdfAddr) {
+        const jibunAddress = parseVWorldTitle(pdfAddr.address);
+        setNewLot(prev => ({ ...prev, address: jibunAddress }));
+        setLotDisplayAddress(pdfAddr.address);
+      }
+
+      alert(`등기부등본 파싱 완료 (갑구 ${parsed.gabEntries.length}건, 을구 ${parsed.eulEntries.length}건)\n저장 시 등기부 정보가 자동 적용됩니다.`);
+    } catch (err) {
+      console.error('등기부 PDF 파싱 오류:', err);
+      alert('PDF 파싱에 실패했습니다.');
+    } finally {
+      setIsLoadingRegistryPdf(false);
+    }
+  };
+
+  // ── 건물 추가 모달에서 등기부 PDF 업로드 ──
+  const handleRegistryPdfForNewBuilding = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setIsLoadingRegistryPdf(true);
+    try {
+      const { rows, plainText, reviewDate: pdfReviewDate } = await extractPdfData(file);
+      const parsed = parseRegistrySummary(rows);
+      const trade = parseTradeList(plainText);
+      const reviewDate = pdfReviewDate || new Date().toISOString().slice(0, 10);
+
+      setRegistryDataForNewBuilding({ parsed, trade, reviewDate });
+      alert(`등기부등본 파싱 완료 (갑구 ${parsed.gabEntries.length}건, 을구 ${parsed.eulEntries.length}건)\n저장 시 등기부 정보가 자동 적용됩니다.`);
+    } catch (err) {
+      console.error('등기부 PDF 파싱 오류:', err);
+      alert('PDF 파싱에 실패했습니다.');
+    } finally {
+      setIsLoadingRegistryPdf(false);
+    }
+  };
+
   const handleSaveUnit = () => {
     if (!newUnit.unitNumber || !selectedProperty || !newUnit.buildingId) return;
     onAddUnit({ id: `u${Date.now()}`, propertyId: selectedProperty.id, ...newUnit as Unit });
@@ -1328,11 +1432,19 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         mgmBldrgstPk: newBuilding.mgmBldrgstPk,
         spec: newBuilding.spec as BuildingSpec
       };
+      // 등기부 PDF 데이터가 있으면 registry 적용
+      if (registryDataForNewBuilding) {
+        const { parsed, trade, reviewDate: rd } = registryDataForNewBuilding;
+        const registry = buildRegistryFromPdf(parsed, trade, rd);
+        bldg.registry = registry;
+        bldg.registryVersions = [registry];
+      }
       onUpdateProperty({ ...selectedProperty, buildings: [...selectedProperty.buildings, bldg] });
     }
 
     setIsBuildingModalOpen(false);
     setEditingBuildingId(null);
+    setRegistryDataForNewBuilding(null);
     setSelectedBuildingTitle(null);
   };
 
@@ -1363,6 +1475,13 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         area: newLot.area || 0,
         pnu: newLot.pnu
       };
+      // 등기부 PDF 데이터가 있으면 registry 적용
+      if (registryDataForNewLot) {
+        const { parsed, trade, reviewDate: rd } = registryDataForNewLot;
+        const registry = buildRegistryFromPdf(parsed, trade, rd);
+        lot.registry = registry;
+        lot.registryVersions = [registry];
+      }
       updatedLots = [...selectedProperty.lots, lot];
     }
 
@@ -1370,6 +1489,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     onUpdateProperty({ ...selectedProperty, lots: updatedLots, totalLandArea: totalArea });
     setIsLotModalOpen(false);
     setEditingLotId(null);
+    setRegistryDataForNewLot(null);
   };
 
   // 토지 삭제
@@ -4120,8 +4240,21 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                           <BuildingIcon size={24} className="text-[#1a73e8]"/>
                           {editingBuildingId ? '건물 수정' : '건물 추가'}
                       </h3>
-                      <button onClick={() => { setIsBuildingModalOpen(false); setEditingBuildingId(null); setBuildingTitleList([]); setBuildingFloorList([]); setSelectedBuildingTitle(null); }} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
+                      <div className="flex items-center gap-2">
+                        {!editingBuildingId && (
+                          <button
+                            onClick={() => newBuildingPdfInputRef.current?.click()}
+                            disabled={isLoadingRegistryPdf}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${registryDataForNewBuilding ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-[#e8f0fe] text-[#1a73e8] hover:bg-[#d2e3fc] border border-[#c2d7f8]'}`}
+                            title="등기부등본 PDF 업로드">
+                            {isLoadingRegistryPdf ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
+                            {registryDataForNewBuilding ? '등기부 적용됨' : '등기부 PDF'}
+                          </button>
+                        )}
+                        <button onClick={() => { setIsBuildingModalOpen(false); setEditingBuildingId(null); setBuildingTitleList([]); setBuildingFloorList([]); setSelectedBuildingTitle(null); setRegistryDataForNewBuilding(null); }} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
+                      </div>
                   </div>
+                  <input ref={newBuildingPdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handleRegistryPdfForNewBuilding}/>
 
                   {/* 건축물대장 조회 섹션 */}
                   <div className="bg-[#e8f0fe] p-5 rounded-2xl border border-[#c2d7f8] space-y-4">
@@ -4876,15 +5009,28 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
       {/* 토지(필지) 추가/수정 모달 */}
       {isLotModalOpen && selectedProperty && (
-          <Modal onClose={() => { setIsLotModalOpen(false); setEditingLotId(null); }} disableOverlayClick={true}>
+          <Modal onClose={() => { setIsLotModalOpen(false); setEditingLotId(null); setRegistryDataForNewLot(null); }} disableOverlayClick={true}>
               <div className="p-4 md:p-6 space-y-4 md:space-y-6">
                   <div className="flex justify-between items-center border-b border-gray-100 pb-6">
                       <h3 className="text-xl font-black text-gray-900 flex items-center gap-3">
                         <MapPin size={24} className="text-[#1a73e8]"/>
                         {editingLotId ? '토지 수정' : '토지 추가'}
                       </h3>
-                      <button onClick={() => { setIsLotModalOpen(false); setEditingLotId(null); }} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
+                      <div className="flex items-center gap-2">
+                        {!editingLotId && (
+                          <button
+                            onClick={() => newLotPdfInputRef.current?.click()}
+                            disabled={isLoadingRegistryPdf}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${registryDataForNewLot ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-[#e8f0fe] text-[#1a73e8] hover:bg-[#d2e3fc] border border-[#c2d7f8]'}`}
+                            title="등기부등본 PDF 업로드">
+                            {isLoadingRegistryPdf ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
+                            {registryDataForNewLot ? '등기부 적용됨' : '등기부 PDF'}
+                          </button>
+                        )}
+                        <button onClick={() => { setIsLotModalOpen(false); setEditingLotId(null); setRegistryDataForNewLot(null); }} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-colors"><X size={24}/></button>
+                      </div>
                   </div>
+                  <input ref={newLotPdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handleRegistryPdfForNewLot}/>
 
                   {/* 대표지번 주소체계 안내 */}
                   <div className="bg-[#e8f0fe] p-4 rounded-xl border border-[#c2d7f8]">

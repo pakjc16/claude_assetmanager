@@ -1044,6 +1044,63 @@ volumes:
 - 기본정보 섹션 제거로 UI 간소화
 - 색상 통일 (파란색 #1a73e8 + 회색 톤)
 
+### 2026-03-09: 계약관리 전대차 3자 구조 + 리포트 뷰 + 등기부 PDF 개선 + 앱 전체 품질 개선
+
+#### 전대차 계약 3자 구조 (ContractManager.tsx + types.ts)
+- **전대차 구조**: 임대인 → 임차인(=전대인) → 전차인 3자 관계 구현
+- **types.ts 확장**: `LeaseContract`에 `sublessorIds?: string[]`, `subtenantIds?: string[]` 추가
+- **수정 모달**: 전대차 선택 시 원 임대차계약 선택 드롭다운 → 원계약 임대인/임차인 읽기전용 표시 → 전대인/전차인 별도 입력
+- **임대차 탭 통합**: 전대차 탭 제거, 임대차 탭에서 임대/임차/전대/전차 4가지 유형 선택
+- **인라인 인물 등록**: 임대인/임차인/전대인/전차인 드롭다운에서 "＋ 신규 등록" 선택 시 인라인 입력
+- **StakeholderField 타입**: `landlordIds | tenantIds | sublessorIds | subtenantIds` 통합 지원
+
+#### 계약 리포트 뷰 (ContractManager.tsx)
+- **카드/단면도 클릭 → 리포트 모달**: 모든 계약 클릭이 `setViewingContract`로 통일 (수정 모달 직접 진입 X)
+- **리포트 모달**: 기본정보 + 계약이력 테이블 + 비용항목 + 담보 + 계약조건 + 특약사항 읽기전용 표시
+- **전대차 리포트**: 원계약 임대인/임차인(회색) + 전대인/전차인(검정) 4자 표시
+- **리포트 → 수정**: "수정" 버튼으로 수정 모달 전환
+- **A4 인쇄**: `계약 내역서` 제목, 직인 등록 시 하단에 날짜 + 임대인명 + 직인 이미지 날인
+
+#### 직인 기능 (App.tsx + types.ts)
+- **CompanyInfo.sealBase64**: 직인 이미지 base64 필드 추가
+- **설정 모달**: 기본정보 탭에 직인 업로드/삭제 UI (로고 아래)
+- **인쇄 적용**: 직인 등록 시 계약 내역서 인쇄 하단에 오늘 날짜 + 임대인/전대인명 + 직인 오버레이
+
+#### 등기부등본 PDF 파싱 개선 (registryPdfParser.ts)
+- **노이즈 필터링**: `isNoiseLine()` 함수로 `출력일시`, 페이지 번호 등 페이지 푸터를 행 수준에서 사전 제거
+- **한글 줄바꿈 스마트 조인**: `joinLines()` — 한글→한글 연결 시 공백 없이, 그 외는 공백으로 조인
+- **적용 범위**: `groupEntryRows`, `parseOwnerSection` 모두 노이즈 필터 적용
+
+#### 토지/건물 추가 모달 PDF 업로드 (PropertyManager.tsx)
+- **토지 추가**: PDF 업로드 → 주소 자동 검색 → 지번/PNU 자동 입력 + 등기부 데이터 저장
+- **건물 추가**: PDF 업로드 → 등기부 데이터 저장
+- **`buildRegistryFromPdf` 헬퍼**: 중복 등기부 변환 코드 3곳을 1개 함수로 통합
+
+#### 앱 전체 품질 개선
+
+**버그 수정:**
+- **CostItem 필드명**: `ci.name` → `ci.label` (인쇄 + 리포트 모달에서 비용항목 미표시 수정)
+- **단면도 삭제 오판**: `selectedHaveContracts`에 `targetType` 필터 추가 (엉뚱한 계약 삭제 버튼 방지)
+- **API 응답 체크**: PropertyManager 4개 API fetch에 `res.ok` 검증 추가
+
+**누락 기능 추가:**
+- **계약 삭제 핸들러**: `onDeleteMaintenance`, `onDeleteUtility` prop 추가 (App.tsx → ContractManager)
+- **계약 유효성 검사**: 임대인/전대인 필수, 시작일>종료일 검증
+- **물건 삭제 연쇄 정리**: 물건 삭제 시 호실/계약/시설/시설로그 함께 정리
+- **건물 계약 삭제**: 단면도 건물 단위 계약에 삭제 버튼 추가
+
+**localStorage 데이터 보존:**
+- 핵심 데이터 10종 localStorage 자동 저장/복원 (stakeholders, properties, units, leaseContracts, maintenanceContracts, utilityContracts, transactions, valuations, facilities, facilityLogs)
+- comparables도 localStorage 저장/복원 추가
+- 새로고침 시 데이터 보존 (이전에는 더미데이터로 초기화)
+
+**데드 코드 정리:**
+- `ElevatorMalfunction`, `ElevatorAccident`, `ElevatorPartDefect` 인터페이스 삭제 (types.ts)
+- App.tsx 승강기 고장/사고/결함 state 3개 + useEffect 3개 + callback 6개 삭제
+- FacilityManager 미사용 props/state/저장로직 삭제
+- PropertyManager `onUpdateBuilding` 빈 핸들러 제거
+
 ### 알려진 이슈
 - HMR Fast Refresh 경고 발생 (기능에는 영향 없음)
 - 대용량 물건 목록 시 성능 최적화 필요
+- 계약관리 도급계약/보험계약/보증보험 탭은 빈 상태 (데이터 모델 미구현)

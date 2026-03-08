@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   LeaseContract, MaintenanceContract, UtilityContract, Stakeholder, Property, Unit, Facility,
   LeaseType, ContractTargetType, ContractTerm, CostItem, ContractAttachment, DepositCollateral,
-  ContractConditions, CollateralType, SettlementMethod, FloorPlan, FloorZone
+  ContractConditions, CollateralType, SettlementMethod, FloorPlan, FloorZone, CompanyInfo
 } from '../types';
 import {
   X, Plus, Shuffle, Wrench, Zap, FileText, Calendar, User, Home, Building, MapPin, Coins,
@@ -26,12 +26,11 @@ const Modal = ({ children, onClose, disableOverlayClick = false }: { children?: 
   );
 };
 
-type ContractTab = 'LEASE' | 'SUBLEASE' | 'SERVICE' | 'CONSTRUCTION' | 'INSURANCE' | 'SURETY';
+type ContractTab = 'LEASE' | 'SERVICE' | 'CONSTRUCTION' | 'INSURANCE' | 'SURETY';
 type LeaseModalTab = 'BASIC' | 'CONDITIONS' | 'TERMS' | 'COLLATERAL';
 
 const CONTRACT_TABS: { id: ContractTab; label: string; icon: React.ReactNode }[] = [
   { id: 'LEASE', label: '임대차', icon: <Shuffle size={14} className="md:w-4 md:h-4"/> },
-  { id: 'SUBLEASE', label: '전대차', icon: <Shuffle size={14} className="md:w-4 md:h-4"/> },
   { id: 'SERVICE', label: '용역계약', icon: <Wrench size={14} className="md:w-4 md:h-4"/> },
   { id: 'CONSTRUCTION', label: '도급계약', icon: <Hammer size={14} className="md:w-4 md:h-4"/> },
   { id: 'INSURANCE', label: '보험계약', icon: <Shield size={14} className="md:w-4 md:h-4"/> },
@@ -64,8 +63,12 @@ interface ContractManagerProps {
   onDeleteLease: (id: string) => void;
   onAddMaintenance: (contract: MaintenanceContract) => void;
   onUpdateMaintenance: (contract: MaintenanceContract) => void;
+  onDeleteMaintenance: (id: string) => void;
   onAddUtility: (contract: UtilityContract) => void;
   onUpdateUtility: (contract: UtilityContract) => void;
+  onDeleteUtility: (id: string) => void;
+  onAddStakeholder?: (stakeholder: Stakeholder) => void;
+  companyInfo?: CompanyInfo;
   formatMoney: (amount: number) => string;
   formatArea: (area: number) => string;
   formatNumberInput: (num: number | undefined | null) => string;
@@ -92,7 +95,8 @@ const getNextDay = (dateStr: string): string => {
 export const ContractManager: React.FC<ContractManagerProps> = ({
   leaseContracts, maintenanceContracts, utilityContracts, stakeholders, properties, units, facilities,
   formatMoney, formatArea, formatNumberInput, parseNumberInput,
-  onAddLease, onUpdateLease, onDeleteLease, onAddMaintenance, onUpdateMaintenance, onAddUtility, onUpdateUtility,
+  onAddLease, onUpdateLease, onDeleteLease, onAddMaintenance, onUpdateMaintenance, onDeleteMaintenance, onAddUtility, onUpdateUtility, onDeleteUtility, onAddStakeholder,
+  companyInfo,
   floorPlans, floorZones, onSaveFloorPlan, onDeleteFloorPlan, onSaveZone, onDeleteZone
 }) => {
   // ========================================
@@ -132,6 +136,11 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   const [mergeModalContracts, setMergeModalContracts] = useState<LeaseContract[]>([]);
   const [mergeZoneIds, setMergeZoneIds] = useState<string[]>([]);
 
+  // 인물/업체 인라인 신규등록
+  const [inlineNewStakeholder, setInlineNewStakeholder] = useState<{ field: 'landlordIds' | 'tenantIds' | 'sublessorIds' | 'subtenantIds'; name: string } | null>(null);
+  // 계약 요약 리포트 모달
+  const [viewingContract, setViewingContract] = useState<LeaseContract | null>(null);
+
   // 도면 뷰어 상태
   const [floorPlanViewerOpen, setFloorPlanViewerOpen] = useState(false);
   const [viewerFloorNumber, setViewerFloorNumber] = useState<number | null>(null);
@@ -160,7 +169,9 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   function createEmptyLeaseContract(type: LeaseType): LeaseContract {
     return {
       id: '', type, targetType: 'UNIT', targetIds: [],
-      landlordIds: [], tenantIds: [], status: 'ACTIVE',
+      landlordIds: [], tenantIds: [],
+      sublessorIds: [], subtenantIds: [],
+      status: 'ACTIVE',
       originalContractDate: '',
       terms: [{
         id: `ct-${Date.now()}`, termNumber: 1, type: 'NEW',
@@ -243,31 +254,20 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   // 탭별 계약 필터링
   // ========================================
   const getLeaseContractsForProp = () => leaseContracts.filter(c => {
-    const isLease = c.type === 'LEASE_OUT' || c.type === 'LEASE_IN';
-    if (c.targetType === 'UNIT') return isLease && c.targetIds.some(id => propertyUnitIds.includes(id));
-    if (c.targetType === 'BUILDING') return isLease && c.targetIds.some(id => selectedProperty?.buildings.some(b => b.id === id));
+    const isLeaseOrSublease = c.type === 'LEASE_OUT' || c.type === 'LEASE_IN' || c.type === 'SUBLEASE_OUT' || c.type === 'SUBLEASE_IN';
+    if (c.targetType === 'UNIT') return isLeaseOrSublease && c.targetIds.some(id => propertyUnitIds.includes(id));
+    if (c.targetType === 'BUILDING') return isLeaseOrSublease && c.targetIds.some(id => selectedProperty?.buildings.some(b => b.id === id));
     if (c.targetType === 'FLOOR') {
       const bldgIds = selectedProperty?.buildings.map(b => b.id) || [];
-      return isLease && c.targetIds.some(id => { const p = parseFloorId(id); return !!p && bldgIds.includes(p.bldgId); });
+      return isLeaseOrSublease && c.targetIds.some(id => { const p = parseFloorId(id); return !!p && bldgIds.includes(p.bldgId); });
     }
-    return isLease && c.targetIds.includes(selectedPropId);
-  });
-
-  const getSubleaseContractsForProp = () => leaseContracts.filter(c => {
-    const isSublease = c.type === 'SUBLEASE_OUT' || c.type === 'SUBLEASE_IN';
-    if (c.targetType === 'UNIT') return isSublease && c.targetIds.some(id => propertyUnitIds.includes(id));
-    if (c.targetType === 'FLOOR') {
-      const bldgIds = selectedProperty?.buildings.map(b => b.id) || [];
-      return isSublease && c.targetIds.some(id => { const p = parseFloorId(id); return !!p && bldgIds.includes(p.bldgId); });
-    }
-    return isSublease && c.targetIds.includes(selectedPropId);
+    return isLeaseOrSublease && c.targetIds.includes(selectedPropId);
   });
 
   const getMaintenanceContractsForProp = () => maintenanceContracts.filter(c => c.targetId === selectedPropId);
 
   const tabCounts: Record<ContractTab, number> = {
     LEASE: getLeaseContractsForProp().length,
-    SUBLEASE: getSubleaseContractsForProp().length,
     SERVICE: getMaintenanceContractsForProp().length,
     CONSTRUCTION: 0, INSURANCE: 0, SURETY: 0,
   };
@@ -293,9 +293,8 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   // ========================================
   // 모달 열기 핸들러
   // ========================================
-  const handleOpenAddLease = (isSublease: boolean, preselectedUnitId?: string) => {
-    const type: LeaseType = isSublease ? 'SUBLEASE_OUT' : 'LEASE_OUT';
-    const newContract = createEmptyLeaseContract(type);
+  const handleOpenAddLease = (preselectedUnitId?: string) => {
+    const newContract = createEmptyLeaseContract('LEASE_OUT');
     if (preselectedUnitId) newContract.targetIds = [preselectedUnitId];
     setModalBldgId(selectedProperty?.buildings[0]?.id || '');
     setLeaseForm(newContract);
@@ -421,8 +420,17 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   // ========================================
   const handleSaveLease = () => {
     if (leaseForm.targetIds.length === 0) return alert('대상을 선택해주세요.');
-    if (leaseForm.tenantIds.length === 0) return alert('임차인을 선택해주세요.');
+    const isSub = leaseForm.type === 'SUBLEASE_OUT' || leaseForm.type === 'SUBLEASE_IN';
+    if (isSub) {
+      if (!(leaseForm.sublessorIds || []).length) return alert('전대인을 선택해주세요.');
+      if (!(leaseForm.subtenantIds || []).length) return alert('전차인을 선택해주세요.');
+    } else {
+      if (leaseForm.landlordIds.length === 0) return alert('임대인을 선택해주세요.');
+      if (leaseForm.tenantIds.length === 0) return alert('임차인을 선택해주세요.');
+    }
     if (leaseForm.terms.length === 0 || !leaseForm.terms[0].startDate) return alert('계약이력을 입력해주세요.');
+    const firstTerm = leaseForm.terms[0];
+    if (firstTerm.startDate && firstTerm.endDate && firstTerm.startDate > firstTerm.endDate) return alert('시작일이 종료일보다 이후입니다.');
     if (editingContractId) {
       onUpdateLease({ ...leaseForm, id: editingContractId });
     } else {
@@ -596,15 +604,21 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
   };
 
   // ========================================
-  // 임대인/임차인 복수 선택 헬퍼
+  // 임대인/임차인/전대인/전차인 복수 선택 헬퍼
   // ========================================
-  const handleAddId = (field: 'landlordIds' | 'tenantIds', id: string) => {
-    if (!id || leaseForm[field].includes(id)) return;
-    updateLeaseForm({ [field]: [...leaseForm[field], id] });
+  type StakeholderField = 'landlordIds' | 'tenantIds' | 'sublessorIds' | 'subtenantIds';
+  const getFieldIds = (field: StakeholderField): string[] => {
+    if (field === 'sublessorIds') return leaseForm.sublessorIds || [];
+    if (field === 'subtenantIds') return leaseForm.subtenantIds || [];
+    return leaseForm[field];
+  };
+  const handleAddId = (field: StakeholderField, id: string) => {
+    if (!id || getFieldIds(field).includes(id)) return;
+    updateLeaseForm({ [field]: [...getFieldIds(field), id] });
   };
 
-  const handleRemoveId = (field: 'landlordIds' | 'tenantIds', id: string) => {
-    updateLeaseForm({ [field]: leaseForm[field].filter(x => x !== id) });
+  const handleRemoveId = (field: StakeholderField, id: string) => {
+    updateLeaseForm({ [field]: getFieldIds(field).filter(x => x !== id) });
   };
 
   // ========================================
@@ -626,7 +640,7 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
     const extraCount = c.tenantIds.length - 1;
 
     return (
-      <div key={c.id} onClick={() => handleOpenEditLease(c)} className="bg-white border border-[#dadce0] rounded-lg p-3 md:p-4 hover:shadow-md transition-all cursor-pointer group">
+      <div key={c.id} onClick={() => setViewingContract(c)} className="bg-white border border-[#dadce0] rounded-lg p-3 md:p-4 hover:shadow-md transition-all cursor-pointer group">
         <div className="flex justify-between items-start mb-2 md:mb-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-1">
@@ -782,8 +796,8 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
 
     // 선택된 구역 중 계약 존재 여부
     const selectedHaveContracts = selectedZoneIds.some(zoneId => {
-      if (!zoneId.startsWith('FLOOR|')) return leaseContracts.some(c => c.targetIds.includes(zoneId));
-      return leaseContracts.some(c => c.targetType === 'FLOOR' && c.targetIds.includes(zoneId));
+      if (zoneId.startsWith('FLOOR|')) return leaseContracts.some(c => c.targetType === 'FLOOR' && c.targetIds.includes(zoneId));
+      return leaseContracts.some(c => (c.targetType === 'UNIT' || c.targetType === 'BUILDING') && c.targetIds.includes(zoneId));
     });
 
     // 합계 계산 (필터된 층 기준)
@@ -873,8 +887,8 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
           e.stopPropagation();
           toggleZone(unit.id);
         } else {
-          if (contract) handleOpenEditLease(contract);
-          else handleOpenAddLease(false, unit.id);
+          if (contract) setViewingContract(contract);
+          else handleOpenAddLease(unit.id);
         }
       };
 
@@ -969,7 +983,7 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
                 const fcTerm = floorContract.terms[floorContract.terms.length - 1];
                 const isActive = floorContract.status === 'ACTIVE';
                 return (
-                  <div onClick={e => handleFloorZoneClick(e, () => handleOpenEditLease(floorContract))}
+                  <div onClick={e => handleFloorZoneClick(e, () => setViewingContract(floorContract))}
                     className={`relative flex-1 flex items-center justify-between px-3 cursor-pointer ${!isFloorSelected ? 'hover:opacity-90' : ''} ${isActive ? 'bg-[#e8f0fe]' : 'bg-[#f8f9fa]'}`}
                   >
                     {selectionOverlay}
@@ -1033,7 +1047,7 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
                 const zcActive = zoneContract?.status === 'ACTIVE';
                 const handleZoneClick = (e: React.MouseEvent) => {
                   if (selectionMode || e.ctrlKey || e.metaKey) { e.stopPropagation(); toggleZone(floorZoneId); }
-                  else if (zoneContract) handleOpenEditLease(zoneContract);
+                  else if (zoneContract) setViewingContract(zoneContract);
                   else {
                     const nc = createEmptyLeaseContract('LEASE_OUT');
                     nc.targetType = 'FLOOR';
@@ -1128,14 +1142,14 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
                   const tenant = stakeholders.find(s => c.tenantIds.includes(s.id));
                   const currentTerm = c.terms[c.terms.length - 1];
                   return (
-                    <div key={c.id} onClick={() => handleOpenEditLease(c)}
-                      className="border-l-4 border-[#1a73e8] bg-[#e8f0fe] rounded-r-lg px-3 py-2 cursor-pointer hover:opacity-90 flex items-center justify-between gap-2"
+                    <div key={c.id}
+                      className="border-l-4 border-[#1a73e8] bg-[#e8f0fe] rounded-r-lg px-3 py-2 flex items-center justify-between gap-2 group/bldg"
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 cursor-pointer flex-1" onClick={() => setViewingContract(c)}>
                         <span className="text-[9px] font-bold text-[#1a73e8] block">건물 전체 · {building.name}</span>
                         <span className="text-[10px] font-black text-[#3c4043] truncate block">{tenant?.name || '임차인 미지정'}</span>
                       </div>
-                      <div className="text-right flex-shrink-0">
+                      <div className="text-right flex-shrink-0 cursor-pointer" onClick={() => setViewingContract(c)}>
                         {currentTerm && (
                           <>
                             <div className="text-[8px] text-[#5f6368]">{currentTerm.startDate.substring(2)} ~ {currentTerm.endDate.substring(2)}</div>
@@ -1145,6 +1159,13 @@ export const ContractManager: React.FC<ContractManagerProps> = ({
                           </>
                         )}
                       </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (confirm(`"${tenant?.name || '건물 전체'}" 계약을 삭제하시겠습니까?`)) onDeleteLease(c.id); }}
+                        className="opacity-0 group-hover/bldg:opacity-100 p-1 rounded hover:bg-red-100 text-[#9aa0a6] hover:text-red-500 transition-all flex-shrink-0"
+                        title="삭제"
+                      >
+                        <Trash2 size={12}/>
+                      </button>
                     </div>
                   );
                 })}
@@ -1479,11 +1500,6 @@ button, svg { display:none !important; }
     if (activeTab === 'LEASE') {
       return renderFloorDiagram();
     }
-    if (activeTab === 'SUBLEASE') {
-      const contracts = getSubleaseContractsForProp();
-      if (contracts.length === 0) return renderEmptyState('전대차');
-      return <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4 p-3 md:p-4">{contracts.map(c => renderLeaseCard(c))}</div>;
-    }
     if (activeTab === 'SERVICE') {
       const contracts = getMaintenanceContractsForProp();
       if (contracts.length === 0) return renderEmptyState('용역');
@@ -1493,16 +1509,32 @@ button, svg { display:none !important; }
     return renderEmptyState(labels[activeTab] || '');
   };
 
-  const canAddContract = activeTab === 'LEASE' || activeTab === 'SUBLEASE' || activeTab === 'SERVICE';
+  const canAddContract = activeTab === 'LEASE' || activeTab === 'SERVICE';
 
   // ========================================
   // 공통 UI 컴포넌트: 태그 선택기 (임대인/임차인 복수 선택)
   // ========================================
+  const handleInlineAddStakeholder = (field: StakeholderField) => {
+    if (!inlineNewStakeholder || !inlineNewStakeholder.name.trim() || !onAddStakeholder) return;
+    const role = (field === 'landlordIds' || field === 'sublessorIds') ? 'LANDLORD' : 'TENANT';
+    const newId = `sh-${Date.now()}`;
+    const newSh: Stakeholder = {
+      id: newId,
+      name: inlineNewStakeholder.name.trim(),
+      type: 'INDIVIDUAL',
+      roles: [role as any],
+      contact: { phone: '', email: '', address: '', postalCode: '' },
+    } as Stakeholder;
+    onAddStakeholder(newSh);
+    handleAddId(field, newId);
+    setInlineNewStakeholder(null);
+  };
+
   const renderTagSelector = (
     label: string,
     selectedIds: string[],
     candidates: Stakeholder[],
-    field: 'landlordIds' | 'tenantIds'
+    field: StakeholderField
   ) => (
     <div>
       <label className="text-[11px] font-bold text-gray-400 block mb-1.5">{label}</label>
@@ -1517,16 +1549,38 @@ button, svg { display:none !important; }
           );
         })}
       </div>
-      <select
-        className="w-full border border-[#dadce0] p-2.5 md:p-3 rounded-lg text-xs md:text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-[#1a73e8]"
-        value=""
-        onChange={e => { handleAddId(field, e.target.value); }}
-      >
-        <option value="">추가 선택...</option>
-        {candidates.filter(s => !selectedIds.includes(s.id)).map(s => (
-          <option key={s.id} value={s.id}>{s.name}{s.representative ? ` (${s.representative})` : ''}</option>
-        ))}
-      </select>
+      {inlineNewStakeholder?.field === field ? (
+        <div className="flex gap-1.5">
+          <input
+            autoFocus
+            type="text"
+            placeholder="이름 입력"
+            value={inlineNewStakeholder.name}
+            onChange={e => setInlineNewStakeholder({ ...inlineNewStakeholder, name: e.target.value })}
+            onKeyDown={e => { if (e.key === 'Enter') handleInlineAddStakeholder(field); if (e.key === 'Escape') setInlineNewStakeholder(null); }}
+            className="flex-1 border border-[#1a73e8] p-2.5 md:p-3 rounded-lg text-xs md:text-sm font-bold bg-white outline-none ring-2 ring-[#e8f0fe]"
+          />
+          <button type="button" onClick={() => handleInlineAddStakeholder(field)}
+            className="px-3 bg-[#1a73e8] text-white rounded-lg text-xs font-bold hover:bg-[#1557b0]"><Check size={14}/></button>
+          <button type="button" onClick={() => setInlineNewStakeholder(null)}
+            className="px-3 bg-white border border-[#dadce0] text-[#5f6368] rounded-lg text-xs font-bold hover:bg-[#f1f3f4]"><X size={14}/></button>
+        </div>
+      ) : (
+        <select
+          className="w-full border border-[#dadce0] p-2.5 md:p-3 rounded-lg text-xs md:text-sm font-medium bg-white outline-none focus:ring-2 focus:ring-[#1a73e8]"
+          value=""
+          onChange={e => {
+            if (e.target.value === '__NEW__') { setInlineNewStakeholder({ field, name: '' }); return; }
+            handleAddId(field, e.target.value);
+          }}
+        >
+          <option value="">추가 선택...</option>
+          {candidates.filter(s => !selectedIds.includes(s.id)).map(s => (
+            <option key={s.id} value={s.id}>{s.name}{s.representative ? ` (${s.representative})` : ''}</option>
+          ))}
+          {onAddStakeholder && <option value="__NEW__">＋ 신규 등록</option>}
+        </select>
+      )}
     </div>
   );
 
@@ -1546,17 +1600,10 @@ button, svg { display:none !important; }
               value={leaseForm.type}
               onChange={e => updateLeaseForm({ type: e.target.value as LeaseType })}
             >
-              {isSublease ? (
-                <>
-                  <option value="SUBLEASE_OUT">전대 (임대)</option>
-                  <option value="SUBLEASE_IN">전대 (임차)</option>
-                </>
-              ) : (
-                <>
-                  <option value="LEASE_OUT">임대</option>
-                  <option value="LEASE_IN">임차</option>
-                </>
-              )}
+              <option value="LEASE_OUT">임대</option>
+              <option value="LEASE_IN">임차</option>
+              <option value="SUBLEASE_OUT">전대</option>
+              <option value="SUBLEASE_IN">전차</option>
             </select>
           </div>
 
@@ -1569,7 +1616,10 @@ button, svg { display:none !important; }
                 <button key={tt} type="button"
                   onClick={() => {
                     if (tt === 'FLOOR') setModalBldgId(selectedProperty?.buildings[0]?.id || '');
-                    updateLeaseForm({ targetType: tt as ContractTargetType, targetIds: [] });
+                    // 건물 단위 선택 시 건물이 1개면 자동 선택
+                    const newTargetIds = tt === 'BUILDING' && selectedProperty?.buildings.length === 1
+                      ? [selectedProperty.buildings[0].id] : [];
+                    updateLeaseForm({ targetType: tt as ContractTargetType, targetIds: newTargetIds });
                   }}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${leaseForm.targetType === tt ? 'bg-[#1a73e8] text-white' : 'bg-white border border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]'}`}
                 >
@@ -1732,11 +1782,76 @@ button, svg { display:none !important; }
             )}
           </div>
 
-          {/* 임대인 */}
-          {renderTagSelector('임대인', leaseForm.landlordIds, landlords, 'landlordIds')}
+          {isSublease ? (
+            <>
+              {/* 전대차: 원 임대차계약 선택 */}
+              <div className="md:col-span-2">
+                <label className="text-[11px] font-bold text-gray-400 block mb-1.5">원 임대차계약</label>
+                <select
+                  className="w-full border border-[#dadce0] p-2.5 md:p-3 rounded-lg text-xs md:text-sm font-bold bg-white outline-none focus:ring-2 focus:ring-[#1a73e8]"
+                  value={leaseForm.parentContractId || ''}
+                  onChange={e => updateLeaseForm({ parentContractId: e.target.value || undefined })}
+                >
+                  <option value="">선택</option>
+                  {leaseContracts
+                    .filter(c => (c.type === 'LEASE_OUT' || c.type === 'LEASE_IN') && c.id !== leaseForm.id)
+                    .map(c => {
+                      const tenant = stakeholders.find(s => c.tenantIds.includes(s.id));
+                      const landlord = stakeholders.find(s => c.landlordIds.includes(s.id));
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {landlord?.name || '?'} → {tenant?.name || '?'} ({getAbbreviatedTargetLabel(c)})
+                        </option>
+                      );
+                    })
+                  }
+                </select>
+              </div>
 
-          {/* 임차인 */}
-          {renderTagSelector('임차인', leaseForm.tenantIds, tenants, 'tenantIds')}
+              {/* 원계약 임대인/임차인 읽기전용 */}
+              {leaseForm.parentContractId && (() => {
+                const parent = leaseContracts.find(c => c.id === leaseForm.parentContractId);
+                if (!parent) return null;
+                const parentLandlord = parent.landlordIds.map(id => stakeholders.find(s => s.id === id)?.name || '?').join(', ');
+                const parentTenant = parent.tenantIds.map(id => stakeholders.find(s => s.id === id)?.name || '?').join(', ');
+                return (
+                  <div className="md:col-span-2 bg-[#f8f9fa] border border-[#dadce0] rounded-lg p-3">
+                    <div className="text-[10px] font-bold text-[#5f6368] mb-2">원 임대차계약 당사자</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div><span className="text-[#9aa0a6] text-[10px]">임대인</span> <span className="font-bold">{parentLandlord}</span></div>
+                      <div><span className="text-[#9aa0a6] text-[10px]">임차인(=전대인)</span> <span className="font-bold">{parentTenant}</span></div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 전대인 (원계약 임차인이 기본) */}
+              {renderTagSelector(
+                '전대인',
+                leaseForm.sublessorIds || [], [...landlords, ...tenants], 'sublessorIds'
+              )}
+
+              {/* 전차인 */}
+              {renderTagSelector(
+                '전차인',
+                leaseForm.subtenantIds || [], tenants, 'subtenantIds'
+              )}
+            </>
+          ) : (
+            <>
+              {/* 임대인 */}
+              {renderTagSelector(
+                '임대인',
+                leaseForm.landlordIds, landlords, 'landlordIds'
+              )}
+
+              {/* 임차인 */}
+              {renderTagSelector(
+                '임차인',
+                leaseForm.tenantIds, tenants, 'tenantIds'
+              )}
+            </>
+          )}
 
           {/* 상태 */}
           <div>
@@ -2388,7 +2503,7 @@ button, svg { display:none !important; }
                 <button
                   onClick={() => {
                     if (activeTab === 'SERVICE') handleOpenAddMaint();
-                    else handleOpenAddLease(activeTab === 'SUBLEASE');
+                    else handleOpenAddLease();
                   }}
                   className="bg-[#1a73e8] text-white px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-[10px] md:text-xs font-black flex items-center gap-1 md:gap-2 hover:bg-[#1557b0] shadow-xl transition-all active:scale-95 whitespace-nowrap flex-shrink-0"
                 >
@@ -2469,6 +2584,247 @@ button, svg { display:none !important; }
           </div>
         </Modal>
       )}
+
+      {/* ========================================
+          계약 요약 리포트 모달
+          ======================================== */}
+      {viewingContract && (() => {
+        const vc = viewingContract;
+        const isSub = vc.type === 'SUBLEASE_OUT' || vc.type === 'SUBLEASE_IN';
+        const typeLabel = vc.type === 'LEASE_OUT' ? '임대' : vc.type === 'LEASE_IN' ? '임차' : vc.type === 'SUBLEASE_OUT' ? '전대' : '전차';
+        const contractLabel = '계약 내역서';
+        const target = getAbbreviatedTargetLabel(vc);
+        const landlordNames = vc.landlordIds.map(id => stakeholders.find(s => s.id === id)?.name || '미지정').join(', ') || '미지정';
+        const tenantNames = vc.tenantIds.map(id => stakeholders.find(s => s.id === id)?.name || '미지정').join(', ') || '미지정';
+        const sublessorNames = (vc.sublessorIds || []).map(id => stakeholders.find(s => s.id === id)?.name || '미지정').join(', ');
+        const subtenantNames = (vc.subtenantIds || []).map(id => stakeholders.find(s => s.id === id)?.name || '미지정').join(', ');
+        const parentContract = isSub && vc.parentContractId ? leaseContracts.find(c => c.id === vc.parentContractId) : null;
+        const parentLandlordNames = parentContract ? parentContract.landlordIds.map(id => stakeholders.find(s => s.id === id)?.name || '?').join(', ') : '';
+        const parentTenantNames = parentContract ? parentContract.tenantIds.map(id => stakeholders.find(s => s.id === id)?.name || '?').join(', ') : '';
+        const currentTerm = vc.terms[vc.terms.length - 1];
+        const totalCostItems = currentTerm?.costItems.reduce((sum, ci) => sum + (ci.amount || 0), 0) || 0;
+
+        const handlePrintReport = () => {
+          const printWin = window.open('', '_blank');
+          if (!printWin) return;
+          const rows = vc.terms.map((t, i) => `
+            <tr>
+              <td style="border:1px solid #dadce0; padding:6px 10px; text-center; font-weight:bold">${t.termNumber}차 (${TERM_TYPE_LABELS[t.type] || t.type})</td>
+              <td style="border:1px solid #dadce0; padding:6px 10px">${t.contractDate || '-'}</td>
+              <td style="border:1px solid #dadce0; padding:6px 10px">${t.startDate} ~ ${t.endDate}</td>
+              <td style="border:1px solid #dadce0; padding:6px 10px; text-align:right">${t.deposit.toLocaleString('ko-KR')}원</td>
+              <td style="border:1px solid #dadce0; padding:6px 10px; text-align:right">${t.monthlyRent.toLocaleString('ko-KR')}원</td>
+            </tr>
+          `).join('');
+          const costRows = currentTerm?.costItems.map(ci => `
+            <tr><td style="border:1px solid #dadce0; padding:4px 10px">${ci.label}</td><td style="border:1px solid #dadce0; padding:4px 10px; text-align:right">${ci.amount.toLocaleString('ko-KR')}원/월</td></tr>
+          `).join('') || '';
+          const collateralRows = vc.collaterals.map(col => `
+            <tr>
+              <td style="border:1px solid #dadce0; padding:4px 10px">${COLLATERAL_TYPE_LABELS[col.type]}</td>
+              <td style="border:1px solid #dadce0; padding:4px 10px; text-align:right">${col.amount.toLocaleString('ko-KR')}원</td>
+              <td style="border:1px solid #dadce0; padding:4px 10px">${col.institution || '-'}</td>
+            </tr>
+          `).join('') || '';
+          const specialTerms = vc.conditions.specialTerms?.map((st, i) => `<li>${st}</li>`).join('') || '';
+          printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${contractLabel}</title><style>
+            @page { size: A4; margin: 20mm; }
+            body { font-family: 'Malgun Gothic', sans-serif; font-size: 11pt; color: #202124; line-height: 1.6; }
+            h1 { text-align: center; font-size: 18pt; margin-bottom: 24px; border-bottom: 3px double #1a73e8; padding-bottom: 12px; }
+            h2 { font-size: 12pt; color: #1a73e8; margin-top: 20px; margin-bottom: 8px; border-left: 4px solid #1a73e8; padding-left: 8px; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 10pt; }
+            th { background: #f8f9fa; border: 1px solid #dadce0; padding: 6px 10px; text-align: left; font-weight: bold; }
+            .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 16px; }
+            .info-item { display: flex; gap: 8px; }
+            .info-label { font-weight: bold; color: #5f6368; min-width: 80px; }
+            .info-value { font-weight: bold; }
+            .status { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 9pt; font-weight: bold; }
+            .status-active { background: #e8f0fe; color: #1a73e8; }
+            .status-expired { background: #f1f3f4; color: #9aa0a6; }
+            .status-terminated { background: #fce8e6; color: #d93025; }
+            @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+          </style></head><body>
+            <h1>${contractLabel}</h1>
+            <h2>기본 정보</h2>
+            <div class="info-grid">
+              <div class="info-item"><span class="info-label">계약유형</span><span class="info-value">${typeLabel}</span></div>
+              <div class="info-item"><span class="info-label">상태</span><span class="status ${vc.status === 'ACTIVE' ? 'status-active' : vc.status === 'EXPIRED' ? 'status-expired' : 'status-terminated'}">${vc.status === 'ACTIVE' ? '정상' : vc.status === 'EXPIRED' ? '만료' : vc.status === 'PENDING' ? '대기' : '해지'}</span></div>
+              <div class="info-item"><span class="info-label">임대 대상</span><span class="info-value">${target}</span></div>
+              <div class="info-item"><span class="info-label">최초 계약일</span><span class="info-value">${vc.originalContractDate || '-'}</span></div>
+              ${isSub && parentContract ? `
+              <div class="info-item"><span class="info-label">임대인</span><span class="info-value" style="color:#9aa0a6">${parentLandlordNames}</span></div>
+              <div class="info-item"><span class="info-label">임차인</span><span class="info-value" style="color:#9aa0a6">${parentTenantNames}</span></div>
+              <div class="info-item"><span class="info-label">전대인</span><span class="info-value">${sublessorNames || '미지정'}</span></div>
+              <div class="info-item"><span class="info-label">전차인</span><span class="info-value">${subtenantNames || '미지정'}</span></div>
+              ` : `
+              <div class="info-item"><span class="info-label">임대인</span><span class="info-value">${landlordNames}</span></div>
+              <div class="info-item"><span class="info-label">임차인</span><span class="info-value">${tenantNames}</span></div>
+              `}
+            </div>
+            <h2>계약 이력 (${vc.terms.length}건)</h2>
+            <table><thead><tr><th>차수</th><th>계약일</th><th>계약기간</th><th style="text-align:right">보증금</th><th style="text-align:right">월 차임</th></tr></thead><tbody>${rows}</tbody></table>
+            ${costRows ? `<h2>비용항목</h2><table><thead><tr><th>항목</th><th style="text-align:right">금액</th></tr></thead><tbody>${costRows}</tbody></table>` : ''}
+            ${collateralRows ? `<h2>담보 설정</h2><table><thead><tr><th>유형</th><th style="text-align:right">금액</th><th>기관</th></tr></thead><tbody>${collateralRows}</tbody></table>` : ''}
+            ${vc.conditions ? `<h2>계약 조건</h2><div class="info-grid">
+              <div class="info-item"><span class="info-label">원상복구</span><span class="info-value">${vc.conditions.restorationRequired ? '필요' : '불필요'}</span></div>
+              <div class="info-item"><span class="info-label">전대 가능</span><span class="info-value">${vc.conditions.subleaseAllowed ? '가능' : '불가'}</span></div>
+              ${vc.conditions.renewalNoticeMonths ? `<div class="info-item"><span class="info-label">갱신 통보</span><span class="info-value">만료 ${vc.conditions.renewalNoticeMonths}개월 전</span></div>` : ''}
+              ${vc.conditions.rentIncreaseCap ? `<div class="info-item"><span class="info-label">임대료 인상 한도</span><span class="info-value">${vc.conditions.rentIncreaseCap}%</span></div>` : ''}
+            </div>` : ''}
+            ${specialTerms ? `<h2>특약사항</h2><ol style="padding-left:20px">${specialTerms}</ol>` : ''}
+            ${companyInfo?.sealBase64 ? (() => {
+              const today = new Date();
+              const dateStr = `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${today.getDate()}일`;
+              const sealLandlordName = isSub
+                ? (sublessorNames || '미지정')
+                : landlordNames;
+              return `
+              <div style="margin-top:48px; text-align:right; padding-right:20px;">
+                <div style="font-size:11pt; color:#5f6368; margin-bottom:16px;">${dateStr}</div>
+                <div style="display:inline-block; position:relative; text-align:center;">
+                  <div style="font-size:12pt; font-weight:bold; margin-bottom:4px;">${isSub ? '전대인' : '임대인'}</div>
+                  <div style="font-size:14pt; font-weight:bold; position:relative; display:inline-block;">
+                    ${sealLandlordName}
+                    <img src="${companyInfo.sealBase64}" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:80px; height:80px; object-fit:contain; opacity:0.85;" />
+                  </div>
+                </div>
+              </div>`;
+            })() : ''}
+          </body></html>`);
+          printWin.document.close();
+          printWin.focus();
+          setTimeout(() => printWin.print(), 300);
+        };
+
+        return (
+          <Modal onClose={() => setViewingContract(null)}>
+            <div className="p-4 md:p-6">
+              {/* 헤더 */}
+              <div className="flex justify-between items-center border-b border-gray-100 pb-3 mb-4">
+                <h3 className="text-base md:text-lg font-black text-[#202124] flex items-center gap-2">
+                  <FileText size={18} className="text-[#1a73e8]"/> {contractLabel}
+                </h3>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={handlePrintReport}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-[#f8f9fa] border border-[#dadce0] rounded-lg text-xs font-bold text-[#5f6368] hover:bg-[#e8eaed] transition-colors">
+                    <Printer size={13}/> 인쇄
+                  </button>
+                  <button onClick={() => { setViewingContract(null); handleOpenEditLease(vc); }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-[#1a73e8] text-white rounded-lg text-xs font-bold hover:bg-[#1557b0] transition-colors">
+                    수정
+                  </button>
+                  <button onClick={() => setViewingContract(null)} className="text-gray-400 hover:bg-gray-100 p-1.5 rounded-full"><X size={18}/></button>
+                </div>
+              </div>
+
+              {/* 기본정보 */}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-4 text-xs">
+                <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">유형</span><span className="font-black">{typeLabel}</span></div>
+                <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">상태</span>{getStatusBadge(vc.status)}</div>
+                <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">대상</span><span className="font-bold text-[#202124]">{target}</span></div>
+                <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">최초계약</span><span className="font-bold">{vc.originalContractDate || '-'}</span></div>
+                {isSub ? (
+                  <>
+                    {/* 전대차: 원계약 당사자 + 전대인/전차인 3자 관계 */}
+                    {parentContract && (
+                      <>
+                        <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">임대인</span><span className="font-bold text-[#9aa0a6]">{parentLandlordNames}</span></div>
+                        <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">임차인</span><span className="font-bold text-[#9aa0a6]">{parentTenantNames}</span></div>
+                      </>
+                    )}
+                    <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">전대인</span><span className="font-bold text-[#202124]">{sublessorNames || '미지정'}</span></div>
+                    <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">전차인</span><span className="font-bold text-[#202124]">{subtenantNames || '미지정'}</span></div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">임대인</span><span className="font-bold text-[#202124]">{landlordNames}</span></div>
+                    <div className="flex gap-2"><span className="text-[#5f6368] font-bold w-16">임차인</span><span className="font-bold text-[#202124]">{tenantNames}</span></div>
+                  </>
+                )}
+              </div>
+
+              {/* 계약이력 */}
+              <h4 className="text-xs font-black text-[#1a73e8] mb-2 flex items-center gap-1"><Clock size={13}/> 계약 이력 ({vc.terms.length}건)</h4>
+              <div className="overflow-x-auto mb-4">
+                <table className="w-full text-[10px] md:text-xs min-w-[400px]">
+                  <thead className="bg-[#f8f9fa]">
+                    <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold">
+                      <th className="p-1.5 md:p-2 text-center">차수</th>
+                      <th className="p-1.5 md:p-2 text-center">계약기간</th>
+                      <th className="p-1.5 md:p-2 text-right">보증금</th>
+                      <th className="p-1.5 md:p-2 text-right">월 차임</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vc.terms.map((t, i) => (
+                      <tr key={t.id} className={`border-b border-[#f1f3f4] ${i === vc.terms.length - 1 ? 'bg-[#e8f0fe]/30' : ''}`}>
+                        <td className="p-1.5 md:p-2 text-center font-bold">{t.termNumber}차 <span className="text-[8px] text-[#5f6368]">({TERM_TYPE_LABELS[t.type]})</span></td>
+                        <td className="p-1.5 md:p-2 text-center whitespace-nowrap">{t.startDate} ~ {t.endDate}</td>
+                        <td className="p-1.5 md:p-2 text-right font-bold text-[#1a73e8]">{formatMoney(t.deposit)}</td>
+                        <td className="p-1.5 md:p-2 text-right font-bold text-[#34a853]">{formatMoney(t.monthlyRent)}/월</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 비용항목 */}
+              {currentTerm && currentTerm.costItems.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-xs font-black text-[#5f6368] mb-2 flex items-center gap-1"><Coins size={13}/> 비용항목</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {currentTerm.costItems.map((ci, i) => (
+                      <span key={i} className="bg-[#f8f9fa] border border-[#dadce0] px-2.5 py-1 rounded-lg text-[10px] md:text-xs font-bold">
+                        {ci.label} <span className="text-[#1a73e8]">{formatMoney(ci.amount)}/월</span>
+                      </span>
+                    ))}
+                    <span className="bg-[#e8f0fe] border border-[#c2d7f8] px-2.5 py-1 rounded-lg text-[10px] md:text-xs font-black text-[#1a73e8]">
+                      합계 {formatMoney(totalCostItems)}/월
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* 담보 */}
+              {vc.collaterals.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-xs font-black text-[#5f6368] mb-2 flex items-center gap-1"><Shield size={13}/> 담보 설정</h4>
+                  <div className="space-y-1">
+                    {vc.collaterals.map((col, i) => (
+                      <div key={i} className="flex items-center gap-3 bg-[#f8f9fa] px-3 py-1.5 rounded-lg text-[10px] md:text-xs">
+                        <span className="font-bold">{COLLATERAL_TYPE_LABELS[col.type]}</span>
+                        <span className="font-bold text-[#ea4335]">{formatMoney(col.amount)}</span>
+                        {col.institution && <span className="text-[#5f6368]">{col.institution}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 계약조건 */}
+              <div className="mb-3">
+                <h4 className="text-xs font-black text-[#5f6368] mb-2 flex items-center gap-1"><FileText size={13}/> 계약 조건</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px]">
+                  <div className="bg-[#f8f9fa] px-2.5 py-1.5 rounded-lg"><span className="text-[#5f6368]">원상복구</span> <span className="font-bold">{vc.conditions.restorationRequired ? '필요' : '불필요'}</span></div>
+                  <div className="bg-[#f8f9fa] px-2.5 py-1.5 rounded-lg"><span className="text-[#5f6368]">전대</span> <span className="font-bold">{vc.conditions.subleaseAllowed ? '가능' : '불가'}</span></div>
+                  {vc.conditions.renewalNoticeMonths && <div className="bg-[#f8f9fa] px-2.5 py-1.5 rounded-lg"><span className="text-[#5f6368]">갱신통보</span> <span className="font-bold">{vc.conditions.renewalNoticeMonths}개월전</span></div>}
+                  {vc.conditions.rentIncreaseCap && <div className="bg-[#f8f9fa] px-2.5 py-1.5 rounded-lg"><span className="text-[#5f6368]">인상한도</span> <span className="font-bold">{vc.conditions.rentIncreaseCap}%</span></div>}
+                </div>
+              </div>
+
+              {/* 특약사항 */}
+              {vc.conditions.specialTerms && vc.conditions.specialTerms.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-black text-[#5f6368] mb-2">특약사항</h4>
+                  <ol className="list-decimal list-inside text-[10px] md:text-xs text-[#202124] space-y-1 bg-[#fef7e0] p-3 rounded-lg border border-[#feefc3]">
+                    {vc.conditions.specialTerms.map((st, i) => <li key={i}>{st}</li>)}
+                  </ol>
+                </div>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* ========================================
           임대차 수정/등록 모달 (4개 탭)

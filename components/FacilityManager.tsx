@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   Facility, FacilityLog, Property, Stakeholder, FacilityCategory, FacilityStatus, MaintenanceContract, Unit,
   ElevatorInfo, ElevatorInsurance, ElevatorSafetyManager, ElevatorInspection,
-  ElevatorMalfunction, ElevatorAccident, ElevatorPartDefect, ElevatorMaintenanceContract, Building
+  ElevatorMaintenanceContract, Building
 } from '../types';
 import { Wrench, Plus, AlertCircle, CheckCircle, X, History, Edit2, MapPin, ShieldAlert, Calendar, ClipboardCheck, DollarSign, Zap, Search, Loader2, ChevronLeft, ChevronRight, Printer, Layers, RefreshCw, LayoutGrid, ArrowUpDown, TrendingUp, Flame, Thermometer, Wind, Droplets, Filter, Car, ParkingCircle, Gauge, BatteryCharging, Package, Camera, Settings } from 'lucide-react';
 
@@ -33,24 +33,15 @@ interface FacilityManagerProps {
   elevatorInsurances: ElevatorInsurance[];
   elevatorSafetyManagers: ElevatorSafetyManager[];
   elevatorInspections: ElevatorInspection[];
-  elevatorMalfunctions: ElevatorMalfunction[];
-  elevatorAccidents: ElevatorAccident[];
-  elevatorPartDefects: ElevatorPartDefect[];
   elevatorMaintenanceContracts: ElevatorMaintenanceContract[];
   // 승강기 관련 콜백
   onAddElevatorInsurance: (data: ElevatorInsurance) => void;
   onAddElevatorSafetyManager: (data: ElevatorSafetyManager) => void;
   onAddElevatorInspection: (data: ElevatorInspection) => void;
-  onAddElevatorMalfunction: (data: ElevatorMalfunction) => void;
-  onAddElevatorAccident: (data: ElevatorAccident) => void;
-  onAddElevatorPartDefect: (data: ElevatorPartDefect) => void;
   onAddElevatorMaintenanceContract: (data: ElevatorMaintenanceContract) => void;
   onDeleteElevatorInsurance: (id: string) => void;
   onDeleteElevatorSafetyManager: (id: string) => void;
   onDeleteElevatorInspection: (id: string) => void;
-  onDeleteElevatorMalfunction: (id: string) => void;
-  onDeleteElevatorAccident: (id: string) => void;
-  onDeleteElevatorPartDefect: (id: string) => void;
   onDeleteElevatorMaintenanceContract: (id: string) => void;
   // 기존 props
   onAddFacility: (fac: Facility) => void;
@@ -481,13 +472,13 @@ const CATEGORY_SPEC_FIELDS: Record<string, { key: string; label: string; type: '
 
 export const FacilityManager: React.FC<FacilityManagerProps> = ({
   facilities, facilityLogs, properties, units, stakeholders, maintenanceContracts,
-  elevatorInsurances, elevatorSafetyManagers, elevatorInspections, elevatorMalfunctions,
-  elevatorAccidents, elevatorPartDefects, elevatorMaintenanceContracts,
+  elevatorInsurances, elevatorSafetyManagers, elevatorInspections,
+  elevatorMaintenanceContracts,
   onAddFacility, onUpdateFacility, onAddLog,
   onAddElevatorInsurance, onAddElevatorSafetyManager, onAddElevatorInspection,
-  onAddElevatorMalfunction, onAddElevatorAccident, onAddElevatorPartDefect, onAddElevatorMaintenanceContract,
+  onAddElevatorMaintenanceContract,
   onDeleteElevatorInsurance, onDeleteElevatorSafetyManager, onDeleteElevatorInspection,
-  onDeleteElevatorMalfunction, onDeleteElevatorAccident, onDeleteElevatorPartDefect, onDeleteElevatorMaintenanceContract,
+  onDeleteElevatorMaintenanceContract,
   formatMoney, formatMoneyInput, parseMoneyInput, apiKey, referenceDate
 }) => {
   // 전화번호 포맷 유틸
@@ -522,9 +513,6 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
   const [tempInsurances, setTempInsurances] = useState<Partial<ElevatorInsurance>[]>([]);
   const [tempSafetyManagers, setTempSafetyManagers] = useState<Partial<ElevatorSafetyManager>[]>([]);
   const [tempInspections, setTempInspections] = useState<Partial<ElevatorInspection>[]>([]);
-  const [tempMalfunctions, setTempMalfunctions] = useState<Partial<ElevatorMalfunction>[]>([]);
-  const [tempAccidents, setTempAccidents] = useState<Partial<ElevatorAccident>[]>([]);
-  const [tempPartDefects, setTempPartDefects] = useState<Partial<ElevatorPartDefect>[]>([]);
   const [tempMaintenanceContracts, setTempMaintenanceContracts] = useState<Partial<ElevatorMaintenanceContract>[]>([]);
   const [inspectionPage, setInspectionPage] = useState(1);
   const [safetyManagerPage, setSafetyManagerPage] = useState(1);
@@ -547,9 +535,6 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
     setTempInsurances([]);
     setTempSafetyManagers([]);
     setTempInspections([]);
-    setTempMalfunctions([]);
-    setTempAccidents([]);
-    setTempPartDefects([]);
     setTempMaintenanceContracts([]);
     setTempSelfCheckSummaries([]);
     setInspectionPage(1);
@@ -568,9 +553,6 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
       setTempInsurances(elevatorInsurances.filter(i => i.facilityId === fac.id));
       setTempSafetyManagers(elevatorSafetyManagers.filter(m => m.facilityId === fac.id));
       setTempInspections(elevatorInspections.filter(i => i.facilityId === fac.id));
-      setTempMalfunctions(elevatorMalfunctions.filter(m => m.facilityId === fac.id));
-      setTempAccidents(elevatorAccidents.filter(a => a.facilityId === fac.id));
-      setTempPartDefects(elevatorPartDefects.filter(d => d.facilityId === fac.id));
       setTempMaintenanceContracts(elevatorMaintenanceContracts.filter(c => c.facilityId === fac.id));
     }
 
@@ -588,9 +570,6 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
       setTempInsurances(elevatorInsurances.filter(i => i.facilityId === fac.id));
       setTempSafetyManagers(elevatorSafetyManagers.filter(m => m.facilityId === fac.id));
       setTempInspections(elevatorInspections.filter(i => i.facilityId === fac.id));
-      setTempMalfunctions(elevatorMalfunctions.filter(m => m.facilityId === fac.id));
-      setTempAccidents(elevatorAccidents.filter(a => a.facilityId === fac.id));
-      setTempPartDefects(elevatorPartDefects.filter(d => d.facilityId === fac.id));
       setTempMaintenanceContracts(elevatorMaintenanceContracts.filter(c => c.facilityId === fac.id));
       // 승강기번호가 있으면 API 자동 재조회 (검사이력 + 자체점검 최신화)
       const spec = (fac.spec as ElevatorInfo) || {};
@@ -770,21 +749,6 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
         onAddElevatorInspection({ ...insp, id: insp.id || `insp${Date.now()}_${Math.random()}`, facilityId } as ElevatorInspection);
       }
     });
-    tempMalfunctions.forEach(mal => {
-      if (mal.malfunctionDate) {
-        onAddElevatorMalfunction({ ...mal, id: mal.id || `mal${Date.now()}_${Math.random()}`, facilityId } as ElevatorMalfunction);
-      }
-    });
-    tempAccidents.forEach(acc => {
-      if (acc.accidentDate) {
-        onAddElevatorAccident({ ...acc, id: acc.id || `acc${Date.now()}_${Math.random()}`, facilityId } as ElevatorAccident);
-      }
-    });
-    tempPartDefects.forEach(def => {
-      if (def.inspectionYear) {
-        onAddElevatorPartDefect({ ...def, id: def.id || `def${Date.now()}_${Math.random()}`, facilityId } as ElevatorPartDefect);
-      }
-    });
     tempMaintenanceContracts.forEach(con => {
       if (con.maintenanceCompany1 || con.maintenanceCompany2) {
         onAddElevatorMaintenanceContract({ ...con, id: con.id || `con${Date.now()}_${Math.random()}`, facilityId } as ElevatorMaintenanceContract);
@@ -797,9 +761,6 @@ export const FacilityManager: React.FC<FacilityManagerProps> = ({
     setTempInsurances([]);
     setTempSafetyManagers([]);
     setTempInspections([]);
-    setTempMalfunctions([]);
-    setTempAccidents([]);
-    setTempPartDefects([]);
     setTempMaintenanceContracts([]);
     setTempSelfCheckSummaries([]);
     setInspectionPage(1);

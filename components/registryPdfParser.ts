@@ -215,8 +215,9 @@ function isNoiseLine(text: string): boolean {
   const t = text.trim();
   if (/^-+\s*\d+\s+(of|\/)\s+\d+\s*-+$/i.test(t)) return true;
   if (/^\d+\s*\/\s*\d+$/.test(t)) return true;
-  if (/^열\s*람\s*용$/.test(t)) return true;
-  if (/^열람일시\s*[:：]/.test(t)) return true;
+  if (/열\s*람\s*용/.test(t) && t.length < 10) return true;
+  // 출력일시 패턴: 행 어디에든 포함되면 노이즈 (컬럼 분할과 무관)
+  if (/출력일시\s*[:：]/.test(t)) return true;
   if (/^관할\s*등기소/.test(t)) return true;
   if (/^고유번호\s/.test(t)) return true;
   return false;
@@ -526,8 +527,9 @@ function parseOwnerSection(rows: PdfTextRow[]): ParsedOwner[] {
   let currentOwner: Partial<ParsedOwner> | null = null;
 
   for (const row of dataRows) {
-    // 반복 헤더 행 건너뛰기
+    // 반복 헤더 / 노이즈 행 건너뛰기
     if (isRepeatedHeaderRow(row)) continue;
+    if (isNoiseLine(row.text)) continue;
 
     const cols = getColumnTexts(row, header.columns);
     const nameCol = cols['등기명의인'] || '';
@@ -607,6 +609,8 @@ function groupEntryRows(
   for (const row of dataRows) {
     // 반복 헤더 행 건너뛰기
     if (isRepeatedHeaderRow(row)) continue;
+    // PDF 페이지 하단 노이즈 행 건너뛰기 (출력일시, 페이지번호, 열람용 등)
+    if (isNoiseLine(row.text)) continue;
 
     const cols = getColumnTexts(row, columns);
     const rankText = (cols[rankColumnName] || '').trim();
@@ -878,8 +882,24 @@ function extractCollateral(text: string): string {
 /**
  * 컬럼 라인 배열을 공백으로 연결
  */
+/**
+ * 줄바꿈된 텍스트 연결 (PDF 컬럼 내 줄바꿈 처리)
+ * - 한글 끝 + 한글 시작: 공백 없이 연결 (칸 좁아서 줄바꿈된 것)
+ * - 그 외: 공백으로 연결
+ */
 function joinLines(lines: string[]): string {
-  return lines.map(l => l.trim()).filter(Boolean).join(' ');
+  const parts = lines.map(l => l.trim()).filter(Boolean);
+  if (parts.length === 0) return '';
+  let result = parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    const prev = result;
+    const next = parts[i];
+    const prevEndsKorean = /[가-힣)]$/.test(prev);
+    const nextStartsKorean = /^[가-힣(]/.test(next);
+    result += (prevEndsKorean && nextStartsKorean) ? '' : ' ';
+    result += next;
+  }
+  return result;
 }
 
 // ── 매매목록 파싱 ──────────────────────────────────────

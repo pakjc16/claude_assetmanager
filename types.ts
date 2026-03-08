@@ -357,6 +357,8 @@ export interface LeaseContract {
   landlordIds: string[];
   tenantIds: string[];
   parentContractId?: string;
+  sublessorIds?: string[];
+  subtenantIds?: string[];
   status: 'ACTIVE' | 'EXPIRED' | 'TERMINATED' | 'PENDING';
   originalContractDate: string;
   terms: ContractTerm[];
@@ -567,37 +569,6 @@ export interface ElevatorInspection {
   result: 'PASS' | 'FAIL' | 'PENDING'; // 합격여부
 }
 
-// 고장이력
-export interface ElevatorMalfunction {
-  id: string;
-  facilityId: string;
-  malfunctionDate: string;           // 고장일시
-  reportDate?: string;               // 신고일시
-  malfunctionType?: string;          // 고장유형
-  malfunctionContent?: string;       // 고장내용
-}
-
-// 사고이력
-export interface ElevatorAccident {
-  id: string;
-  facilityId: string;
-  accidentDate: string;              // 사고일시
-  accidentCause?: string;            // 사고원인
-  damageStatus?: string;             // 피해현황
-  casualties?: string;               // 인명사고
-}
-
-// 자재결함 이력
-export interface ElevatorPartDefect {
-  id: string;
-  facilityId: string;
-  inspectionYear: string;            // 점검년도
-  inspectionCompany?: string;        // 점검업체
-  defectName?: string;               // 결함명
-  inspectionDate?: string;           // 점검일자
-  defectManagement?: string;         // 자재점검관리
-}
-
 // 유지관리 계약현황
 export interface ElevatorMaintenanceContract {
   id: string;
@@ -765,4 +736,5 @@ export interface CompanyInfo {
   email?: string;
   website?: string;
   logoBase64?: string;          // 로고 이미지 (base64)
+  sealBase64?: string;          // 직인 이미지 (base64)
 }

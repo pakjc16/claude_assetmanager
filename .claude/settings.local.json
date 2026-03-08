@@ -41,7 +41,8 @@
       "Bash(git remote:*)",
       "Bash(git checkout:*)",
       "Bash(git:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(grep:*)"
     ]
   }
 }

@@ -16,7 +16,7 @@ import {
   PaymentTransaction, DashboardFinancials, Building, Lot, ValuationHistory, MarketComparable,
   MoneyUnit, AreaUnit, Facility, FacilityLog,
   ElevatorInfo, ElevatorInsurance, ElevatorSafetyManager, ElevatorInspection,
-  ElevatorMalfunction, ElevatorAccident, ElevatorPartDefect, ElevatorMaintenanceContract,
+  ElevatorMaintenanceContract,
   FloorPlan, FloorZone, ParkingSpot, AppUser, CompanyInfo, UserRole
 } from './types';
 
@@ -158,6 +158,7 @@ function App() {
   // 회사정보 편집 폼
   const [editCompany, setEditCompany] = useState<CompanyInfo>(companyInfo);
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const sealInputRef = useRef<HTMLInputElement>(null);
 
   // ── 사용자/회사 localStorage 동기화 ──
   useEffect(() => { try { localStorage.setItem('rf_users', JSON.stringify(users)); } catch {} }, [users]);
@@ -252,42 +253,50 @@ function App() {
     reader.readAsDataURL(file);
   };
 
-  const [stakeholders, setStakeholders] = useState<Stakeholder[]>(INIT_STAKEHOLDERS);
-  const [properties, setProperties] = useState<Property[]>(INIT_PROPERTIES);
-  const [units, setUnits] = useState<Unit[]>(INIT_UNITS);
-  const [leaseContracts, setLeaseContracts] = useState<LeaseContract[]>(INIT_LEASE_CONTRACTS);
-  const [maintenanceContracts, setMaintenanceContracts] = useState<MaintenanceContract[]>(INIT_MAINTENANCE_CONTRACTS);
-  const [utilityContracts, setUtilityContracts] = useState<UtilityContract[]>(INIT_UTILITY_CONTRACTS);
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>(INIT_TRANSACTIONS);
-  const [valuations, setValuations] = useState<ValuationHistory[]>(INIT_VALUATIONS);
-  const [facilities, setFacilities] = useState<Facility[]>(INIT_FACILITIES);
-  const [facilityLogs, setFacilityLogs] = useState<FacilityLog[]>(INIT_FACILITY_LOGS);
   // localStorage 동기화 헬퍼
   const loadLocal = <T,>(key: string, fallback: T): T => {
     try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : fallback; } catch { return fallback; }
   };
 
+  const [stakeholders, setStakeholders] = useState<Stakeholder[]>(() => loadLocal('rf_stakeholders', INIT_STAKEHOLDERS));
+  const [properties, setProperties] = useState<Property[]>(() => loadLocal('rf_properties', INIT_PROPERTIES));
+  const [units, setUnits] = useState<Unit[]>(() => loadLocal('rf_units', INIT_UNITS));
+  const [leaseContracts, setLeaseContracts] = useState<LeaseContract[]>(() => loadLocal('rf_leaseContracts', INIT_LEASE_CONTRACTS));
+  const [maintenanceContracts, setMaintenanceContracts] = useState<MaintenanceContract[]>(() => loadLocal('rf_maintenanceContracts', INIT_MAINTENANCE_CONTRACTS));
+  const [utilityContracts, setUtilityContracts] = useState<UtilityContract[]>(() => loadLocal('rf_utilityContracts', INIT_UTILITY_CONTRACTS));
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>(() => loadLocal('rf_transactions', INIT_TRANSACTIONS));
+  const [valuations, setValuations] = useState<ValuationHistory[]>(() => loadLocal('rf_valuations', INIT_VALUATIONS));
+  const [facilities, setFacilities] = useState<Facility[]>(() => loadLocal('rf_facilities', INIT_FACILITIES));
+  const [facilityLogs, setFacilityLogs] = useState<FacilityLog[]>(() => loadLocal('rf_facilityLogs', INIT_FACILITY_LOGS));
+
   const [elevatorInsurances, setElevatorInsurances] = useState<ElevatorInsurance[]>(() => loadLocal('rf_elvInsurances', []));
   const [elevatorSafetyManagers, setElevatorSafetyManagers] = useState<ElevatorSafetyManager[]>(() => loadLocal('rf_elvSafetyMgrs', []));
   const [elevatorInspections, setElevatorInspections] = useState<ElevatorInspection[]>(() => loadLocal('rf_elvInspections', []));
-  const [elevatorMalfunctions, setElevatorMalfunctions] = useState<ElevatorMalfunction[]>(() => loadLocal('rf_elvMalfunctions', []));
-  const [elevatorAccidents, setElevatorAccidents] = useState<ElevatorAccident[]>(() => loadLocal('rf_elvAccidents', []));
-  const [elevatorPartDefects, setElevatorPartDefects] = useState<ElevatorPartDefect[]>(() => loadLocal('rf_elvPartDefects', []));
   const [elevatorMaintenanceContracts, setElevatorMaintenanceContracts] = useState<ElevatorMaintenanceContract[]>(() => loadLocal('rf_elvMaintContracts', []));
-  const [comparables, setComparables] = useState<MarketComparable[]>(INIT_COMPARABLES);
+  const [comparables, setComparables] = useState<MarketComparable[]>(() => loadLocal('rf_comparables', INIT_COMPARABLES));
 
   // 도면 및 조닝 상태
   const [floorPlans, setFloorPlans] = useState<FloorPlan[]>(() => loadLocal('rf_floorPlans', []));
   const [floorZones, setFloorZones] = useState<FloorZone[]>(() => loadLocal('rf_floorZones', []));
   const [parkingSpots, setParkingSpots] = useState<ParkingSpot[]>(() => loadLocal('rf_parkingSpots', []));
 
+  // 핵심 데이터 localStorage 자동 저장
+  useEffect(() => { try { localStorage.setItem('rf_stakeholders', JSON.stringify(stakeholders)); } catch {} }, [stakeholders]);
+  useEffect(() => { try { localStorage.setItem('rf_properties', JSON.stringify(properties)); } catch {} }, [properties]);
+  useEffect(() => { try { localStorage.setItem('rf_units', JSON.stringify(units)); } catch {} }, [units]);
+  useEffect(() => { try { localStorage.setItem('rf_leaseContracts', JSON.stringify(leaseContracts)); } catch {} }, [leaseContracts]);
+  useEffect(() => { try { localStorage.setItem('rf_maintenanceContracts', JSON.stringify(maintenanceContracts)); } catch {} }, [maintenanceContracts]);
+  useEffect(() => { try { localStorage.setItem('rf_utilityContracts', JSON.stringify(utilityContracts)); } catch {} }, [utilityContracts]);
+  useEffect(() => { try { localStorage.setItem('rf_transactions', JSON.stringify(transactions)); } catch {} }, [transactions]);
+  useEffect(() => { try { localStorage.setItem('rf_valuations', JSON.stringify(valuations)); } catch {} }, [valuations]);
+  useEffect(() => { try { localStorage.setItem('rf_facilities', JSON.stringify(facilities)); } catch {} }, [facilities]);
+  useEffect(() => { try { localStorage.setItem('rf_facilityLogs', JSON.stringify(facilityLogs)); } catch {} }, [facilityLogs]);
+  // comparables
+  useEffect(() => { try { localStorage.setItem('rf_comparables', JSON.stringify(comparables)); } catch {} }, [comparables]);
   // 승강기 + 도면/조닝 데이터 localStorage 자동 저장
   useEffect(() => { try { localStorage.setItem('rf_elvInsurances', JSON.stringify(elevatorInsurances)); } catch {} }, [elevatorInsurances]);
   useEffect(() => { try { localStorage.setItem('rf_elvSafetyMgrs', JSON.stringify(elevatorSafetyManagers)); } catch {} }, [elevatorSafetyManagers]);
   useEffect(() => { try { localStorage.setItem('rf_elvInspections', JSON.stringify(elevatorInspections)); } catch {} }, [elevatorInspections]);
-  useEffect(() => { try { localStorage.setItem('rf_elvMalfunctions', JSON.stringify(elevatorMalfunctions)); } catch {} }, [elevatorMalfunctions]);
-  useEffect(() => { try { localStorage.setItem('rf_elvAccidents', JSON.stringify(elevatorAccidents)); } catch {} }, [elevatorAccidents]);
-  useEffect(() => { try { localStorage.setItem('rf_elvPartDefects', JSON.stringify(elevatorPartDefects)); } catch {} }, [elevatorPartDefects]);
   useEffect(() => { try { localStorage.setItem('rf_elvMaintContracts', JSON.stringify(elevatorMaintenanceContracts)); } catch {} }, [elevatorMaintenanceContracts]);
   useEffect(() => { try { localStorage.setItem('rf_floorPlans', JSON.stringify(floorPlans)); } catch {} }, [floorPlans]);
   useEffect(() => { try { localStorage.setItem('rf_floorZones', JSON.stringify(floorZones)); } catch {} }, [floorZones]);
@@ -524,7 +533,14 @@ function App() {
                {activeTab === 'PROPERTY' && (
                   <PropertyManager
                     properties={properties} units={units} facilities={facilities}
-                    onAddProperty={p => setProperties(prev => [...prev, p])} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onDeleteProperty={id => setProperties(prev => prev.filter(p => p.id !== id))} onUpdateBuilding={() => {}}
+                    onAddProperty={p => setProperties(prev => [...prev, p])} onUpdateProperty={p => setProperties(prev => prev.map(pr => pr.id === p.id ? p : pr))} onDeleteProperty={id => {
+                      setProperties(prev => prev.filter(p => p.id !== id));
+                      const propUnitIds = units.filter(u => u.propertyId === id).map(u => u.id);
+                      setUnits(prev => prev.filter(u => u.propertyId !== id));
+                      setLeaseContracts(prev => prev.filter(c => !c.targetIds.some(tid => propUnitIds.includes(tid)) && !c.targetIds.includes(id)));
+                      setFacilities(prev => prev.filter(f => f.propertyId !== id));
+                      setFacilityLogs(prev => prev.filter(l => !facilities.some(f => f.propertyId === id && f.id === l.facilityId)));
+                    }}
                     onAddUnit={u => setUnits(prev => [...prev, u])} onUpdateUnit={u => setUnits(prev => prev.map(un => un.id === u.id ? u : un))}
                     formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatMoney} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'}
                     appSettings={appSettings}
@@ -541,22 +557,16 @@ function App() {
                   <FacilityManager
                     facilities={facilities} facilityLogs={facilityLogs} properties={properties} units={units} stakeholders={stakeholders} maintenanceContracts={maintenanceContracts}
                     elevatorInsurances={elevatorInsurances} elevatorSafetyManagers={elevatorSafetyManagers} elevatorInspections={elevatorInspections}
-                    elevatorMalfunctions={elevatorMalfunctions} elevatorAccidents={elevatorAccidents} elevatorPartDefects={elevatorPartDefects} elevatorMaintenanceContracts={elevatorMaintenanceContracts}
+                    elevatorMaintenanceContracts={elevatorMaintenanceContracts}
                     onAddFacility={f => setFacilities(prev => [...prev, f])} onUpdateFacility={f => setFacilities(prev => prev.map(fa => fa.id === f.id ? f : fa))} onDeleteFacility={id => setFacilities(prev => prev.filter(f => f.id !== id))}
                     onAddLog={l => setFacilityLogs(prev => [...prev, l])} onDeleteLog={id => setFacilityLogs(prev => prev.filter(l => l.id !== id))}
                     onAddElevatorInsurance={ins => setElevatorInsurances(prev => [...prev.filter(i => i.id !== ins.id), ins])}
                     onAddElevatorSafetyManager={mgr => setElevatorSafetyManagers(prev => [...prev.filter(m => m.id !== mgr.id), mgr])}
                     onAddElevatorInspection={insp => setElevatorInspections(prev => [...prev.filter(i => i.id !== insp.id), insp])}
-                    onAddElevatorMalfunction={mal => setElevatorMalfunctions(prev => [...prev.filter(m => m.id !== mal.id), mal])}
-                    onAddElevatorAccident={acc => setElevatorAccidents(prev => [...prev.filter(a => a.id !== acc.id), acc])}
-                    onAddElevatorPartDefect={def => setElevatorPartDefects(prev => [...prev.filter(d => d.id !== def.id), def])}
                     onAddElevatorMaintenanceContract={con => setElevatorMaintenanceContracts(prev => [...prev.filter(c => c.id !== con.id), con])}
                     onDeleteElevatorInsurance={id => setElevatorInsurances(prev => prev.filter(i => i.id !== id))}
                     onDeleteElevatorSafetyManager={id => setElevatorSafetyManagers(prev => prev.filter(m => m.id !== id))}
                     onDeleteElevatorInspection={id => setElevatorInspections(prev => prev.filter(i => i.id !== id))}
-                    onDeleteElevatorMalfunction={id => setElevatorMalfunctions(prev => prev.filter(m => m.id !== id))}
-                    onDeleteElevatorAccident={id => setElevatorAccidents(prev => prev.filter(a => a.id !== id))}
-                    onDeleteElevatorPartDefect={id => setElevatorPartDefects(prev => prev.filter(d => d.id !== id))}
                     onDeleteElevatorMaintenanceContract={id => setElevatorMaintenanceContracts(prev => prev.filter(c => c.id !== id))}
                     /* Fixed duplicate attributes error by renaming repeated parseNumberInput to parseMoneyInput */
                     formatMoney={formatMoney} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput} formatMoneyInput={formatNumberInput} parseMoneyInput={parseNumberInput} moneyLabel={currencyUnit === 'WON' ? '원' : currencyUnit === 'THOUSAND' ? '천원' : currencyUnit === 'MAN' ? '만원' : currencyUnit === 'MILLION' ? '백만원' : '억원'}
@@ -568,8 +578,10 @@ function App() {
                   <ContractManager
                     leaseContracts={leaseContracts} maintenanceContracts={maintenanceContracts} utilityContracts={utilityContracts} stakeholders={stakeholders} properties={properties} units={units} facilities={facilities}
                     onAddLease={c => setLeaseContracts(prev => [...prev, c])} onUpdateLease={c => setLeaseContracts(prev => prev.map(co => co.id === c.id ? c : co))} onDeleteLease={id => setLeaseContracts(prev => prev.filter(c => c.id !== id))}
-                    onAddMaintenance={c => setMaintenanceContracts(prev => [...prev, c])} onUpdateMaintenance={c => setMaintenanceContracts(prev => prev.map(co => co.id === c.id ? c : co))}
-                    onAddUtility={c => setUtilityContracts(prev => [...prev, c])} onUpdateUtility={c => setUtilityContracts(prev => prev.map(co => co.id === c.id ? c : co))}
+                    onAddMaintenance={c => setMaintenanceContracts(prev => [...prev, c])} onUpdateMaintenance={c => setMaintenanceContracts(prev => prev.map(co => co.id === c.id ? c : co))} onDeleteMaintenance={id => setMaintenanceContracts(prev => prev.filter(c => c.id !== id))}
+                    onAddUtility={c => setUtilityContracts(prev => [...prev, c])} onUpdateUtility={c => setUtilityContracts(prev => prev.map(co => co.id === c.id ? c : co))} onDeleteUtility={id => setUtilityContracts(prev => prev.filter(c => c.id !== id))}
+                    onAddStakeholder={s => setStakeholders(prev => [...prev, s])}
+                    companyInfo={companyInfo}
                     formatMoney={formatMoney} formatArea={formatArea} formatNumberInput={formatNumberInput} parseNumberInput={parseNumberInput}
                     floorPlans={floorPlans} floorZones={floorZones}
                     onSaveFloorPlan={plan => setFloorPlans(prev => [...prev.filter(p => p.id !== plan.id), plan])}
@@ -800,6 +812,37 @@ function App() {
                             <Trash2 size={12}/> 삭제
                           </button>
                         )}
+                      </div>
+                    </div>
+
+                    {/* 직인 */}
+                    <div className="flex items-center gap-4">
+                      <div className="w-20 h-20 rounded-xl border-2 border-dashed border-[#dadce0] flex items-center justify-center bg-[#f8f9fa] overflow-hidden flex-shrink-0">
+                        {editCompany.sealBase64
+                          ? <img src={editCompany.sealBase64} alt="직인" className="w-full h-full object-contain"/>
+                          : <FileText size={32} className="text-[#dadce0]"/>
+                        }
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-[#5f6368]">직인 (날인 이미지)</p>
+                        <p className="text-[10px] text-[#9aa0a6]">계약 내역서 인쇄 시 임대인명에 날인됩니다</p>
+                        <input ref={sealInputRef} type="file" accept="image/*" className="hidden" onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = ev => setEditCompany(p => ({ ...p, sealBase64: ev.target?.result as string }));
+                          reader.readAsDataURL(file);
+                        }}/>
+                        <div className="flex gap-1.5">
+                          <button onClick={() => sealInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-[#dadce0] rounded-lg hover:bg-[#f1f3f4] text-[#3c4043]">
+                            <Upload size={12}/> 업로드
+                          </button>
+                          {editCompany.sealBase64 && (
+                            <button onClick={() => setEditCompany(p => ({ ...p, sealBase64: undefined }))} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-[#fce8e6] rounded-lg hover:bg-[#fce8e6] text-[#ea4335]">
+                              <Trash2 size={12}/> 삭제
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
