@@ -62,7 +62,7 @@ interface AddressSearchProps {
 
 // VWorld 지번주소 문자열 파싱
 // 예: "부산광역시 강서구 명지동 3317-3" → { sido, sigungu, eupMyeonDong, li, bonbun, bubun }
-const parseVWorldTitle = (title: string, bun?: string, ji?: string): JibunAddress => {
+export const parseVWorldTitle = (title: string, bun?: string, ji?: string): JibunAddress => {
   const parts = title.split(' ').filter(p => p.trim());
 
   let sido = '';

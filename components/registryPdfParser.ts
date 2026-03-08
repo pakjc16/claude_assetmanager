@@ -33,7 +33,9 @@ export interface ParsedEulEntry {
   receiptNo: string;         // 접수번호
   mainText: string;          // 주요등기사항 원문
   claimAmount: number;       // 채권최고액 (원)
-  rightHolderText: string;   // 근저당권자/채권자/전세권자 이름
+  rightHolderText: string;   // 근저당권자/채권자/전세권자 이름 (쉼표 구분)
+  debtorText: string;        // 채무자 이름 (쉼표 구분)
+  collateralText: string;    // 공동담보 목록 (주소)
   ownerText: string;         // 대상소유자
   isTransferred: boolean;    // 이전된 항목
 }
@@ -97,7 +99,7 @@ interface TableColumn {
 /**
  * PDF에서 위치 정보 포함 텍스트 추출
  */
-export async function extractPdfData(file: File): Promise<{ rows: PdfTextRow[]; plainText: string }> {
+export async function extractPdfData(file: File): Promise<{ rows: PdfTextRow[]; plainText: string; reviewDate: string }> {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   const allItems: PdfTextItem[] = [];
@@ -134,10 +136,21 @@ export async function extractPdfData(file: File): Promise<{ rows: PdfTextRow[]; 
   }
 
   const rows = groupIntoRows(allItems);
+
+  // 열람일시 추출 (노이즈 필터 전에 수행)
+  let reviewDate = '';
+  for (const r of rows) {
+    const m = r.text.match(/열\s*람\s*일\s*시\s*[:：]?\s*(\d{4})년?\s*(\d{1,2})월?\s*(\d{1,2})일?/);
+    if (m) {
+      reviewDate = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+      break;
+    }
+  }
+
   const cleanedRows = rows.filter(r => !isNoiseLine(r.text));
   const plainText = cleanedRows.map(r => r.text).join('\n');
 
-  return { rows: cleanedRows, plainText };
+  return { rows: cleanedRows, plainText, reviewDate };
 }
 
 /**
@@ -442,6 +455,7 @@ function getColumnTexts(row: PdfTextRow, columns: TableColumn[]): Record<string,
  * - 순위번호에 한글 텍스트 혼입 → 등기목적으로 이동
  * - 접수정보에 채권최고액/권리자 키워드 혼입 → 주요등기사항으로 이동
  * - 등기목적에 날짜 혼입 → 접수정보로 이동
+ * - 컬럼 헤더 텍스트가 데이터에 혼입된 경우 제거
  */
 function postProcessColumns(cols: Record<string, string>) {
   // 순위번호에 한글 텍스트가 섞인 경우 → 등기목적으로 이동
@@ -482,6 +496,19 @@ function postProcessColumns(cols: Record<string, string>) {
       cols['접수정보'] = (dateMatch[1] + ' ' + cols['접수정보']).trim();
     }
   }
+
+  // 컬럼 헤더 텍스트가 데이터에 혼입된 경우 제거
+  // (페이지 넘김 시 반복 헤더가 데이터 행으로 인식되는 경우)
+  const headerKeywords = ['등기목적', '접수정보', '주요등기사항', '대상소유자', '순위번호'];
+  for (const colName of Object.keys(cols)) {
+    for (const hk of headerKeywords) {
+      if (hk === colName) continue; // 자기 자신 컬럼명은 제거
+      // 다른 컬럼의 헤더명이 내 데이터에 들어온 경우 → 제거
+      cols[colName] = cols[colName].replace(new RegExp(`\\s*${hk}\\s*`, 'g'), ' ').trim();
+    }
+    // 자기 자신 컬럼명이 데이터에 혼입된 경우도 제거
+    cols[colName] = cols[colName].replace(new RegExp(`\\s*${colName}\\s*`, 'g'), ' ').trim();
+  }
 }
 
 // ── 소유자 섹션 파싱 ──────────────────────────────────────
@@ -499,6 +526,9 @@ function parseOwnerSection(rows: PdfTextRow[]): ParsedOwner[] {
   let currentOwner: Partial<ParsedOwner> | null = null;
 
   for (const row of dataRows) {
+    // 반복 헤더 행 건너뛰기
+    if (isRepeatedHeaderRow(row)) continue;
+
     const cols = getColumnTexts(row, header.columns);
     const nameCol = cols['등기명의인'] || '';
     const regNoCol = cols['등록번호'] || '';
@@ -506,8 +536,11 @@ function parseOwnerSection(rows: PdfTextRow[]): ParsedOwner[] {
     const addrCol = cols['주소'] || '';
     const rankCol = cols['순위번호'] || '';
 
-    // 새 소유자 행 (이름이 있으면)
-    if (nameCol) {
+    // 새 소유자 행 판단: 등록번호 또는 순위번호가 있으면 새 엔트리
+    // (이름만 있고 등록번호/순위번호 없으면 이전 소유자 이름의 줄바꿈 연속)
+    const isNewOwner = nameCol && (regNoCol || rankCol || !currentOwner);
+
+    if (isNewOwner) {
       if (currentOwner && currentOwner.name) {
         owners.push(currentOwner as ParsedOwner);
       }
@@ -519,9 +552,11 @@ function parseOwnerSection(rows: PdfTextRow[]): ParsedOwner[] {
         rankNo: rankCol,
       };
     } else if (currentOwner) {
-      // 이전 행의 연속 (주소 등이 줄바꿈)
+      // 이전 행의 연속 (이름/주소 등이 줄바꿈)
+      if (nameCol) currentOwner.name = ((currentOwner.name || '') + nameCol).trim();
       if (addrCol) currentOwner.address = ((currentOwner.address || '') + ' ' + addrCol).trim();
       if (regNoCol && !currentOwner.regNo) currentOwner.regNo = regNoCol;
+      if (shareCol && currentOwner.share === '단독소유') currentOwner.share = shareCol;
       if (rankCol && !currentOwner.rankNo) currentOwner.rankNo = rankCol;
     }
   }
@@ -543,6 +578,21 @@ interface RawEntry {
 }
 
 /**
+ * 행이 반복 헤더인지 판별 (페이지 넘김 시 컬럼 헤더 반복)
+ */
+function isRepeatedHeaderRow(row: PdfTextRow): boolean {
+  const t = row.text.replace(/\s/g, '');
+  // 헤더 키워드 3개 이상 포함 → 반복 헤더로 판별
+  const headerWords = ['순위번호', '등기목적', '접수정보', '주요등기사항', '대상소유자',
+    '등기명의인', '등록번호', '최종지분'];
+  let count = 0;
+  for (const hw of headerWords) {
+    if (t.includes(hw)) count++;
+  }
+  return count >= 2;
+}
+
+/**
  * 데이터 행들을 순위번호 기준으로 엔트리 그룹화
  * 순위번호가 있는 행에서 새 엔트리 시작, 없으면 이전 엔트리에 이어붙이기
  */
@@ -555,6 +605,9 @@ function groupEntryRows(
   let current: RawEntry | null = null;
 
   for (const row of dataRows) {
+    // 반복 헤더 행 건너뛰기
+    if (isRepeatedHeaderRow(row)) continue;
+
     const cols = getColumnTexts(row, columns);
     const rankText = (cols[rankColumnName] || '').trim();
 
@@ -649,6 +702,8 @@ function parseEulSection(rows: PdfTextRow[]): ParsedEulEntry[] {
       mainText,
       claimAmount: extractClaimAmount(mainText),
       rightHolderText: extractRightHolder(mainText),
+      debtorText: ownerText || extractDebtor(mainText),
+      collateralText: extractCollateral(mainText),
       ownerText,
       isTransferred: baseRank ? parentRanks.has(baseRank) : false,
     };
@@ -698,7 +753,8 @@ function extractClaimAmount(text: string): number {
 }
 
 /**
- * 주요등기사항에서 권리자 이름 추출
+ * 주요등기사항에서 권리자 이름 추출 (복수 권리자 쉼표 구분)
+ * 근저당권자 다음에 나오는 한국인 이름(등록번호 앞)을 모두 추출
  */
 function extractRightHolder(text: string): string {
   const holderKeywords = ['근저당권자', '전세권자', '채권자', '임차권자', '지상권자', '권리자'];
@@ -709,30 +765,114 @@ function extractRightHolder(text: string): string {
     if (idx >= 0) {
       let after = text.substring(idx + kw.length).trim();
 
-      // 다음 키워드 또는 다른 권리자 키워드 앞에서 자르기
+      // 공동담보 앞에서 자르기
       let cutIdx = after.length;
-      for (const sk of [...stopKeywords, ...holderKeywords]) {
-        if (sk === kw) continue;
+      for (const sk of stopKeywords) {
         const skIdx = after.indexOf(sk);
-        if (skIdx > 0 && skIdx < cutIdx) {
-          cutIdx = skIdx;
-        }
+        if (skIdx > 0 && skIdx < cutIdx) cutIdx = skIdx;
       }
       after = after.substring(0, cutIdx).trim();
 
-      if (after) return after;
+      if (!after) continue;
+
+      // 이름 + 등록번호 패턴으로 개별 권리자 추출
+      // 패턴: 한글이름(2-20자) + 등록번호(6자리-) 또는 한글이름 + 주소
+      const names: string[] = [];
+      const nameRegex = /([가-힣()]{2,20})\s+\d{6}[-\s*]/g;
+      let m;
+      while ((m = nameRegex.exec(after)) !== null) {
+        const name = m[1].trim();
+        if (name && !stopKeywords.some(sk => name.includes(sk))) {
+          names.push(name);
+        }
+      }
+
+      if (names.length > 0) return names.join(', ');
+
+      // Fallback: 법인명 등 등록번호 패턴 없는 경우 → 첫 번째 한글 연속
+      const corpMatch = after.match(/^([가-힣()]+(?:\s*[가-힣()]+)*)/);
+      if (corpMatch) return corpMatch[1].trim();
+
+      return after;
     }
   }
 
-  // Fallback: 금액("금X원") 뒤의 텍스트를 권리자로 추출
-  // 키워드 없이 "금2,880,000,000원 송파신용협동조합" 형태인 경우 대응
+  // Fallback: 금액("금X원") 뒤의 텍스트에서 권리자 추출
   const amountMatch = text.match(/금\s*[\d,]+\s*원\s*/);
   if (amountMatch && amountMatch.index !== undefined) {
     const after = text.substring(amountMatch.index + amountMatch[0].length).trim();
-    if (after) return after;
+    if (after) {
+      // 공동담보 앞에서 자르기
+      const colIdx = after.indexOf('공동담보');
+      const section = colIdx > 0 ? after.substring(0, colIdx).trim() : after;
+      const names: string[] = [];
+      const nameRegex = /([가-힣()]{2,20})\s+\d{6}[-\s*]/g;
+      let m;
+      while ((m = nameRegex.exec(section)) !== null) {
+        names.push(m[1].trim());
+      }
+      if (names.length > 0) return names.join(', ');
+      return section;
+    }
   }
 
   return '';
+}
+
+/**
+ * 주요등기사항에서 채무자 이름 추출 (복수 채무자 쉼표 구분)
+ */
+function extractDebtor(text: string): string {
+  const idx = text.indexOf('채무자');
+  if (idx < 0) return '';
+
+  let after = text.substring(idx + 3).trim();
+
+  // 채무자 뒤 다음 키워드 앞에서 자르기
+  const stopKws = ['근저당권자', '전세권자', '채권자', '임차권자', '권리자', '공동담보', '채권최고액'];
+  let cutIdx = after.length;
+  for (const sk of stopKws) {
+    const skIdx = after.indexOf(sk);
+    if (skIdx > 0 && skIdx < cutIdx) cutIdx = skIdx;
+  }
+  after = after.substring(0, cutIdx).trim();
+
+  if (!after) return '';
+
+  // 이름 + 등록번호 패턴으로 개별 채무자 추출
+  const names: string[] = [];
+  const nameRegex = /([가-힣()]{2,20})\s+\d{6}[-\s*]/g;
+  let m;
+  while ((m = nameRegex.exec(after)) !== null) {
+    const name = m[1].trim();
+    if (name) names.push(name);
+  }
+  if (names.length > 0) return names.join(', ');
+
+  // Fallback: 법인명 등
+  const corpMatch = after.match(/^([가-힣()]+(?:\s*[가-힣()]+)*)/);
+  if (corpMatch) return corpMatch[1].trim();
+
+  return after;
+}
+
+/**
+ * 주요등기사항에서 공동담보 목록 추출
+ */
+function extractCollateral(text: string): string {
+  const parts: string[] = [];
+  // "공동담보 토지/건물 [주소]" 패턴 반복 매칭
+  const regex = /공동담보\s+(토지|건물)\s+([^\n]+?)(?=\s*공동담보|\s*$)/g;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    parts.push(`[${m[1]}] ${m[2].trim()}`);
+  }
+  // 단일 "공동담보" 뒤 주소만 있는 경우
+  if (parts.length === 0) {
+    const single = text.match(/공동담보\s+(.+?)$/);
+    if (single) parts.push(single[1].trim());
+  }
+  return parts.join(', ');
 }
 
 /**

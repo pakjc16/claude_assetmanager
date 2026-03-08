@@ -150,6 +150,17 @@ export interface BuildingSpec {
 
 // ── 등기부 ────────────────────────────────────────────────────────────────────
 
+// 소유지분현황
+export interface RegistryOwnerEntry {
+  id: string;
+  name: string;                // 등기명의인
+  regNo: string;               // (주민)등록번호
+  share: string;               // 최종지분 (단독소유, 1/2 등)
+  address: string;             // 주소
+  rankNo: string;              // 순위번호
+  stakeholderId?: string;      // 인물/업체 참조 ID (선택)
+}
+
 // 갑구: 소유권에 관한 사항
 export interface RegistryGabEntry {
   id: string;
@@ -175,7 +186,9 @@ export interface RegistryEulEntry {
   cause?: string;            // 등기원인
   rightHolderText: string;   // 권리자 (텍스트)
   rightHolderId?: string;    // 인물/업체 참조 ID (선택)
+  debtorText?: string;       // 채무자 (텍스트)
   claimAmount?: number;      // 채권액 (원)
+  collateralText?: string;   // 공동담보 목록
   acquisition: '말소' | '인수'; // 인수 여부
   details?: string;          // 기타사항
 }
@@ -196,6 +209,7 @@ export interface RegistryTradeEntry {
 
 export interface PropertyRegistry {
   reviewDate?: string;           // 열람일자
+  ownerEntries?: RegistryOwnerEntry[]; // 소유지분현황
   gabEntries: RegistryGabEntry[]; // 갑구 (소유권에 관한 사항)
   eulEntries: RegistryEulEntry[]; // 을구 (소유권 외 기타 권리)
   tradeEntries?: RegistryTradeEntry[]; // 매매목록
@@ -208,7 +222,8 @@ export interface Building {
   mgmBldrgstPk?: string;     // 관리건축물대장PK (API 연동용)
   spec: BuildingSpec;
   ownerId?: string;          // 소유자 ID (Stakeholder)
-  registry?: PropertyRegistry; // 건물등기부
+  registry?: PropertyRegistry; // 건물등기부 (현재 선택된 버전)
+  registryVersions?: PropertyRegistry[]; // 등기부 이력 (열람일시별)
 }
 
 export type PropertyType = 'AGGREGATE' | 'LAND_AND_BUILDING' | 'LAND';
@@ -220,7 +235,8 @@ export interface Lot {
   area: number;
   pnu?: string;  // VWorld PNU 코드 (토지정보 조회용)
   ownerId?: string;  // 소유자 ID (Stakeholder)
-  registry?: PropertyRegistry; // 토지등기부
+  registry?: PropertyRegistry; // 토지등기부 (현재 선택된 버전)
+  registryVersions?: PropertyRegistry[]; // 등기부 이력 (열람일시별)
 }
 
 export interface PropertyPhoto {

@@ -1,10 +1,10 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder, RegistryGabEntry, RegistryEulEntry, PropertyRegistry, ValuationHistory, RegistryTradeEntry } from '../types';
+import { Property, Unit, Building, JibunAddress, Facility, BuildingSpec, Lot, PropertyPhoto, FloorDetail, FloorPlan, FloorZone, ZoneDetail, ZoneUsage, LeaseContract, Stakeholder, RegistryOwnerEntry, RegistryGabEntry, RegistryEulEntry, PropertyRegistry, ValuationHistory, RegistryTradeEntry } from '../types';
 import { extractPdfData, parseRegistrySummary, parseTradeList, extractPdfAddress, ParsedRegistry, ParsedTradeEntry } from './registryPdfParser';
 import { MapPin, Plus, X, Building as BuildingIcon, Edit2, Layers, Home, Info, Trash2, Ruler, Search, Loader2, FileImage, Grid3X3, Check, ChevronDown, ChevronUp, Camera, Maximize2, Star, Crop, Upload } from 'lucide-react';
-import { AddressSearch } from './AddressSearch';
+import { AddressSearch, parseVWorldTitle } from './AddressSearch';
 import { AppSettings } from '../App';
 import FloorPlanViewer from './FloorPlanViewer';
 
@@ -871,11 +871,13 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
   // 등기부 관련 상태
   const [expandedLotId, setExpandedLotId] = useState<string | null>(null);
-  const [registryTabs, setRegistryTabs] = useState<Record<string, '갑구' | '을구'>>({});
+  const [registryVersionIdx, setRegistryVersionIdx] = useState<Record<string, number>>({});
   const GAB_INIT = { rankNo: '', purpose: '', receiptDate: '', receiptNo: '', rightHolderText: '' };
-  const EUL_INIT = { rankNo: '', purpose: '', receiptDate: '', receiptNo: '', rightHolderText: '', claimAmount: '' };
+  const EUL_INIT = { rankNo: '', purpose: '', receiptDate: '', receiptNo: '', rightHolderText: '', debtorText: '', claimAmount: '' };
   const [newGabForms, setNewGabForms] = useState<Record<string, typeof GAB_INIT>>({});
   const [newEulForms, setNewEulForms] = useState<Record<string, typeof EUL_INIT>>({});
+  // 등기부 인라인 수정 상태: "section:entryId" → true
+  const [editingRegistryId, setEditingRegistryId] = useState<string | null>(null);
 
   // 등기부 PDF 파싱 상태
   const [registryPdfParsing, setRegistryPdfParsing] = useState(false);
@@ -885,12 +887,23 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     addressMatch: { pdf: string; local: string; matched: boolean } | null;
     parsed: ParsedRegistry;
     trade: ParsedTradeEntry | null;
+    reviewDate: string;
     selectedGab: Set<number>;
     selectedEul: Set<number>;
     applyTrade: boolean;
   } | null>(null);
   const registryPdfInputRef = useRef<HTMLInputElement>(null);
   const registryPdfTargetRef = useRef<{ itemType: 'lot' | 'building'; targetId: string } | null>(null);
+
+  // 물건 등록 시 등기부 PDF 데이터 임시 저장
+  const [registryDataForNewProp, setRegistryDataForNewProp] = useState<{
+    type: '토지' | '건물';
+    parsed: ParsedRegistry;
+    trade: ParsedTradeEntry | null;
+    reviewDate: string;
+  } | null>(null);
+  const [isLoadingRegistryPdf, setIsLoadingRegistryPdf] = useState(false);
+  const newPropPdfInputRef = useRef<HTMLInputElement>(null);
 
   // 사진 업로드 모달 상태
   const [isPhotoUploadModalOpen, setIsPhotoUploadModalOpen] = useState(false);
@@ -1060,6 +1073,63 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           setIsLoadingBuildingInfo(false);
         }
 
+        // 등기부 PDF 데이터가 있으면 registry에 적용
+        if (registryDataForNewProp) {
+          const { type: regType, parsed, trade } = registryDataForNewProp;
+          const ownerEntries: RegistryOwnerEntry[] = parsed.owners.map((o, i) => ({
+            id: `pdf-owner-${Date.now()}-${i}`,
+            name: o.name,
+            regNo: o.regNo,
+            share: o.share,
+            address: o.address,
+            rankNo: o.rankNo,
+            stakeholderId: stakeholders.find(s => s.name === o.name.replace(/\s*\(.*\)\s*/, '').trim())?.id,
+          }));
+          const gabEntries: RegistryGabEntry[] = parsed.gabEntries.map((e, i) => ({
+            id: `pdf-gab-${Date.now()}-${i}`,
+            rankNo: e.rankNo,
+            purpose: e.purpose,
+            receiptDate: e.receiptDate,
+            receiptNo: e.receiptNo,
+            rightHolderText: e.mainText,
+            rightHolderId: stakeholders.find(s => e.mainText.includes(s.name))?.id,
+            isDeleted: e.isTransferred,
+          }));
+          const eulEntries: RegistryEulEntry[] = parsed.eulEntries.map((e, i) => ({
+            id: `pdf-eul-${Date.now()}-${i}`,
+            rankNo: e.rankNo,
+            purpose: e.purpose,
+            receiptDate: e.receiptDate,
+            receiptNo: e.receiptNo,
+            rightHolderText: e.rightHolderText || e.mainText,
+            rightHolderId: stakeholders.find(s => (e.rightHolderText || e.mainText).includes(s.name))?.id,
+            debtorText: e.debtorText || undefined,
+            claimAmount: e.claimAmount || undefined,
+            collateralText: e.collateralText || undefined,
+            acquisition: '말소' as const,
+          }));
+          const tradeEntries: RegistryTradeEntry[] | undefined = trade ? [{
+            id: `pdf-trade-${Date.now()}`,
+            listNo: trade.listNo,
+            tradeAmount: trade.tradeAmount,
+            items: trade.items,
+          }] : undefined;
+          const registry: PropertyRegistry = {
+            reviewDate: registryDataForNewProp.reviewDate,
+            ownerEntries: ownerEntries.length > 0 ? ownerEntries : undefined,
+            gabEntries,
+            eulEntries,
+            tradeEntries,
+          };
+
+          if (regType === '토지') {
+            firstLot.registry = registry;
+            firstLot.registryVersions = [registry];
+          } else if (buildings.length > 0) {
+            buildings[0] = { ...buildings[0], registry, registryVersions: [registry] };
+          }
+        }
+
         onAddProperty({
           id: propertyId,
           lots: [firstLot],
@@ -1068,13 +1138,15 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           ...newProp as Property
         });
 
-        if (buildings.length > 0) {
-          alert(`${buildings.length}개 건물이 자동 등록되었습니다.`);
-        }
+        const msgs: string[] = [];
+        if (buildings.length > 0) msgs.push(`${buildings.length}개 건물이 자동 등록되었습니다.`);
+        if (registryDataForNewProp) msgs.push(`등기부등본(${registryDataForNewProp.type}) 정보가 적용되었습니다.`);
+        if (msgs.length > 0) alert(msgs.join('\n'));
     }
     setIsPropertyModalOpen(false);
     setPropPnu('');
     setPropLandInfo(null);
+    setRegistryDataForNewProp(null);
   };
 
   // 건물 삭제
@@ -1123,6 +1195,110 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
           area: landInfo.lndpclAr
         });
       }
+    }
+  };
+
+  // ── 물건 등록 시 등기부 PDF 업로드 → 주소 자동검색 + 등기부 데이터 저장 ──
+
+  // PDF 주소에서 순수 지번주소만 추출 (건물명, 호수 등 제거)
+  const cleanPdfAddress = (raw: string): string => {
+    let addr = raw.replace(/\s+/g, ' ').trim();
+    // 괄호 이후 제거: "서울특별시 강남구 대치동 123-4 (기타정보)"
+    addr = addr.replace(/\s*\(.*$/, '');
+    // 번지 이후의 건물명 등 제거: "123-4 ○○빌딩" → "123-4"
+    const m = addr.match(/^(.+?\d+(?:-\d+)?)\s/);
+    if (m) addr = m[1];
+    return addr.trim();
+  };
+
+  // VWorld parcel 검색 헬퍼
+  const searchVWorldParcel = async (query: string): Promise<any[]> => {
+    if (!appSettings.vworldApiKey) return [];
+    const url = `/api/vworld/req/search?service=search&request=search&version=2.0&size=5&page=1&format=json&key=${appSettings.vworldApiKey}&query=${encodeURIComponent(query)}&type=address&category=parcel`;
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      console.log('[등기부 PDF → VWorld 검색]', query, data);
+      return data.response?.result?.items || [];
+    } catch (err) {
+      console.error('[VWorld 검색 오류]', err);
+      return [];
+    }
+  };
+
+  const handleRegistryPdfForNewProp = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    setIsLoadingRegistryPdf(true);
+    try {
+      const { rows, plainText, reviewDate: pdfReviewDate } = await extractPdfData(file);
+      const pdfAddr = extractPdfAddress(plainText);
+
+      if (!pdfAddr) {
+        alert('PDF에서 주소를 추출할 수 없습니다. 등기부등본 PDF 형식을 확인해주세요.');
+        return;
+      }
+
+      // 등기부 파싱 결과 저장
+      const parsed = parseRegistrySummary(rows);
+      const trade = parseTradeList(plainText);
+      setRegistryDataForNewProp({ type: pdfAddr.type, parsed, trade, reviewDate: pdfReviewDate || new Date().toISOString().slice(0, 10) });
+
+      // VWorld API로 주소 자동검색 → handlePropAddressSelect 호출
+      if (appSettings.vworldApiKey) {
+        const cleanAddr = cleanPdfAddress(pdfAddr.address);
+
+        // 1차: 정제된 전체 주소로 검색
+        let items = await searchVWorldParcel(cleanAddr);
+
+        // 2차: 실패 시 원본 주소로 재시도
+        if (items.length === 0 && cleanAddr !== pdfAddr.address.trim()) {
+          items = await searchVWorldParcel(pdfAddr.address.trim());
+        }
+
+        if (items.length > 0) {
+          const item = items[0];
+          const id = item.id || '';
+          const bun = id.substring(11, 15);
+          let ji = id.substring(15, 19);
+          if (ji === '0000') ji = '';
+
+          // handlePropAddressSelect를 직접 호출하여 주소검색과 동일한 흐름 보장
+          await handlePropAddressSelect({
+            jibunAddress: parseVWorldTitle(item.address?.parcel || cleanAddr, bun, ji),
+            roadAddress: item.address?.road || '',
+            fullJibunAddress: item.address?.parcel || cleanAddr,
+            pnu: id,
+          });
+        } else {
+          // VWorld 검색 실패 → 주소 텍스트만 파싱하여 입력, PNU 없이
+          const jibunAddress = parseVWorldTitle(pdfAddr.address);
+          setNewProp(prev => ({
+            ...prev,
+            masterAddress: jibunAddress,
+            roadAddress: ''
+          }));
+          setDisplayAddress(pdfAddr.address);
+          alert(`VWorld에서 "${cleanAddr}" 주소를 찾지 못했습니다.\n주소 검색 버튼으로 직접 검색하면 PNU·토지·건물 정보가 자동 조회됩니다.\n\n등기부등본 정보는 저장되었습니다.`);
+        }
+      } else {
+        // VWorld API 키 없음 → 주소 텍스트만 파싱
+        const jibunAddress = parseVWorldTitle(pdfAddr.address);
+        setNewProp(prev => ({
+          ...prev,
+          masterAddress: jibunAddress,
+          roadAddress: ''
+        }));
+        setDisplayAddress(pdfAddr.address);
+        alert('VWorld API 키가 설정되지 않아 PNU·토지·건물 자동 조회를 할 수 없습니다.\n주소 검색 버튼 또는 설정에서 API 키를 등록해주세요.\n\n등기부등본 정보는 저장되었습니다.');
+      }
+    } catch (err) {
+      console.error('등기부 PDF 파싱 오류:', err);
+      alert('PDF 파싱에 실패했습니다. 등기부등본 PDF 형식을 확인해주세요.');
+    } finally {
+      setIsLoadingRegistryPdf(false);
     }
   };
 
@@ -1433,6 +1609,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
       receiptNo: form.receiptNo,
       rightHolderText: form.rightHolderText,
       rightHolderId: matchSh?.id || undefined,
+      debtorText: form.debtorText || undefined,
       claimAmount: form.claimAmount ? Number(form.claimAmount.replace(/,/g, '')) || undefined : undefined,
       acquisition: '말소',
     };
@@ -1492,7 +1669,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     setRegistryPdfParsing(true);
 
     try {
-      const { rows, plainText } = await extractPdfData(file);
+      const { rows, plainText, reviewDate: pdfReviewDate } = await extractPdfData(file);
 
       // 주소 매칭
       const pdfAddr = extractPdfAddress(plainText);
@@ -1523,6 +1700,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         addressMatch,
         parsed,
         trade,
+        reviewDate: pdfReviewDate || new Date().toISOString().slice(0, 10),
         selectedGab: new Set(parsed.gabEntries.map((_, i) => i)),
         selectedEul: new Set(parsed.eulEntries.map((_, i) => i)),
         applyTrade: !!trade,
@@ -1537,9 +1715,20 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
   const applyRegistryPdf = () => {
     if (!registryPdfPreview || !selectedProperty) return;
-    const { itemType, targetId, parsed, trade, selectedGab, selectedEul, applyTrade } = registryPdfPreview;
+    const { itemType, targetId, parsed, trade, reviewDate: pdfReviewDate, selectedGab, selectedEul, applyTrade } = registryPdfPreview;
 
     const updated = { ...selectedProperty };
+
+    // 소유지분 엔트리 생성
+    const newOwnerEntries: RegistryOwnerEntry[] = parsed.owners.map((o, i) => ({
+      id: `pdf-owner-${Date.now()}-${i}`,
+      name: o.name,
+      regNo: o.regNo,
+      share: o.share,
+      address: o.address,
+      rankNo: o.rankNo,
+      stakeholderId: stakeholders.find(s => s.name === o.name.replace(/\s*\(.*\)\s*/, '').trim())?.id,
+    }));
 
     // 선택된 갑구 엔트리 생성
     const newGabEntries: RegistryGabEntry[] = parsed.gabEntries
@@ -1566,7 +1755,9 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
         receiptNo: e.receiptNo,
         rightHolderText: e.rightHolderText || e.mainText,
         rightHolderId: stakeholders.find(s => (e.rightHolderText || e.mainText).includes(s.name))?.id,
+        debtorText: e.debtorText || undefined,
         claimAmount: e.claimAmount || undefined,
+        collateralText: e.collateralText || undefined,
         acquisition: '말소' as const,
       }));
 
@@ -1581,18 +1772,35 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
       }];
     }
 
-    // 기존 registry에 merge
-    const merge = (reg?: PropertyRegistry): PropertyRegistry => ({
-      ...(reg ?? emptyRegistry()),
-      gabEntries: [...(reg?.gabEntries ?? []), ...newGabEntries],
-      eulEntries: [...(reg?.eulEntries ?? []), ...newEulEntries],
-      tradeEntries: newTradeEntries ? [...(reg?.tradeEntries ?? []), ...newTradeEntries] : reg?.tradeEntries,
-    });
+    // 새 버전 생성
+    const newVersion: PropertyRegistry = {
+      reviewDate: pdfReviewDate || new Date().toISOString().slice(0, 10),
+      ownerEntries: newOwnerEntries.length > 0 ? newOwnerEntries : undefined,
+      gabEntries: newGabEntries.length > 0 ? newGabEntries : [],
+      eulEntries: newEulEntries.length > 0 ? newEulEntries : [],
+      tradeEntries: newTradeEntries,
+    };
 
+    // registryVersions에 추가하고, registry를 최신 버전으로 설정
     if (itemType === 'lot') {
-      updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: merge(l.registry) } : l);
+      updated.lots = updated.lots.map(l => {
+        if (l.id !== targetId) return l;
+        const versions = [...(l.registryVersions || [])];
+        // 같은 열람일시 버전이 있으면 교체
+        const existIdx = versions.findIndex(v => v.reviewDate === newVersion.reviewDate);
+        if (existIdx >= 0) versions[existIdx] = newVersion;
+        else versions.push(newVersion);
+        return { ...l, registry: newVersion, registryVersions: versions };
+      });
     } else {
-      updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: merge(b.registry) } : b);
+      updated.buildings = updated.buildings.map(b => {
+        if (b.id !== targetId) return b;
+        const versions = [...(b.registryVersions || [])];
+        const existIdx = versions.findIndex(v => v.reviewDate === newVersion.reviewDate);
+        if (existIdx >= 0) versions[existIdx] = newVersion;
+        else versions.push(newVersion);
+        return { ...b, registry: newVersion, registryVersions: versions };
+      });
     }
 
     onUpdateProperty(updated);
@@ -1625,202 +1833,396 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
     itemType: 'lot' | 'building',
     targetId: string,
     registry: PropertyRegistry | undefined,
+    versions?: PropertyRegistry[],
   ): React.ReactNode => {
-    const gabEntries = registry?.gabEntries ?? [];
-    const eulEntries = registry?.eulEntries ?? [];
+    const vIdx = registryVersionIdx[targetId] ?? -1; // -1 = 현재(registry)
+    const activeRegistry = vIdx >= 0 && versions && versions[vIdx] ? versions[vIdx] : registry;
+    const ownerEntries = activeRegistry?.ownerEntries ?? [];
+    const gabEntries = activeRegistry?.gabEntries ?? [];
+    const eulEntries = activeRegistry?.eulEntries ?? [];
     const totalClaim = eulEntries.reduce((sum, e) => sum + (e.claimAmount ?? 0), 0);
-    const activeTab = registryTabs[targetId] ?? '갑구';
     const gabForm = getGabForm(targetId);
     const eulForm = getEulForm(targetId);
     const shListId = `sh-list-${targetId}`;
+    const isHistoricView = vIdx >= 0 && versions && versions[vIdx] !== registry;
+
+    // 인물/업체 매칭: 이름+등록번호 기반
+    const matchStakeholder = (name: string, regNo?: string): Stakeholder | undefined => {
+      if (!name) return undefined;
+      const cleanName = name.replace(/\s*\(.*\)\s*/, '').trim();
+      if (regNo) {
+        const cleanRegNo = regNo.replace(/[-\s]/g, '');
+        const byBoth = stakeholders.find(s => {
+          const sRegNo = (s.registrationNumber || '').replace(/[-\s]/g, '');
+          return s.name === cleanName && sRegNo && sRegNo === cleanRegNo;
+        });
+        if (byBoth) return byBoth;
+      }
+      return stakeholders.find(s => s.name === cleanName);
+    };
+
+    // 소유자 연결 처리
+    const linkOwnerToStakeholder = (ownerId: string) => {
+      if (!selectedProperty || !activeRegistry) return;
+      const owner = ownerEntries.find(o => o.id === ownerId);
+      if (!owner) return;
+      const matched = matchStakeholder(owner.name, owner.regNo);
+      if (matched) {
+        if (!confirm(`"${owner.name}"을(를) 인물/업체 "${matched.name}"(으)로 연결하시겠습니까?`)) return;
+        const updatedOwners = ownerEntries.map(o => o.id === ownerId ? { ...o, stakeholderId: matched.id } : o);
+        updateRegistryMeta(itemType, targetId, { ownerEntries: updatedOwners });
+      } else {
+        alert(`"${owner.name}"과(와) 일치하는 인물/업체가 없습니다.`);
+      }
+    };
+
+    // 갑구/을구 권리자 연결 처리
+    const linkEntryToStakeholder = (section: 'gab' | 'eul', entryId: string) => {
+      if (!selectedProperty || !activeRegistry) return;
+      const entry = section === 'gab'
+        ? gabEntries.find(e => e.id === entryId)
+        : eulEntries.find(e => e.id === entryId);
+      if (!entry) return;
+      const nameText = entry.rightHolderText;
+      const matched = matchStakeholder(nameText);
+      if (matched) {
+        if (!confirm(`"${nameText}"을(를) 인물/업체 "${matched.name}"(으)로 연결하시겠습니까?`)) return;
+        const updated = { ...selectedProperty };
+        if (section === 'gab') {
+          const entries = gabEntries.map(e => e.id === entryId ? { ...e, rightHolderId: matched.id } : e);
+          if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: { ...l.registry!, gabEntries: entries } } : l);
+          else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: { ...b.registry!, gabEntries: entries } } : b);
+        } else {
+          const entries = eulEntries.map(e => e.id === entryId ? { ...e, rightHolderId: matched.id } : e);
+          if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: { ...l.registry!, eulEntries: entries } } : l);
+          else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: { ...b.registry!, eulEntries: entries } } : b);
+        }
+        onUpdateProperty(updated);
+      } else {
+        alert(`"${nameText}"과(와) 일치하는 인물/업체가 없습니다.`);
+      }
+    };
+
+    // 버전 선택 핸들러
+    const handleVersionChange = (idx: number) => {
+      setRegistryVersionIdx(prev => ({ ...prev, [targetId]: idx }));
+    };
+
+    // 인라인 수정 헬퍼
+    const isEditing = (entryId: string) => editingRegistryId === entryId;
+    const updateGabField = (entryId: string, field: Partial<RegistryGabEntry>) => {
+      if (!selectedProperty) return;
+      const updated = { ...selectedProperty };
+      const newEntries = gabEntries.map(e => e.id === entryId ? { ...e, ...field } : e);
+      if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: { ...l.registry!, gabEntries: newEntries } } : l);
+      else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: { ...b.registry!, gabEntries: newEntries } } : b);
+      onUpdateProperty(updated);
+    };
+    const updateEulField = (entryId: string, field: Partial<RegistryEulEntry>) => {
+      if (!selectedProperty) return;
+      const updated = { ...selectedProperty };
+      const newEntries = eulEntries.map(e => e.id === entryId ? { ...e, ...field } : e);
+      if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: { ...l.registry!, eulEntries: newEntries } } : l);
+      else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: { ...b.registry!, eulEntries: newEntries } } : b);
+      onUpdateProperty(updated);
+    };
+
+    // 버전 목록 (열람일시 기준 정렬)
+    const sortedVersions = versions ? [...versions].map((v, i) => ({ ...v, _origIdx: i })).sort((a, b) => (b.reviewDate ?? '').localeCompare(a.reviewDate ?? '')) : [];
+
+    // 공통 compact 스타일
+    const thCls = 'px-1 md:px-1.5 py-0.5 md:py-1 text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight whitespace-nowrap';
+    const tdCls = 'px-1 md:px-1.5 py-0.5 text-[10px] md:text-xs text-[#202124] whitespace-nowrap';
+    const tdWrapCls = 'px-1 md:px-1.5 py-0.5 text-[10px] md:text-xs text-[#202124]'; // 줄바꿈 허용 셀
+    const inputCls = 'border border-[#dadce0] rounded px-1 py-0.5 text-[10px] md:text-xs focus:outline-none focus:border-[#1a73e8] w-full bg-white';
 
     return (
-      <div className="mt-3 border border-[#dadce0] rounded-xl overflow-hidden">
-        {/* datalist for 권리자 자동완성 */}
+      <div className="mt-2 border border-[#dadce0] rounded-lg overflow-hidden">
         <datalist id={shListId}>
           {stakeholders.map(s => <option key={s.id} value={s.name}/>)}
         </datalist>
 
-        {/* 헤더: 갑구/을구 탭 + 열람일자 */}
-        <div className="flex items-center justify-between px-3 md:px-4 bg-[#f8f9fa] border-b border-[#dadce0]">
-          <div className="flex items-center">
-            <h4 className="font-black text-xs md:text-sm text-[#202124] mr-3">{title}</h4>
-            {(['갑구', '을구'] as const).map(tab => (
-              <button key={tab} onClick={() => setRegistryTabs(prev => ({ ...prev, [targetId]: tab }))}
-                className={`px-3 py-2 text-xs font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === tab ? 'border-[#1a73e8] text-[#1a73e8]' : 'border-transparent text-[#5f6368] hover:text-[#202124]'}`}>
-                {tab} <span className="text-[10px] font-normal">({tab === '갑구' ? gabEntries.length : eulEntries.length})</span>
-              </button>
-            ))}
+        {/* 헤더 */}
+        <div className="flex items-center justify-between px-2 md:px-3 py-1 bg-[#f8f9fa] border-b border-[#dadce0]">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h4 className="font-black text-[10px] md:text-xs text-[#202124] whitespace-nowrap">{title}</h4>
+            {sortedVersions.length > 0 && (
+              <select value={vIdx} onChange={e => handleVersionChange(Number(e.target.value))}
+                className="text-[10px] border border-[#dadce0] rounded px-1 py-0.5 focus:outline-none focus:border-[#1a73e8] bg-white min-w-0">
+                <option value={-1}>최신{registry?.reviewDate ? ` (${registry.reviewDate})` : ''}</option>
+                {sortedVersions.map(v => (
+                  <option key={v._origIdx} value={v._origIdx}>
+                    {v.reviewDate || '날짜 미상'}{v === registry ? ' (현재)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            {isHistoricView && (
+              <span className="text-[8px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded font-bold whitespace-nowrap">과거</span>
+            )}
           </div>
-          <div className="flex items-center gap-1.5">
-            <input type="date" value={registry?.reviewDate ?? ''}
-              onChange={e => updateRegistryMeta(itemType, targetId, { reviewDate: e.target.value })}
-              className="text-xs border border-[#dadce0] rounded px-1.5 py-1 focus:outline-none focus:border-[#1a73e8]"
-              title="열람일자"/>
-            <button
-              onClick={() => {
-                registryPdfTargetRef.current = { itemType, targetId };
-                registryPdfInputRef.current?.click();
-              }}
-              disabled={registryPdfParsing}
-              className="p-1 rounded hover:bg-[#e8f0fe] text-[#5f6368] hover:text-[#1a73e8] transition-colors disabled:opacity-40"
-              title="등기부등본 PDF 업로드">
-              {registryPdfParsing ? <Loader2 size={14} className="animate-spin"/> : <Upload size={14}/>}
-            </button>
+          <button
+            onClick={() => {
+              registryPdfTargetRef.current = { itemType, targetId };
+              registryPdfInputRef.current?.click();
+            }}
+            disabled={registryPdfParsing}
+            className="p-0.5 rounded hover:bg-[#e8f0fe] text-[#5f6368] hover:text-[#1a73e8] transition-colors disabled:opacity-40 flex-shrink-0"
+            title="등기부등본 PDF 업로드">
+            {registryPdfParsing ? <Loader2 size={12} className="animate-spin"/> : <Upload size={12}/>}
+          </button>
+        </div>
+
+        {/* ── 소유지분현황 ── */}
+        <div className="border-b border-[#dadce0]">
+          <div className="px-2 py-0.5 bg-[#f8f9fa] flex items-center gap-1">
+            <span className="text-[8px] md:text-[10px] font-black text-[#5f6368]">소유지분현황</span>
+            <span className="text-[8px] text-[#9aa0a6]">({ownerEntries.length})</span>
+          </div>
+          <div className={`overflow-x-auto ${ownerEntries.length > 5 ? 'max-h-[160px] overflow-y-auto' : ''}`}>
+            <table className="w-full text-[10px] md:text-xs min-w-[360px]">
+              <thead className="bg-[#f8f9fa] border-b border-[#dadce0] sticky top-0">
+                <tr>
+                  <th className={`${thCls} text-left`}>등기명의인</th>
+                  <th className={`${thCls} text-left hidden md:table-cell`}>등록번호</th>
+                  <th className={`${thCls} text-center`}>최종지분</th>
+                  <th className={`${thCls} text-left hidden md:table-cell`}>주소</th>
+                  <th className={`${thCls} text-center w-8`}>순위</th>
+                  {!isHistoricView && <th className={`${thCls} w-5`}></th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#f1f3f4]">
+                {ownerEntries.map(entry => {
+                  const linked = entry.stakeholderId ? stakeholders.find(s => s.id === entry.stakeholderId) : null;
+                  const autoMatch = !linked ? matchStakeholder(entry.name, entry.regNo) : null;
+                  return (
+                    <tr key={entry.id} className="hover:bg-[#f8f9fa]">
+                      <td className={`${tdCls} font-medium`}>
+                        {linked && <span className="text-[8px] bg-[#e8f0fe] text-[#1a73e8] px-1 py-0 rounded font-bold mr-0.5">{linked.name}</span>}
+                        {!linked && autoMatch && !isHistoricView && (
+                          <button onClick={() => linkOwnerToStakeholder(entry.id)}
+                            className="text-[8px] bg-[#fef7e0] text-[#e37400] px-1 py-0 rounded font-bold mr-0.5 hover:bg-[#fde68a]"
+                            title={`"${autoMatch.name}"(으)로 연결`}>연결?</button>
+                        )}
+                        {entry.name}
+                      </td>
+                      <td className={`${tdCls} text-[#5f6368] font-mono text-[9px] hidden md:table-cell`}>{entry.regNo}</td>
+                      <td className={`${tdCls} text-center`}>{entry.share}</td>
+                      <td className={`${tdCls} text-[#5f6368] text-[9px] hidden md:table-cell`}>{entry.address}</td>
+                      <td className={`${tdCls} text-center font-bold`}>{entry.rankNo}</td>
+                      {!isHistoricView && (
+                        <td className={tdCls}>
+                          <button onClick={() => {
+                            if (!selectedProperty || !activeRegistry) return;
+                            const updated = { ...selectedProperty };
+                            const newOwners = ownerEntries.filter(o => o.id !== entry.id);
+                            if (itemType === 'lot') updated.lots = updated.lots.map(l => l.id === targetId ? { ...l, registry: { ...l.registry!, ownerEntries: newOwners } } : l);
+                            else updated.buildings = updated.buildings.map(b => b.id === targetId ? { ...b, registry: { ...b.registry!, ownerEntries: newOwners } } : b);
+                            onUpdateProperty(updated);
+                          }} className="p-0 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500"><X size={10}/></button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {ownerEntries.length === 0 && <tr><td colSpan={isHistoricView ? 5 : 6} className="px-2 py-1.5 text-center text-[10px] text-[#9aa0a6]">소유지분 항목 없음</td></tr>}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {/* 을구 채권액 합계 */}
-        {activeTab === '을구' && totalClaim > 0 && (
-          <div className="px-3 md:px-4 py-1.5 bg-[#e8f0fe] border-b border-[#dadce0] flex items-center gap-2">
-            <span className="text-[10px] md:text-xs text-[#5f6368]">채권액 합계</span>
-            <span className="text-xs md:text-sm font-black text-[#1a73e8]">{formatMoneyInput(totalClaim)}</span>
+        {/* ── 갑구 ── */}
+        <div className="border-b border-[#dadce0]">
+          <div className="px-2 py-0.5 bg-[#f8f9fa] flex items-center gap-1">
+            <span className="text-[8px] md:text-[10px] font-black text-[#5f6368]">갑구 (소유권)</span>
+            <span className="text-[8px] text-[#9aa0a6]">({gabEntries.length})</span>
           </div>
-        )}
-
-        {/* ── 갑구: 순위번호 | 등기목적 | 접수 | 권리자 ── */}
-        {activeTab === '갑구' && (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs md:text-sm min-w-[480px]">
-                <thead className="bg-[#f8f9fa] border-b border-[#dadce0]">
-                  <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
-                    <th className="p-1.5 md:p-3 text-center w-12">순위</th>
-                    <th className="p-1.5 md:p-3 text-left">등기목적</th>
-                    <th className="p-1.5 md:p-3 text-left whitespace-nowrap">접수</th>
-                    <th className="p-1.5 md:p-3 text-left">권리자 및 기타사항</th>
-                    <th className="p-1.5 md:p-3 w-7"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#f1f3f4]">
-                  {gabEntries.map(entry => {
-                    const sh = entry.rightHolderId ? stakeholders.find(s => s.id === entry.rightHolderId) : null;
-                    return (
-                      <tr key={entry.id} className="hover:bg-[#f8f9fa]">
-                        <td className="p-1.5 md:p-3 text-center font-bold text-[#202124]">{entry.rankNo}</td>
-                        <td className="p-1.5 md:p-3 font-medium text-[#202124]">{entry.purpose}</td>
-                        <td className="p-1.5 md:p-3 text-[#5f6368] whitespace-nowrap">
-                          <div>{entry.receiptDate}</div>
-                          {entry.receiptNo && <div className="text-[10px]">제{entry.receiptNo}호</div>}
-                        </td>
-                        <td className="p-1.5 md:p-3 text-[#202124]">
-                          {sh && <span className="text-[10px] bg-[#e8f0fe] text-[#1a73e8] px-1.5 py-0.5 rounded font-bold mr-1">{sh.name}</span>}
-                          <span className="whitespace-pre-wrap">{entry.rightHolderText}</span>
-                        </td>
-                        <td className="p-1.5 md:p-3">
+          <div className={`overflow-x-auto ${gabEntries.length > 5 ? 'max-h-[160px] overflow-y-auto' : ''}`}>
+            <table className="w-full text-[10px] md:text-xs min-w-[320px]">
+              <thead className="bg-[#f8f9fa] border-b border-[#dadce0] sticky top-0">
+                <tr>
+                  <th className={`${thCls} text-center w-8`}>순위</th>
+                  <th className={`${thCls} text-left`}>등기목적</th>
+                  <th className={`${thCls} text-left hidden md:table-cell`}>접수일자</th>
+                  <th className={`${thCls} text-left`}>권리자</th>
+                  {!isHistoricView && <th className={`${thCls} w-10`}></th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#f1f3f4]">
+                {gabEntries.map(entry => {
+                  const sh = entry.rightHolderId ? stakeholders.find(s => s.id === entry.rightHolderId) : null;
+                  const autoMatch = !sh && entry.rightHolderText ? matchStakeholder(entry.rightHolderText) : null;
+                  const editing = isEditing(`gab-${entry.id}`);
+                  return (
+                    <tr key={entry.id} className="hover:bg-[#f8f9fa] group">
+                      <td className={`${tdCls} text-center font-bold`}>
+                        {editing ? <input className={`${inputCls} w-8 text-center`} value={entry.rankNo} onChange={e => updateGabField(entry.id, { rankNo: e.target.value })}/> : entry.rankNo}
+                      </td>
+                      <td className={`${tdCls} font-medium`}>
+                        {editing ? <input className={inputCls} value={entry.purpose} onChange={e => updateGabField(entry.id, { purpose: e.target.value })}/> : entry.purpose}
+                      </td>
+                      <td className={`${tdCls} text-[#5f6368] hidden md:table-cell`}>
+                        {editing ? <input type="date" className={`${inputCls} w-28`} value={entry.receiptDate} onChange={e => updateGabField(entry.id, { receiptDate: e.target.value })}/> : entry.receiptDate}
+                      </td>
+                      <td className={tdWrapCls}>
+                        {!editing && sh && <span className="text-[8px] bg-[#e8f0fe] text-[#1a73e8] px-1 py-0 rounded font-bold mr-0.5">{sh.name}</span>}
+                        {!editing && !sh && autoMatch && !isHistoricView && (
+                          <button onClick={() => linkEntryToStakeholder('gab', entry.id)}
+                            className="text-[8px] bg-[#fef7e0] text-[#e37400] px-1 py-0 rounded font-bold mr-0.5 hover:bg-[#fde68a]">연결?</button>
+                        )}
+                        {editing ? <input className={inputCls} value={entry.rightHolderText} onChange={e => updateGabField(entry.id, { rightHolderText: e.target.value })}/> : entry.rightHolderText}
+                      </td>
+                      {!isHistoricView && (
+                        <td className={`${tdCls} text-right`}>
+                          <button onClick={() => setEditingRegistryId(editing ? null : `gab-${entry.id}`)}
+                            className="p-0 mr-0.5 hover:bg-[#e8f0fe] rounded text-[#9aa0a6] hover:text-[#1a73e8] md:opacity-0 md:group-hover:opacity-100"><Edit2 size={10}/></button>
                           <button onClick={() => deleteGabEntry(itemType, targetId, entry.id)}
-                            className="p-0.5 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500 transition-colors"><X size={12}/></button>
+                            className="p-0 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500 md:opacity-0 md:group-hover:opacity-100"><X size={10}/></button>
                         </td>
-                      </tr>
-                    );
-                  })}
-                  {gabEntries.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-xs text-[#9aa0a6]">갑구 항목이 없습니다.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            {/* 갑구 입력: 순위번호 | 등기목적 | 접수일자 | 접수번호 | 권리자 */}
-            <div className="border-t border-[#dadce0] bg-[#f8f9fa] px-2 md:px-3 py-2">
-              <div className="flex flex-wrap gap-1.5 items-center">
+                      )}
+                    </tr>
+                  );
+                })}
+                {gabEntries.length === 0 && <tr><td colSpan={isHistoricView ? 4 : 5} className="px-2 py-1.5 text-center text-[10px] text-[#9aa0a6]">갑구 항목 없음</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {!isHistoricView && (
+            <div className="border-t border-[#dadce0] bg-[#f8f9fa] px-1.5 py-1">
+              <div className="flex flex-wrap gap-1 items-center">
                 <input type="text" value={gabForm.rankNo} placeholder="순위"
                   onChange={e => setGabForm(targetId, { rankNo: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-14"/>
+                  className={`${inputCls} !w-10`}/>
                 <input type="text" list={`gab-purpose-${targetId}`} value={gabForm.purpose} placeholder="등기목적"
                   onChange={e => setGabForm(targetId, { purpose: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[100px]"/>
+                  className={`${inputCls} flex-1 !min-w-[80px]`}/>
                 <datalist id={`gab-purpose-${targetId}`}>{GAB_PURPOSES.map(p => <option key={p} value={p}/>)}</datalist>
                 <input type="date" value={gabForm.receiptDate} onChange={e => setGabForm(targetId, { receiptDate: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-32" title="접수일자"/>
-                <input type="text" value={gabForm.receiptNo} placeholder="접수번호"
-                  onChange={e => setGabForm(targetId, { receiptNo: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-24"/>
-                <input type="text" list={shListId} value={gabForm.rightHolderText} placeholder="권리자 (입력하면 저장된 이름 제안)"
+                  className={`${inputCls} !w-28`}/>
+                <input type="text" list={shListId} value={gabForm.rightHolderText} placeholder="권리자"
                   onChange={e => setGabForm(targetId, { rightHolderText: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[120px]"/>
+                  className={`${inputCls} flex-1 !min-w-[80px]`}/>
                 <button onClick={() => addGabEntry(itemType, targetId)}
                   disabled={!gabForm.rankNo || !gabForm.purpose}
-                  className="bg-[#1a73e8] text-white px-2 md:px-3 py-1 rounded text-xs font-bold disabled:opacity-40 hover:bg-[#1557b0] flex items-center gap-1 whitespace-nowrap">
-                  <Plus size={12}/> 추가
+                  className="bg-[#1a73e8] text-white px-1.5 py-0.5 rounded text-[10px] font-bold disabled:opacity-40 hover:bg-[#1557b0] flex items-center gap-0.5 whitespace-nowrap">
+                  <Plus size={10}/> 추가
                 </button>
               </div>
             </div>
-          </>
-        )}
+          )}
+        </div>
 
-        {/* ── 을구: 순위번호 | 등기목적 | 접수 | 권리자 | 채권액 ── */}
-        {activeTab === '을구' && (
-          <>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs md:text-sm min-w-[520px]">
-                <thead className="bg-[#f8f9fa] border-b border-[#dadce0]">
-                  <tr className="text-[8px] md:text-[10px] text-[#5f6368] uppercase font-bold tracking-tight md:tracking-normal">
-                    <th className="p-1.5 md:p-3 text-center w-12">순위</th>
-                    <th className="p-1.5 md:p-3 text-left">등기목적</th>
-                    <th className="p-1.5 md:p-3 text-left whitespace-nowrap">접수</th>
-                    <th className="p-1.5 md:p-3 text-left">권리자</th>
-                    <th className="p-1.5 md:p-3 text-right whitespace-nowrap">채권액</th>
-                    <th className="p-1.5 md:p-3 w-7"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#f1f3f4]">
-                  {eulEntries.map(entry => {
-                    const sh = entry.rightHolderId ? stakeholders.find(s => s.id === entry.rightHolderId) : null;
-                    const hasDebt = !!entry.claimAmount;
-                    return (
-                      <tr key={entry.id} className="hover:bg-[#f8f9fa]">
-                        <td className="p-1.5 md:p-3 text-center font-bold text-[#202124]">{entry.rankNo}</td>
-                        <td className={`p-1.5 md:p-3 font-medium ${hasDebt ? 'text-red-600' : 'text-[#202124]'}`}>{entry.purpose}</td>
-                        <td className="p-1.5 md:p-3 text-[#5f6368] whitespace-nowrap">
-                          <div>{entry.receiptDate}</div>
-                          {entry.receiptNo && <div className="text-[10px]">제{entry.receiptNo}호</div>}
-                        </td>
-                        <td className={`p-1.5 md:p-3 ${hasDebt ? 'text-red-600' : 'text-[#202124]'}`}>
-                          {sh && <span className="text-[10px] bg-[#e8f0fe] text-[#1a73e8] px-1.5 py-0.5 rounded font-bold mr-1">{sh.name}</span>}
-                          {entry.rightHolderText}
-                        </td>
-                        <td className={`p-1.5 md:p-3 text-right whitespace-nowrap font-medium ${hasDebt ? 'text-red-600' : 'text-[#9aa0a6]'}`}>
-                          {entry.claimAmount ? formatMoneyInput(entry.claimAmount) : '-'}
-                        </td>
-                        <td className="p-1.5 md:p-3">
+        {/* ── 을구 ── */}
+        <div>
+          <div className="px-2 py-0.5 bg-[#f8f9fa] flex items-center gap-1">
+            <span className="text-[8px] md:text-[10px] font-black text-[#5f6368]">을구 (소유권 이외)</span>
+            <span className="text-[8px] text-[#9aa0a6]">({eulEntries.length})</span>
+            {totalClaim > 0 && (
+              <span className="ml-auto text-[8px] md:text-[10px] text-[#5f6368]">합계 <span className="font-black text-[#1a73e8]">{formatMoneyInput(totalClaim)}</span></span>
+            )}
+          </div>
+          <div className={`overflow-x-auto ${eulEntries.length > 5 ? 'max-h-[160px] overflow-y-auto' : ''}`}>
+            <table className="w-full text-[10px] md:text-xs min-w-[340px]">
+              <thead className="bg-[#f8f9fa] border-b border-[#dadce0] sticky top-0">
+                <tr>
+                  <th className={`${thCls} text-center w-8`}>순위</th>
+                  <th className={`${thCls} text-left`}>등기목적</th>
+                  <th className={`${thCls} text-left hidden md:table-cell`}>접수일자</th>
+                  <th className={`${thCls} text-left`}>권리자</th>
+                  <th className={`${thCls} text-left`}>채무자</th>
+                  <th className={`${thCls} text-right`}>채권액</th>
+                  {!isHistoricView && <th className={`${thCls} w-10`}></th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#f1f3f4]">
+                {eulEntries.map(entry => {
+                  const sh = entry.rightHolderId ? stakeholders.find(s => s.id === entry.rightHolderId) : null;
+                  const autoMatch = !sh && entry.rightHolderText ? matchStakeholder(entry.rightHolderText) : null;
+                  const hasDebt = !!entry.claimAmount;
+                  const editing = isEditing(`eul-${entry.id}`);
+                  return (<React.Fragment key={entry.id}>
+                    <tr className="hover:bg-[#f8f9fa] group">
+                      <td className={`${tdCls} text-center font-bold`}>
+                        {editing ? <input className={`${inputCls} w-8 text-center`} value={entry.rankNo} onChange={e => updateEulField(entry.id, { rankNo: e.target.value })}/> : entry.rankNo}
+                      </td>
+                      <td className={`${tdCls} font-medium ${hasDebt ? 'text-red-600' : ''}`}>
+                        {editing ? <input className={inputCls} value={entry.purpose} onChange={e => updateEulField(entry.id, { purpose: e.target.value })}/> : entry.purpose}
+                      </td>
+                      <td className={`${tdCls} text-[#5f6368] hidden md:table-cell`}>
+                        {editing ? <input type="date" className={`${inputCls} w-28`} value={entry.receiptDate} onChange={e => updateEulField(entry.id, { receiptDate: e.target.value })}/> : entry.receiptDate}
+                      </td>
+                      <td className={`${tdWrapCls} ${hasDebt ? 'text-red-600' : ''}`}>
+                        {!editing && sh && <span className="text-[8px] bg-[#e8f0fe] text-[#1a73e8] px-1 py-0 rounded font-bold mr-0.5">{sh.name}</span>}
+                        {!editing && !sh && autoMatch && !isHistoricView && (
+                          <button onClick={() => linkEntryToStakeholder('eul', entry.id)}
+                            className="text-[8px] bg-[#fef7e0] text-[#e37400] px-1 py-0 rounded font-bold mr-0.5 hover:bg-[#fde68a]">연결?</button>
+                        )}
+                        {editing ? <input className={inputCls} value={entry.rightHolderText} onChange={e => updateEulField(entry.id, { rightHolderText: e.target.value })}/> : entry.rightHolderText}
+                      </td>
+                      <td className={`${tdWrapCls}`}>
+                        {editing ? <input className={inputCls} value={entry.debtorText ?? ''} onChange={e => updateEulField(entry.id, { debtorText: e.target.value })}/> : (entry.debtorText || '-')}
+                      </td>
+                      <td className={`${tdCls} text-right font-medium ${hasDebt ? 'text-red-600' : 'text-[#9aa0a6]'}`}>
+                        {editing
+                          ? <input className={`${inputCls} w-20 text-right`} value={entry.claimAmount ?? ''} onChange={e => updateEulField(entry.id, { claimAmount: Number(e.target.value.replace(/[^\d]/g, '')) || undefined })}/>
+                          : (entry.claimAmount ? formatMoneyInput(entry.claimAmount) : '-')}
+                      </td>
+                      {!isHistoricView && (
+                        <td className={`${tdCls} text-right`}>
+                          <button onClick={() => setEditingRegistryId(editing ? null : `eul-${entry.id}`)}
+                            className="p-0 mr-0.5 hover:bg-[#e8f0fe] rounded text-[#9aa0a6] hover:text-[#1a73e8] md:opacity-0 md:group-hover:opacity-100"><Edit2 size={10}/></button>
                           <button onClick={() => deleteEulEntry(itemType, targetId, entry.id)}
-                            className="p-0.5 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500 transition-colors"><X size={12}/></button>
+                            className="p-0 hover:bg-red-50 rounded text-[#c4c7cc] hover:text-red-500 md:opacity-0 md:group-hover:opacity-100"><X size={10}/></button>
+                        </td>
+                      )}
+                    </tr>
+                    {entry.collateralText && (
+                      <tr className="bg-[#fafafa]">
+                        <td></td>
+                        <td colSpan={isHistoricView ? 5 : 6} className="px-1 md:px-1.5 py-0.5 text-[9px] text-[#5f6368]">
+                          <span className="text-[8px] bg-[#f3f4f6] text-[#6b7280] px-1 py-0 rounded font-bold mr-1">공동담보</span>
+                          {editing
+                            ? <input className={`${inputCls} inline-block !w-auto flex-1`} value={entry.collateralText} onChange={e => updateEulField(entry.id, { collateralText: e.target.value })}/>
+                            : entry.collateralText}
                         </td>
                       </tr>
-                    );
-                  })}
-                  {eulEntries.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-xs text-[#9aa0a6]">을구 항목이 없습니다.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            {/* 을구 입력: 순위번호 | 등기목적 | 접수일자 | 접수번호 | 권리자 | 채권액 */}
-            <div className="border-t border-[#dadce0] bg-[#f8f9fa] px-2 md:px-3 py-2">
-              <div className="flex flex-wrap gap-1.5 items-center">
+                    )}
+                  </React.Fragment>);
+                })}
+                {eulEntries.length === 0 && <tr><td colSpan={isHistoricView ? 6 : 7} className="px-2 py-1.5 text-center text-[10px] text-[#9aa0a6]">을구 항목 없음</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {!isHistoricView && (
+            <div className="border-t border-[#dadce0] bg-[#f8f9fa] px-1.5 py-1">
+              <div className="flex flex-wrap gap-1 items-center">
                 <input type="text" value={eulForm.rankNo} placeholder="순위"
                   onChange={e => setEulForm(targetId, { rankNo: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-14"/>
+                  className={`${inputCls} !w-10`}/>
                 <input type="text" list={`eul-purpose-${targetId}`} value={eulForm.purpose} placeholder="등기목적"
                   onChange={e => setEulForm(targetId, { purpose: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[110px]"/>
+                  className={`${inputCls} flex-1 !min-w-[80px]`}/>
                 <datalist id={`eul-purpose-${targetId}`}>{EUL_PURPOSES.map(p => <option key={p} value={p}/>)}</datalist>
                 <input type="date" value={eulForm.receiptDate} onChange={e => setEulForm(targetId, { receiptDate: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-32" title="접수일자"/>
-                <input type="text" value={eulForm.receiptNo} placeholder="접수번호"
-                  onChange={e => setEulForm(targetId, { receiptNo: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-24"/>
+                  className={`${inputCls} !w-28`}/>
                 <input type="text" list={shListId} value={eulForm.rightHolderText} placeholder="권리자"
                   onChange={e => setEulForm(targetId, { rightHolderText: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] flex-1 min-w-[100px]"/>
+                  className={`${inputCls} flex-1 !min-w-[80px]`}/>
+                <input type="text" value={eulForm.debtorText} placeholder="채무자"
+                  onChange={e => setEulForm(targetId, { debtorText: e.target.value })}
+                  className={`${inputCls} flex-1 !min-w-[60px]`}/>
                 <input type="text" value={eulForm.claimAmount} placeholder="채권액(원)"
                   onChange={e => setEulForm(targetId, { claimAmount: e.target.value })}
-                  className="border border-[#dadce0] rounded px-1.5 py-1 text-xs focus:outline-none focus:border-[#1a73e8] w-28 text-right"/>
+                  className={`${inputCls} !w-24 text-right`}/>
                 <button onClick={() => addEulEntry(itemType, targetId)}
                   disabled={!eulForm.rankNo || !eulForm.purpose}
-                  className="bg-[#1a73e8] text-white px-2 md:px-3 py-1 rounded text-xs font-bold disabled:opacity-40 hover:bg-[#1557b0] flex items-center gap-1 whitespace-nowrap">
-                  <Plus size={12}/> 추가
+                  className="bg-[#1a73e8] text-white px-1.5 py-0.5 rounded text-[10px] font-bold disabled:opacity-40 hover:bg-[#1557b0] flex items-center gap-0.5 whitespace-nowrap">
+                  <Plus size={10}/> 추가
                 </button>
               </div>
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
     );
   };
@@ -1853,7 +2255,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
       <div className="w-full lg:w-72 bg-white rounded-xl border border-[#dadce0] flex-shrink-0 shadow-sm overflow-hidden flex flex-col">
         <div className="p-3 border-b border-[#dadce0] flex justify-between items-center bg-[#f8f9fa] flex-shrink-0">
           <h2 className="font-bold text-sm text-[#3c4043] flex items-center gap-2"><Layers size={16} className="text-[#1a73e8]"/> 물건 목록</h2>
-          <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: '' }); setDisplayAddress(''); setPropPnu(''); setPropLandInfo(null); setIsPropertyModalOpen(true); }} className="p-1.5 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-lg transition-colors"><Plus size={18}/></button>
+          <button onClick={() => { setNewProp({ type: 'LAND_AND_BUILDING', name: '', masterAddress: { sido: '', sigungu: '', eupMyeonDong: '', li: '', bonbun: '', bubun: '' }, roadAddress: '' }); setDisplayAddress(''); setPropPnu(''); setPropLandInfo(null); setRegistryDataForNewProp(null); setIsPropertyModalOpen(true); }} className="p-1.5 text-[#1a73e8] hover:bg-[#e8f0fe] rounded-lg transition-colors"><Plus size={18}/></button>
         </div>
         <div className="p-2 space-y-1.5 bg-[#f8f9fa] flex-1 overflow-y-auto">
           {properties.map(prop => (
@@ -1992,15 +2394,28 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                <button onClick={() => setActiveTab('LAND')} className="text-[10px] md:text-xs text-[#1a73e8] font-bold hover:underline">상세 →</button>
                             </div>
                             <div className="space-y-1.5 md:space-y-2">
-                               {selectedProperty.lots.slice(0, 3).map((lot, idx) => (
-                                  <div key={lot.id} className="flex items-center justify-between p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
-                                     <div className="flex items-center gap-1 md:gap-2 min-w-0">
-                                        {idx === 0 && <span className="px-1 md:px-1.5 py-0.5 bg-[#1a73e8] text-white text-[7px] md:text-[8px] font-bold rounded flex-shrink-0">대표</span>}
-                                        <span className="text-[10px] md:text-xs font-medium text-gray-600 truncate">{lot.address.eupMyeonDong} {lot.address.bonbun}</span>
+                               {selectedProperty.lots.slice(0, 3).map((lot, idx) => {
+                                  const lotOwners = lot.registry?.ownerEntries;
+                                  const lotAcqGab = lot.registry?.gabEntries?.filter(g => /소유권이전/.test(g.purpose) && !g.isDeleted).pop();
+                                  return (
+                                  <div key={lot.id} className="p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                     <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-1 md:gap-2 min-w-0">
+                                           {idx === 0 && <span className="px-1 md:px-1.5 py-0.5 bg-[#1a73e8] text-white text-[7px] md:text-[8px] font-bold rounded flex-shrink-0">대표</span>}
+                                           <span className="text-[10px] md:text-xs font-medium text-gray-600 truncate">{lot.address.eupMyeonDong} {lot.address.bonbun}</span>
+                                        </div>
+                                        <span className="text-[10px] md:text-xs font-bold text-[#1a73e8] whitespace-nowrap ml-1">{formatArea(lot.area)}</span>
                                      </div>
-                                     <span className="text-[10px] md:text-xs font-bold text-[#1a73e8] whitespace-nowrap ml-1">{formatArea(lot.area)}</span>
+                                     {lotOwners && lotOwners.length > 0 && (
+                                        <div className="mt-1 flex items-center gap-1 text-[9px] md:text-[10px] text-[#5f6368]">
+                                           <span className="font-bold text-[#3c4043]">{lotOwners.map(o => o.name).join(', ')}</span>
+                                           {lotOwners.length === 1 && lotOwners[0].share !== '단독소유' && <span>({lotOwners[0].share})</span>}
+                                           {lotAcqGab?.receiptDate && <span className="ml-auto whitespace-nowrap">취득 {lotAcqGab.receiptDate}</span>}
+                                        </div>
+                                     )}
                                   </div>
-                               ))}
+                                  );
+                               })}
                                {selectedProperty.lots.length > 3 && (
                                   <p className="text-[10px] md:text-xs text-gray-400 text-center py-1 md:py-2">외 {selectedProperty.lots.length - 3}개 필지</p>
                                )}
@@ -2019,16 +2434,27 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                             <div className="space-y-1.5 md:space-y-2">
                                {selectedProperty.buildings.slice(0, 3).map(b => {
                                   const bUnits = propertyUnits.filter(u => u.buildingId === b.id);
+                                  const bldOwners = b.registry?.ownerEntries;
+                                  const bldAcqGab = b.registry?.gabEntries?.filter(g => /소유권이전/.test(g.purpose) && !g.isDeleted).pop();
                                   return (
-                                     <div key={b.id} className="flex items-center justify-between p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
-                                        <div className="min-w-0">
-                                           <p className="text-[11px] md:text-sm font-bold text-gray-800 truncate">{b.name}</p>
-                                           <p className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">지{b.spec.floorCount.ground}층·{b.spec.mainUsage.substring(0, 4)}</p>
+                                     <div key={b.id} className="p-2 md:p-3 bg-[#f8f9fa] rounded-lg md:rounded-xl">
+                                        <div className="flex items-center justify-between">
+                                           <div className="min-w-0">
+                                              <p className="text-[11px] md:text-sm font-bold text-gray-800 truncate">{b.name}</p>
+                                              <p className="text-[9px] md:text-[10px] text-gray-500 whitespace-nowrap">지{b.spec.floorCount.ground}층·{b.spec.mainUsage.substring(0, 4)}</p>
+                                           </div>
+                                           <div className="text-right flex-shrink-0 ml-1">
+                                              <p className="text-[10px] md:text-xs font-bold text-[#1a73e8] whitespace-nowrap">{formatArea(b.spec.grossFloorArea)}</p>
+                                              <p className="text-[9px] md:text-[10px] text-gray-400">{bUnits.length}호실</p>
+                                           </div>
                                         </div>
-                                        <div className="text-right flex-shrink-0 ml-1">
-                                           <p className="text-[10px] md:text-xs font-bold text-[#1a73e8] whitespace-nowrap">{formatArea(b.spec.grossFloorArea)}</p>
-                                           <p className="text-[9px] md:text-[10px] text-gray-400">{bUnits.length}호실</p>
-                                        </div>
+                                        {bldOwners && bldOwners.length > 0 && (
+                                           <div className="mt-1 flex items-center gap-1 text-[9px] md:text-[10px] text-[#5f6368]">
+                                              <span className="font-bold text-[#3c4043]">{bldOwners.map(o => o.name).join(', ')}</span>
+                                              {bldOwners.length === 1 && bldOwners[0].share !== '단독소유' && <span>({bldOwners[0].share})</span>}
+                                              {bldAcqGab?.receiptDate && <span className="ml-auto whitespace-nowrap">취득 {bldAcqGab.receiptDate}</span>}
+                                           </div>
+                                        )}
                                      </div>
                                   );
                                })}
@@ -2168,7 +2594,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                                         {isLotExpanded && (
                                             <tr>
                                                 <td colSpan={4} className="px-2 md:px-5 pb-3 bg-[#fafafa]">
-                                                    {renderRegistrySection('토지등기부', 'lot', lot.id, lot.registry)}
+                                                    {renderRegistrySection('토지등기부', 'lot', lot.id, lot.registry, lot.registryVersions)}
                                                 </td>
                                             </tr>
                                         )}
@@ -2553,7 +2979,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
 
                                                 {/* 건물등기부 */}
                                                 <div className="px-3 md:px-6 pb-3 md:pb-6 border-b border-[#dadce0]">
-                                                    {renderRegistrySection('건물등기부', 'building', b.id, b.registry)}
+                                                    {renderRegistrySection('건물등기부', 'building', b.id, b.registry, b.registryVersions)}
                                                 </div>
 
                                                 {/* 수정/삭제 버튼 */}
@@ -3401,14 +3827,30 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                     <input className="w-full border border-[#dadce0] p-4 rounded-xl focus:ring-4 focus:ring-[#e8f0fe] focus:border-[#1a73e8] outline-none font-black text-lg transition-all" value={newProp.name} onChange={e => setNewProp({...newProp, name: e.target.value})} placeholder="예: 강남 시그니처 타워"/>
                  </div>
                  <div className="bg-gray-50 p-6 rounded-2xl md:col-span-2 space-y-4 border border-[#dadce0]">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
                        <p className="text-xs font-black text-[#1a73e8] uppercase tracking-widest flex items-center gap-2"><MapPin size={16}/> 소재지</p>
-                       <AddressSearch
-                         placeholder="주소 검색"
-                         appSettings={appSettings}
-                         onAddressSelect={handlePropAddressSelect}
-                       />
+                       <div className="flex items-center gap-2">
+                         <button
+                           type="button"
+                           onClick={() => newPropPdfInputRef.current?.click()}
+                           disabled={isLoadingRegistryPdf}
+                           className="flex items-center gap-2 px-4 py-3 bg-[#7c3aed] hover:bg-[#6d28d9] text-white rounded-lg transition-colors font-bold text-sm disabled:opacity-50"
+                         >
+                           {isLoadingRegistryPdf ? (
+                             <Loader2 size={16} className="animate-spin" />
+                           ) : (
+                             <Upload size={16} />
+                           )}
+                           등기부등본
+                         </button>
+                         <AddressSearch
+                           placeholder="주소 검색"
+                           appSettings={appSettings}
+                           onAddressSelect={handlePropAddressSelect}
+                         />
+                       </div>
                     </div>
+                    <input ref={newPropPdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handleRegistryPdfForNewProp}/>
 
                     {(displayAddress || newProp.masterAddress?.sido) && (
                       <div className="bg-white p-4 rounded-xl border border-[#dadce0] space-y-3">
@@ -3449,6 +3891,23 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                           </div>
                         )}
 
+                        {registryDataForNewProp && (
+                          <div className="p-3 bg-[#f3e8ff] rounded-lg border border-[#d8b4fe]">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-bold text-[#7c3aed] mb-1">등기부등본({registryDataForNewProp.type}) 파싱됨</p>
+                              <button onClick={() => setRegistryDataForNewProp(null)} className="text-[#7c3aed] hover:bg-[#ede9fe] p-1 rounded-full"><X size={14}/></button>
+                            </div>
+                            <div className="flex flex-wrap gap-3 text-xs text-[#5b21b6]">
+                              {registryDataForNewProp.parsed.owners.length > 0 && (
+                                <span>소유지분 {registryDataForNewProp.parsed.owners.length}명 ({registryDataForNewProp.parsed.owners.map(o => o.name).join(', ')})</span>
+                              )}
+                              <span>갑구 {registryDataForNewProp.parsed.gabEntries.length}건</span>
+                              <span>을구 {registryDataForNewProp.parsed.eulEntries.length}건</span>
+                              {registryDataForNewProp.trade && <span>매매목록 있음</span>}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="grid grid-cols-3 gap-3 pt-2 border-t border-gray-100">
                           <div>
                             <label className="text-[10px] font-bold text-gray-400 mb-1 block">시/도</label>
@@ -3483,7 +3942,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                     {!displayAddress && !newProp.masterAddress?.sido && (
                       <div className="bg-white p-8 rounded-xl border-2 border-dashed border-gray-200 text-center">
                         <Search size={32} className="mx-auto text-gray-300 mb-2" />
-                        <p className="text-sm text-gray-400">주소 검색 버튼을 클릭하여 소재지를 입력하세요</p>
+                        <p className="text-sm text-gray-400">주소 검색 또는 등기부등본 PDF를 업로드하여 소재지를 입력하세요</p>
                       </div>
                     )}
                  </div>
@@ -4627,15 +5086,48 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
               {/* 소유자 정보 */}
               {registryPdfPreview.parsed.owners.length > 0 && (
                 <div className="border border-[#dadce0] rounded-lg p-3">
-                  <h4 className="text-xs font-bold text-[#5f6368] mb-2">소유지분현황</h4>
-                  {registryPdfPreview.parsed.owners.map((o, i) => (
-                    <div key={i} className="flex items-center gap-3 text-xs py-1">
-                      <span className="font-bold text-[#202124]">{o.name}</span>
-                      {o.regNo && <span className="text-[10px] text-[#9aa0a6]">{o.regNo}</span>}
-                      <span className="text-[#5f6368]">{o.share}</span>
-                      {o.address && <span className="text-[10px] text-[#9aa0a6] truncate max-w-[200px]">{o.address}</span>}
-                    </div>
-                  ))}
+                  <h4 className="text-xs font-bold text-[#5f6368] mb-2">소유지분현황 ({registryPdfPreview.parsed.owners.length}명)</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs min-w-[400px]">
+                      <thead className="bg-[#f8f9fa]">
+                        <tr className="text-[8px] text-[#5f6368] uppercase font-bold">
+                          <th className="p-1.5 text-left">등기명의인</th>
+                          <th className="p-1.5 text-left">등록번호</th>
+                          <th className="p-1.5 text-center">최종지분</th>
+                          <th className="p-1.5 text-left">주소</th>
+                          <th className="p-1.5 text-center w-10">순위</th>
+                          <th className="p-1.5 text-center">연결</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#f1f3f4]">
+                        {registryPdfPreview.parsed.owners.map((o, i) => {
+                          const cleanName = o.name.replace(/\s*\(.*\)\s*/, '').trim();
+                          const cleanRegNo = o.regNo.replace(/[-\s]/g, '');
+                          const matched = stakeholders.find(s => {
+                            const sRegNo = (s.registrationNumber || '').replace(/[-\s]/g, '');
+                            if (sRegNo && cleanRegNo && sRegNo === cleanRegNo) return true;
+                            return s.name === cleanName;
+                          });
+                          return (
+                            <tr key={i} className="hover:bg-[#f8f9fa]">
+                              <td className="p-1.5 font-bold text-[#202124]">{o.name}</td>
+                              <td className="p-1.5 text-[#5f6368] font-mono text-[10px]">{o.regNo}</td>
+                              <td className="p-1.5 text-center text-[#202124]">{o.share}</td>
+                              <td className="p-1.5 text-[10px] text-[#9aa0a6] max-w-[180px] truncate">{o.address}</td>
+                              <td className="p-1.5 text-center font-bold">{o.rankNo}</td>
+                              <td className="p-1.5 text-center">
+                                {matched ? (
+                                  <span className="text-[10px] bg-[#e8f0fe] text-[#1a73e8] px-1.5 py-0.5 rounded font-bold">{matched.name}</span>
+                                ) : (
+                                  <span className="text-[10px] text-[#9aa0a6]">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
@@ -4687,7 +5179,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                             {e.purpose}
                             {e.isTransferred && <span className="ml-1 text-[8px] text-orange-500 font-bold">(이전)</span>}
                           </td>
-                          <td className="p-1.5 text-[#5f6368] whitespace-nowrap">{e.receiptDate}<br/>{e.receiptNo}</td>
+                          <td className="p-1.5 text-[#5f6368] whitespace-nowrap">{e.receiptDate}</td>
                           <td className="p-1.5 text-[#202124] max-w-[200px] truncate">{e.mainText}</td>
                         </tr>
                       ))}
@@ -4725,6 +5217,7 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                         <th className="p-1.5 text-left">등기목적</th>
                         <th className="p-1.5 text-left">접수</th>
                         <th className="p-1.5 text-left">권리자</th>
+                        <th className="p-1.5 text-left">채무자</th>
                         <th className="p-1.5 text-right">채권액</th>
                       </tr>
                     </thead>
@@ -4748,15 +5241,16 @@ export const PropertyManager: React.FC<PropertyManagerProps> = ({
                             {e.purpose}
                             {e.isTransferred && <span className="ml-1 text-[8px] text-orange-500 font-bold">(이전)</span>}
                           </td>
-                          <td className="p-1.5 text-[#5f6368] whitespace-nowrap">{e.receiptDate}<br/>{e.receiptNo}</td>
+                          <td className="p-1.5 text-[#5f6368] whitespace-nowrap">{e.receiptDate}</td>
                           <td className="p-1.5 text-[#202124] max-w-[160px] truncate" title={e.rightHolderText || e.mainText}>{e.rightHolderText || e.mainText}</td>
+                          <td className="p-1.5 text-[#202124] max-w-[120px] truncate" title={e.debtorText}>{e.debtorText || '-'}</td>
                           <td className="p-1.5 text-right font-medium text-red-600 whitespace-nowrap">
                             {e.claimAmount ? formatMoneyInput(e.claimAmount) : '-'}
                           </td>
                         </tr>
                       ))}
                       {registryPdfPreview.parsed.eulEntries.length === 0 && (
-                        <tr><td colSpan={6} className="p-3 text-center text-[#9aa0a6]">을구 항목 없음</td></tr>
+                        <tr><td colSpan={7} className="p-3 text-center text-[#9aa0a6]">을구 항목 없음</td></tr>
                       )}
                     </tbody>
                   </table>
